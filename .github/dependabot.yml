@@ -1,0 +1,11 @@
+# The runtime has no package dependencies (bash + python3 standard library);
+# the only pinned third-party inputs are the GitHub Actions in .github/workflows.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    labels: [dependencies]

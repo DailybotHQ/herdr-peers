@@ -1,4 +1,4 @@
-# Security — herdr-peers
+# Security — herdr-peers threat model
 
 This document is the threat model of herdr-peers protocol 1 and its helper:
 what is protected, from whom, how, and what risk remains. The normative rules
@@ -8,9 +8,8 @@ every mitigation below is exercised by `bash tests/run.sh security` (and the
 
 ## Reporting a vulnerability
 
-Please report suspected vulnerabilities privately through GitHub's
-*Security → Report a vulnerability* on this repository rather than in a public
-issue. Include the herdr-peers and Herdr versions and a minimal reproduction.
+Report suspected vulnerabilities privately, never in a public issue — the
+channels and response targets are in the [security policy](../SECURITY.md).
 
 ## Threat model
 

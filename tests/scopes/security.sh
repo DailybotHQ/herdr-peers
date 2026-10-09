@@ -127,7 +127,8 @@ assert_rc "a reply carrying a secret value is refused (exit 4)" 4
 gh_like="ghp_$(repeat a 36)"
 run "$HELPER" ask local:w1:p2 "token $gh_like"
 assert_rc "a GitHub-token shape is refused" 4
-run "$HELPER" ask local:w1:p2 "$(printf -- '-----BEGIN RSA PRIVATE KEY-----')"
+# Built at runtime so the literal header never sits in a tracked file.
+run "$HELPER" ask local:w1:p2 "$(printf -- '-----BEGIN RSA %s-----' 'PRIVATE KEY')"
 assert_rc "a private key block is refused" 4
 printf 'here: %s\n\n[herdr-peers] protocol=1 reply-to=%s depth=1\nThis is a reply. Do not answer it.\n' "$FAKE_SECRET" "$id" >"$WORK/leaky.txt"
 run "$HELPER" check --json "$WORK/leaky.txt"

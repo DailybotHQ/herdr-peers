@@ -4,7 +4,8 @@
 
 shell_files=""
 for f in "$ROOT/tests/run.sh" "$ROOT/tests/lib.sh" "$ROOT"/tests/scopes/*.sh \
-  "$ROOT/bin/herdr-peers" "$ROOT/skills/herdr-peers/scripts/herdr-peers"; do
+  "$ROOT/bin/herdr-peers" "$ROOT/skills/herdr-peers/scripts/herdr-peers" \
+  "$ROOT"/scripts/*.sh; do
   [ -f "$f" ] && shell_files="$shell_files $f"
 done
 
