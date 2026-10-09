@@ -21,6 +21,9 @@ herdr-peers (skill + helper script)
 | `docs/` | `TESTING_GUIDE.md`, `SECURITY.md` (threat model) |
 | `scripts/` | `check-public-hygiene.sh` (public-hygiene check; allow-list in `.public-hygiene-allow`), `release-assets.sh` (release notes + `SHA256SUMS`) |
 | `.github/` | `workflows/ci.yml` (suite on Ubuntu + macOS, `public hygiene` job), `workflows/release.yml` (annotated tag → release), issue/PR templates, `CODEOWNERS`, `dependabot.yml` |
+| `.agents/` | Working on this repo: `agents/` (personas), `commands/` (`/dwp-*` delegators), `skills/` (vendored `deepworkplan`, `ai-diff-reviewer` — never hand-edit), `docs/` (catalogs); `.claude` and `.cursor` link here |
+| `.review/extension.md` | Severity overrides for the local AI Diff Reviewer |
+| `.dwp/config.json` | Tracked DWP addon registry (the rest of `.dwp/` is gitignored) |
 | Root | `README.md`, `CHANGELOG.md` (Keep a Changelog), `SECURITY.md` (policy), `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `CREDITS.md`, `LICENSE`; `CLAUDE.md` is a symlink to this file |
 
 The protocol's interface version is `metadata.protocol` in `SKILL.md`; a wire
