@@ -10,9 +10,20 @@ A standalone agent skill for [Herdr](https://herdr.dev): any coding agent can as
 
 herdr-peers (skill + helper script)
 
-## Layout (target; built by the first plan)
+## Layout
 
-skills/herdr-peers/ (SKILL.md, protocol.md, templates/), bin/herdr-peers (helper), tests/ (run.sh), docs/
+| Path | What |
+| --- | --- |
+| `skills/herdr-peers/` | The installable skill: `SKILL.md`, normative `protocol.md`, `discipline.md`, `launcher.md`, `templates/` (incl. `delegation-record.json` schema) |
+| `skills/herdr-peers/scripts/` | The helper: `herdr-peers` (bash entry) + `herdr_peers.py` (python3 stdlib). It lives inside the skill so `npx skills add` installs it. |
+| `bin/herdr-peers` | Checkout shim that runs the skill's helper |
+| `tests/` | `run.sh` (sandboxed runner), `lib.sh`, `fakes/herdr`, `scopes/`, `fixtures/messages/`, `tools/` |
+| `docs/` | `TESTING_GUIDE.md`, `SECURITY.md` (threat model) |
+
+The protocol's interface version is `metadata.protocol` in `SKILL.md`; a wire
+change bumps it (and the minor version while 0.x). Keep `protocol.md`, the
+helper constants and `templates/` in step — the `skill` and `templates` test
+scopes compare them.
 
 ## Validation
 
