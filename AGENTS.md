@@ -28,13 +28,17 @@ change bumps it (and the minor version while 0.x). Keep `protocol.md`, the
 helper constants and `templates/` in step — the `skill` and `templates` test
 scopes compare them.
 
-## Validation
+## Quick commands
 
 | Scope | Command |
 | --- | --- |
 | Full | `bash tests/run.sh` |
 | Scoped | `bash tests/run.sh <scope>` |
 | Public hygiene | `bash scripts/check-public-hygiene.sh` |
+| Release assets (local) | `bash scripts/release-assets.sh vX.Y.Z <outdir>` |
+| DWP conformance | `bash .agents/skills/deepworkplan/verify/conformance.sh` |
+
+Agents, commands and skills for working on this repo: [`.agents/docs/skills_agents_catalog.md`](.agents/docs/skills_agents_catalog.md). Local review: the vendored `ai-diff-reviewer` skill with [`.review/extension.md`](.review/extension.md).
 
 The test map lives in [`docs/TESTING_GUIDE.md`](docs/TESTING_GUIDE.md).
 
@@ -51,11 +55,12 @@ The test map lives in [`docs/TESTING_GUIDE.md`](docs/TESTING_GUIDE.md).
    Secret-shaped test data says it is fake and is listed in
    `.public-hygiene-allow` with a reason. Never rewrite history; a leaked
    secret is rotated first.
-8. Changes land through a pull request with green CI; releases come from an
+8. Upgrading a vendored skill (`npx --yes skills add <repo>@<tag> --skill <name> --force -y`) can also write copies into `agent/skills/` and symlinks into `skills/`; delete them — `skills/` ships only `herdr-peers` (the `repo` test scope checks it).
+9. Changes land through a pull request with green CI; releases come from an
    annotated `vX.Y.Z` tag (`.github/workflows/release.yml`).
 
 ## Deep Work Plans
 
-Structured work runs through the installed `deepworkplan` skill (`.agents/skills/deepworkplan/`); plans live in the gitignored `.dwp/`.
+Structured work runs through the installed `deepworkplan` skill (`.agents/skills/deepworkplan/`, pinned in `skills-lock.json`); the `/dwp-*` commands are thin delegators in `.agents/commands/` (`.claude` and `.cursor` are symlinks to `.agents/`). Plans live in the gitignored `.dwp/`; only the addon registry `.dwp/config.json` is tracked (`herdr` enabled — this repository ships it; `ai-diff-reviewer` enabled for the local review).
 
-DWP standard: 6.0.0 (onboarded 2026-10-08; skill 6.1.0)
+DWP standard: 7.0.0 (onboarded 2026-10-08; upgraded 2026-10-09; skill 7.0.0)

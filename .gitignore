@@ -1,5 +1,6 @@
 # Deep Work Plan working state and scratch space
-.dwp/
+.dwp/*
+!.dwp/config.json
 tmp/
 
 # Local environment (never commit secrets)
