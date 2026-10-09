@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""Fake `herdr` (0.9.x CLI surface) for the herdr-peers test suite.
+
+Models the JSON shapes of the real CLI (captured read-only from herdr 0.9.1):
+success envelopes `{"id": "cli:<group>:<verb>", "result": {...}}` on stdout,
+server errors `{"error": {"code", "message"}, "id"}` on stderr with exit 1,
+and syntax errors on stderr with exit 2. It never opens a socket.
+
+State lives in $FAKE_HERDR_DIR (required):
+
+  machines.json              saved machines, as `machine list --json` prints
+  <machine>/agents.json      agents on that server ("local" = no --machine)
+  <machine>/panes/<pane>.out pane text; `agent prompt` appends, `pane read` prints
+  unreachable                machine ids (one per line) whose SSH call fails
+  argv.log                   one JSON line per invocation: {"machine", "argv"}
+"""
+import json
+import os
+import re
+import sys
+import time
+
+VERSION = '0.9.1'
+
+
+def state_dir():
+    path = os.environ.get('FAKE_HERDR_DIR')
+    if not path:
+        sys.stderr.write('fake herdr: FAKE_HERDR_DIR is not set\n')
+        sys.exit(70)
+    return path
+
+
+def load_json(path, default):
+    try:
+        with open(path, 'r', encoding='utf-8') as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return default
+
+
+def server_error(cmd_id, code, message):
+    sys.stderr.write(json.dumps({'error': {'code': code, 'message': message},
+                                 'id': cmd_id}) + '\n')
+    sys.exit(1)
+
+
+def usage_error(message):
+    sys.stderr.write('error: %s\n' % message)
+    sys.exit(2)
+
+
+def ok(cmd_id, result):
+    sys.stdout.write(json.dumps({'id': cmd_id, 'result': result}) + '\n')
+    sys.exit(0)
+
+
+class Server(object):
+    def __init__(self, root, machine):
+        self.root = root
+        self.machine = machine
+        self.dir = os.path.join(root, machine)
+
+    def agents(self):
+        return load_json(os.path.join(self.dir, 'agents.json'), [])
+
+    def find_agent(self, target):
+        for agent in self.agents():
+            if agent.get('pane_id') == target or agent.get('name') == target:
+                return agent
+        return None
+
+    def pane_file(self, pane_id):
+        return os.path.join(self.dir, 'panes', pane_id.replace(':', '_') + '.out')
+
+    def pane_exists(self, pane_id):
+        return (self.find_agent(pane_id) is not None
+                or os.path.exists(self.pane_file(pane_id)))
+
+    def pane_object(self, pane_id):
+        agent = self.find_agent(pane_id)
+        if agent is not None:
+            return dict(agent)
+        ws, _, _ = pane_id.partition(':')
+        return {'pane_id': pane_id, 'workspace_id': ws, 'tab_id': ws + ':t1',
+                'terminal_id': 'term_' + pane_id.replace(':', ''),
+                'focused': False, 'revision': 1}
+
+    def read_pane(self, pane_id):
+        try:
+            with open(self.pane_file(pane_id), 'r', encoding='utf-8') as fh:
+                return fh.read()
+        except OSError:
+            return ''
+
+    def append_pane(self, pane_id, text):
+        path = self.pane_file(pane_id)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'a', encoding='utf-8') as fh:
+            fh.write(text + '\n')
+
+
+def option(args, name, default=None):
+    if name in args:
+        i = args.index(name)
+        if i + 1 < len(args):
+            return args[i + 1]
+    return default
+
+
+def positional(args, skip_values=()):
+    out = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in skip_values:
+            i += 2
+            continue
+        if a.startswith('--'):
+            i += 1
+            continue
+        out.append(a)
+        i += 1
+    return out
+
+
+VALUE_FLAGS = ('--source', '--lines', '--format', '--timeout', '--until',
+               '--match', '--regex', '--pane', '--direction', '--cwd',
+               '--env', '--ratio', '--kind', '--workspace', '--label')
+
+
+def resolve_machine(root, selector):
+    machines = load_json(os.path.join(root, 'machines.json'), [])
+    for m in machines:
+        if m.get('id') == selector or m.get('label') == selector:
+            if not m.get('enabled', False):
+                server_error('cli:machine', 'machine_disabled',
+                             "machine '%s' is disabled" % selector)
+            return m['id']
+    usage_error("unknown machine '%s'; use `herdr machine list`" % selector)
+
+
+def main(argv):
+    root = state_dir()
+    machine = 'local'
+    args = list(argv)
+    if args[:1] == ['--machine']:
+        if len(args) < 3:
+            usage_error('--machine needs <label-or-id> <command>')
+        machine = resolve_machine(root, args[1])
+        args = args[2:]
+    with open(os.path.join(root, 'argv.log'), 'a', encoding='utf-8') as fh:
+        fh.write(json.dumps({'machine': machine, 'argv': list(argv)}) + '\n')
+
+    unreachable = os.path.join(root, 'unreachable')
+    if machine != 'local' and os.path.exists(unreachable):
+        with open(unreachable, 'r', encoding='utf-8') as fh:
+            if machine in fh.read().split():
+                sys.stderr.write('ssh: connect to host %s port 22: Connection refused\n'
+                                 % machine)
+                sys.exit(1)
+
+    if not args:
+        usage_error('the fake does not launch a TUI')
+    if args[0] in ('--version', '-V'):
+        print('herdr %s' % VERSION)
+        return
+    if args[0] == '--skill':
+        print('---\nname: herdr\ndescription: fake official skill\n---\n')
+        return
+    srv = Server(root, machine)
+    group, rest = args[0], args[1:]
+    verb = rest[0] if rest else ''
+    tail = rest[1:]
+    if group == 'machine' and verb == 'list':
+        print(json.dumps(load_json(os.path.join(root, 'machines.json'), [])))
+        return
+    if group == 'agent':
+        return agent_cmd(srv, verb, tail)
+    if group == 'pane':
+        return pane_cmd(srv, verb, tail)
+    usage_error("unrecognized subcommand '%s'" % ' '.join(args[:2]))
+
+
+def agent_cmd(srv, verb, tail):
+    cid = 'cli:agent:' + verb
+    pos = positional(tail, VALUE_FLAGS)
+    if verb == 'list':
+        ok(cid, {'agents': srv.agents(), 'type': 'agent_list'})
+    if verb == 'get':
+        if not pos:
+            usage_error('agent get <target>')
+        agent = srv.find_agent(pos[0])
+        if agent is None:
+            server_error(cid, 'agent_not_found', 'agent target %s not found' % pos[0])
+        ok(cid, {'agent': agent, 'type': 'agent_info'})
+    if verb == 'prompt':
+        if len(pos) < 2:
+            usage_error('agent prompt <target> <text>')
+        agent = srv.find_agent(pos[0])
+        if agent is None:
+            server_error(cid, 'agent_not_found', 'agent target %s not found' % pos[0])
+        if agent.get('agent_status') == 'blocked':
+            server_error(cid, 'agent_blocked', 'agent %s is blocked' % pos[0])
+        srv.append_pane(agent['pane_id'], pos[1])
+        ok(cid, {'agent': agent, 'type': 'agent_prompt'})
+    if verb in ('start', 'wait', 'send-keys', 'read', 'rename', 'focus'):
+        ok(cid, {'type': 'agent_' + verb.replace('-', '_')})
+    usage_error("unrecognized subcommand 'agent %s'" % verb)
+
+
+def pane_cmd(srv, verb, tail):
+    cid = 'cli:pane:' + verb
+    pos = positional(tail, VALUE_FLAGS)
+    if verb == 'current':
+        if srv.machine != 'local':
+            server_error(cid, 'pane_not_found', 'no current pane on a forwarded machine')
+        pane = os.environ.get('HERDR_PANE_ID')
+        if not pane:
+            server_error(cid, 'pane_not_found', 'no current pane')
+        ok(cid, {'pane': srv.pane_object(pane), 'type': 'pane_current'})
+    if verb == 'get':
+        if not pos:
+            usage_error('pane get <pane_id>')
+        if not srv.pane_exists(pos[0]):
+            server_error(cid, 'pane_not_found', 'pane %s not found' % pos[0])
+        ok(cid, {'pane': srv.pane_object(pos[0]), 'type': 'pane_info'})
+    if verb == 'read':
+        if not pos:
+            usage_error('pane read <pane_id>')
+        if not srv.pane_exists(pos[0]):
+            server_error(cid, 'pane_not_found', 'pane %s not found' % pos[0])
+        lines = srv.read_pane(pos[0]).splitlines()
+        n = int(option(tail, '--lines', '0') or 0)
+        if n > 0:
+            lines = lines[-n:]
+        sys.stdout.write('\n'.join(lines) + ('\n' if lines else ''))
+        return
+    if verb == 'wait-output':
+        if not pos:
+            usage_error('pane wait-output <pane_id> (--match TEXT | --regex PATTERN)')
+        match, regex = option(tail, '--match'), option(tail, '--regex')
+        if match is None and regex is None:
+            usage_error('pane wait-output needs --match or --regex')
+        timeout_ms = int(option(tail, '--timeout', '0') or 0)
+        deadline = time.time() + timeout_ms / 1000.0
+        while True:
+            text = srv.read_pane(pos[0])
+            if (match is not None and match in text) or \
+                    (regex is not None and re.search(regex, text)):
+                ok(cid, {'matched': True, 'type': 'pane_wait_output'})
+            if timeout_ms and time.time() >= deadline:
+                server_error(cid, 'timeout', 'timed out waiting for output')
+            time.sleep(0.05)
+    if verb == 'split':
+        n = len(os.listdir(os.path.join(srv.dir, 'panes'))) + 100 \
+            if os.path.isdir(os.path.join(srv.dir, 'panes')) else 100
+        new = 'w1:p%d' % n
+        srv.append_pane(new, '')
+        ok(cid, {'pane': srv.pane_object(new), 'type': 'pane_split'})
+    if verb in ('close', 'run', 'send-text', 'send-keys', 'layout'):
+        ok(cid, {'type': 'pane_' + verb.replace('-', '_')})
+    usage_error("unrecognized subcommand 'pane %s'" % verb)
+
+
+if __name__ == '__main__':
+    main(sys.argv[1:])
