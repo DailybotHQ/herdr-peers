@@ -73,6 +73,9 @@ assert_contains "wait-output timeout code" "$ERR" '"code": "timeout"'
 run herdr machine list --json
 assert_contains "machine list --json prints the saved profiles" "$OUT" '"id": "bb22"'
 
+run env FAKE_HERDR_FAIL="agent prompt" herdr agent prompt w1:p2 "x"
+assert_rc "FAKE_HERDR_FAIL injects a server error" 1
+
 run herdr no-such-group
 assert_rc "unknown subcommand is a syntax error (exit 2)" 2
 

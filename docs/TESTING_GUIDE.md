@@ -20,8 +20,10 @@ exits 2.
 | `harness` | The sandbox is sealed (HOME, PATH, env) and the fake `herdr` models the real 0.9.x shapes (envelopes, error codes, `--machine`, unreachable/disabled machines, `wait-output`). | `tests/run.sh`, `tests/lib.sh`, `tests/fakes/herdr` |
 | `protocol` | Every fixture in `tests/fixtures/messages/` classifies as its filename prefix says (`answer-`/`never-`/`none-`) with the matching exit code; helper-built asks parse back at the receiver. | `skills/herdr-peers/protocol.md` §4, `scripts/herdr_peers.py` (`check`, parser) |
 | `helper` | Every verb against the fake: ask (stamp, grant, record before send, self/blocked/missing peers, stdin), reply routing (`--machine`, probed self id, `HERDR_PEERS_SELF`, no-route refusal), depth, fan-out cap and recorded override, cancel, scope, receive/reply exactly once, caller-side record-before-rely (recorded / already-recorded / conflict / unsolicited), self-loop and scope on receive, wait (round trip, timeout, unknown id), list, log, `DWP_PLAN` mirror, log location. | `skills/herdr-peers/SKILL.md`, `discipline.md`, `launcher.md` | `skill` |
+| `skills/herdr-peers/templates/`, `tests/tools/` | `templates skill` |
 | `skills/herdr-peers/scripts/`, `bin/herdr-peers` |
 | `skill` | Frontmatter (name, `metadata.protocol: 1`, versions equal to the helper, `allowed-tools`, strict trigger description ≤ 1024 chars), pinned official-skill dependency, Trust boundary section, marketplace rules (no fetch-piped-to-shell, no bypass flag, pinned installs, no vendor or methodology names), relative links resolve, docs carry the helper's grant/clause verbatim, `--skill`, and a copy of only the skill directory works (install simulation). | `skills/herdr-peers/*.md`, `scripts/` |
+| `templates` | The four templates exist; the delegation-record schema requires every plan-agnostic delegation field; a scripted run produces every role/state the helper writes (caller launched/completed/cancelled/failed, delegate launched/completed) and every line — and the `DWP_PLAN` mirror — validates (`tests/tools/validate_records.py`, stdlib); negative records are rejected; message templates match real helper output. | `skills/herdr-peers/templates/`, the helper's record writer |
 | `lint` | `shellcheck` (pinned `v0.11.0` in CI) over every shell file, `bash -n`, python compilation, JSON validity. Skips honestly when `shellcheck` is not installed. | every `*.sh`, both helper entry points, every `*.py`, every `*.json` |
 
 ## Source-to-test map
@@ -33,6 +35,7 @@ When a change touches… run at least…
 | `tests/run.sh`, `tests/lib.sh`, `tests/fakes/` | `harness lint`, then the full suite (every scope depends on them) |
 | `skills/herdr-peers/protocol.md`, `tests/fixtures/messages/` | `protocol helper` |
 | `skills/herdr-peers/SKILL.md`, `discipline.md`, `launcher.md` | `skill` |
+| `skills/herdr-peers/templates/`, `tests/tools/` | `templates skill` |
 | `skills/herdr-peers/scripts/`, `bin/herdr-peers` | `protocol helper lint`, then the full suite before a release |
 | `.github/workflows/ci.yml` | `lint` locally; CI itself on push |
 | anything else | the full suite |
@@ -48,6 +51,8 @@ When a change touches… run at least…
   discovery at the sandbox (it lives inside this repository's `tmp/`), and a
   run that leaves `.herdr-peers/` in the repository root fails. The sandbox is deleted on exit
   (`HERDR_PEERS_KEEP_SANDBOX=1` keeps it for debugging).
+- **Fake failures.** `FAKE_HERDR_FAIL="<group> <verb>"` makes that fake
+  command fail with a server error, for transport-failure paths.
 - **No network, no installs.** Nothing is downloaded or installed by the
   suite; the fake `herdr` never opens a socket.
 - **Python floor.** Runtime code targets python3 ≥ 3.9 (standard library

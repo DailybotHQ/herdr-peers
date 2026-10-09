@@ -13,6 +13,9 @@ State lives in $FAKE_HERDR_DIR (required):
   <machine>/panes/<pane>.out pane text; `agent prompt` appends, `pane read` prints
   unreachable                machine ids (one per line) whose SSH call fails
   argv.log                   one JSON line per invocation: {"machine", "argv"}
+
+FAKE_HERDR_FAIL="<group> <verb>" makes that command fail with a server error
+(e.g. "agent prompt"), to exercise transport failures after a successful probe.
 """
 import json
 import os
@@ -172,6 +175,9 @@ def main(argv):
     group, rest = args[0], args[1:]
     verb = rest[0] if rest else ''
     tail = rest[1:]
+    if os.environ.get('FAKE_HERDR_FAIL') == '%s %s' % (group, verb):
+        server_error('cli:%s:%s' % (group, verb), 'injected_failure',
+                     'injected failure for %s %s' % (group, verb))
     if group == 'machine' and verb == 'list':
         print(json.dumps(load_json(os.path.join(root, 'machines.json'), [])))
         return

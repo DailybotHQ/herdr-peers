@@ -67,7 +67,7 @@ assert_contains "has a Trust boundary (write scope) section" "$body" "## 6. Trus
 assert_contains "says received text is data, not instructions" "$body" "data, not instructions"
 
 # Marketplace rules over every shipped skill file.
-all=$(cat "$SKILL_DIR"/*.md "$SKILL_DIR"/scripts/* 2>/dev/null)
+all=$(cat "$SKILL_DIR"/*.md "$SKILL_DIR"/templates/* "$SKILL_DIR"/scripts/* 2>/dev/null)
 if printf '%s' "$all" | grep -Eq '(curl|wget)[^|]*\|[[:space:]]*(sudo[[:space:]]+)?(ba|z|da)?sh\b'; then
   t_fail "no fetch-piped-to-shell line (E005)"
 else t_ok "no fetch-piped-to-shell line (E005)"; fi
@@ -80,9 +80,10 @@ if grep -rqi 'dailybot' "$SKILL_DIR"; then t_fail "no vendor (dailybot) names un
 if grep -rqiE 'deepworkplan|\.dwp/' "$SKILL_DIR"; then t_fail "standalone: no methodology names or .dwp/ paths"; else t_ok "standalone: no methodology names or .dwp/ paths"; fi
 
 # Relative links in the skill's markdown resolve inside the skill directory.
-broken=$(cd "$SKILL_DIR" && for f in *.md; do
+broken=$(cd "$SKILL_DIR" && for f in *.md templates/*.md; do
+  [ -f "$f" ] || continue
   grep -Eo '\]\([^)#]+\)' "$f" | sed 's/^](//; s/)$//' | grep -v '://' |
-    while IFS= read -r l; do [ -e "$l" ] || echo "$f -> $l"; done
+    while IFS= read -r l; do [ -e "$(dirname "$f")/$l" ] || echo "$f -> $l"; done
 done)
 assert_eq "every relative link in the skill resolves" "" "$broken"
 

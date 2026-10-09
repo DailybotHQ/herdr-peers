@@ -24,7 +24,7 @@ for f in $shell_files; do
   check "bash -n $(basename "$f")" bash -n "$f"
 done
 
-for f in "$ROOT/tests/fakes/herdr" "$ROOT"/skills/herdr-peers/scripts/*.py; do
+for f in "$ROOT/tests/fakes/herdr" "$ROOT"/skills/herdr-peers/scripts/*.py "$ROOT"/tests/tools/*.py; do
   [ -f "$f" ] || continue
   check "python compiles $(basename "$f")" python3 -c \
     'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' "$f"

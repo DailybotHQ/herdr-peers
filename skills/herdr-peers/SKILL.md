@@ -110,7 +110,8 @@ unresolved disagreement, or no reachable peer.
 How several peers share a repository — one writer per path, a worktree per
 writing peer, fan-out and join, cleanup, layout — is in
 [discipline.md](discipline.md). Starting a new peer in a pane is in
-[launcher.md](launcher.md).
+[launcher.md](launcher.md). Message templates and the delegation-record
+schema are in [templates/](templates/).
 
 ## 6. Trust boundary (write scope)
 
