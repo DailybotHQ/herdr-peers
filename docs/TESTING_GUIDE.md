@@ -18,6 +18,8 @@ exits 2.
 | Scope | What it proves | Source it covers |
 | --- | --- | --- |
 | `harness` | The sandbox is sealed (HOME, PATH, env) and the fake `herdr` models the real 0.9.x shapes (envelopes, error codes, `--machine`, unreachable/disabled machines, `wait-output`). | `tests/run.sh`, `tests/lib.sh`, `tests/fakes/herdr` |
+| `protocol` | Every fixture in `tests/fixtures/messages/` classifies as its filename prefix says (`answer-`/`never-`/`none-`) with the matching exit code; helper-built asks parse back at the receiver. | `skills/herdr-peers/protocol.md` §4, `scripts/herdr_peers.py` (`check`, parser) |
+| `helper` | Every verb against the fake: ask (stamp, grant, record before send, self/blocked/missing peers, stdin), reply routing (`--machine`, probed self id, `HERDR_PEERS_SELF`, no-route refusal), depth, fan-out cap and recorded override, cancel, scope, receive/reply exactly once, caller-side record-before-rely (recorded / already-recorded / conflict / unsolicited), self-loop and scope on receive, wait (round trip, timeout, unknown id), list, log, `DWP_PLAN` mirror, log location. | `skills/herdr-peers/scripts/`, `bin/herdr-peers` |
 | `lint` | `shellcheck` (pinned `v0.11.0` in CI) over every shell file, `bash -n`, python compilation, JSON validity. Skips honestly when `shellcheck` is not installed. | every `*.sh`, both helper entry points, every `*.py`, every `*.json` |
 
 ## Source-to-test map
@@ -27,6 +29,8 @@ When a change touches… run at least…
 | Changed path | Scopes |
 | --- | --- |
 | `tests/run.sh`, `tests/lib.sh`, `tests/fakes/` | `harness lint`, then the full suite (every scope depends on them) |
+| `skills/herdr-peers/protocol.md`, `tests/fixtures/messages/` | `protocol helper` |
+| `skills/herdr-peers/scripts/`, `bin/herdr-peers` | `protocol helper lint`, then the full suite before a release |
 | `.github/workflows/ci.yml` | `lint` locally; CI itself on push |
 | anything else | the full suite |
 
@@ -37,7 +41,9 @@ When a change touches… run at least…
   `tests/fakes`, a `python3` shim and the system directories only — the real
   `herdr` (often in `~/.local/bin`) is unreachable. Every `HERDR_*`, `DWP_*`,
   `*_API_KEY` and `*_TOKEN` variable is unset, so a run started inside a live
-  Herdr pane cannot reach that server. The sandbox is deleted on exit
+  Herdr pane cannot reach that server. `GIT_CEILING_DIRECTORIES` stops git
+  discovery at the sandbox (it lives inside this repository's `tmp/`), and a
+  run that leaves `.herdr-peers/` in the repository root fails. The sandbox is deleted on exit
   (`HERDR_PEERS_KEEP_SANDBOX=1` keeps it for debugging).
 - **No network, no installs.** Nothing is downloaded or installed by the
   suite; the fake `herdr` never opens a socket.

@@ -18,6 +18,8 @@ case ":$PATH:" in
 esac
 
 new_world harness
+assert_eq "git discovery stops at the sandbox (no parent repo leaks in)" "" \
+  "$(git rev-parse --show-toplevel 2>/dev/null)"
 run herdr --version
 assert_contains "fake reports a 0.9.x version" "$OUT" "herdr 0.9."
 

@@ -37,6 +37,8 @@ if [ -z "$PYTHON_BIN" ]; then
 fi
 
 mkdir -p "$ROOT/tmp"
+repo_state_before=absent
+[ -e "$ROOT/.herdr-peers" ] && repo_state_before=present
 SANDBOX=$(mktemp -d "$ROOT/tmp/test-sandbox.XXXXXX")
 cleanup() { [ "${HERDR_PEERS_KEEP_SANDBOX:-}" = 1 ] || rm -rf "$SANDBOX"; }
 trap cleanup EXIT
@@ -53,6 +55,9 @@ export HOME="$SANDBOX/home"
 export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share"
 export XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
 export PYTHONDONTWRITEBYTECODE=1 GIT_CONFIG_NOSYSTEM=1
+# The sandbox lives inside this repository's tmp/: stop git discovery at the
+# sandbox so code under test never resolves this repository as its project.
+export GIT_CEILING_DIRECTORIES="$SANDBOX"
 mkdir -p "$HOME" "$SANDBOX/bin"
 ln -s "$PYTHON_BIN" "$SANDBOX/bin/python3"
 export PATH="$ROOT/tests/fakes:$SANDBOX/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -71,6 +76,11 @@ for s in $scopes; do
   . "$ROOT/tests/scopes/$s.sh"
   cd "$SANDBOX" || exit 2
 done
+
+# Sandbox guard: no run may leave helper state in the repository itself.
+if [ -e "$ROOT/.herdr-peers" ] && [ "$repo_state_before" = absent ]; then
+  t_fail "sandbox guard: the run left .herdr-peers/ in the repository root"
+fi
 
 printf 'passed: %d failed: %d skipped: %d\n' "$T_PASS" "$T_FAIL" "$T_SKIP"
 [ "$T_FAIL" -eq 0 ]

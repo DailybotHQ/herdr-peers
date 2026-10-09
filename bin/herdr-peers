@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Repository-checkout shim: the helper ships inside the skill
+# (skills/herdr-peers/scripts/) so `npx skills add` installs it too.
+set -u
+
+src=${BASH_SOURCE[0]}
+while [ -L "$src" ]; do
+  dir=$(cd -P "$(dirname "$src")" && pwd)
+  src=$(readlink "$src")
+  case $src in /*) ;; *) src="$dir/$src" ;; esac
+done
+here=$(cd -P "$(dirname "$src")" && pwd)
+exec bash "$here/../skills/herdr-peers/scripts/herdr-peers" "$@"
