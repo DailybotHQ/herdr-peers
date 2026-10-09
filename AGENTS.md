@@ -63,4 +63,4 @@ The test map lives in [`docs/TESTING_GUIDE.md`](docs/TESTING_GUIDE.md).
 
 Structured work runs through the installed `deepworkplan` skill (`.agents/skills/deepworkplan/`, pinned in `skills-lock.json`); the `/dwp-*` commands are thin delegators in `.agents/commands/` (`.claude` and `.cursor` are symlinks to `.agents/`). Plans live in the gitignored `.dwp/`; only the addon registry `.dwp/config.json` is tracked (`herdr` enabled — this repository ships it; `ai-diff-reviewer` enabled for the local review).
 
-DWP standard: 7.0.0 (onboarded 2026-10-08; upgraded 2026-10-09; skill 7.0.0)
+DWP standard: 7.0.0 (onboarded 2026-10-08; upgraded 2026-10-09; skill 7.0.1)
