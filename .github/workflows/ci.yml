@@ -17,6 +17,18 @@ env:
   SHELLCHECK_VERSION: v0.11.0
 
 jobs:
+  hygiene:
+    name: public hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Public-hygiene check (tracked files, no network)
+        run: bash scripts/check-public-hygiene.sh
+
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

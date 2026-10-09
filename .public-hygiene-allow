@@ -1,0 +1,6 @@
+# Allow-list for scripts/check-public-hygiene.sh.
+# Format: <path> <secret-rule> <reason>. Only secret-* rules can be listed,
+# and every allowed hit line must say it is fake (fake, test, planted or
+# example). Private names, personal paths and addresses can never be allowed.
+tests/fixtures/messages/never-carries-secret.txt secret-private-key Bare private-key header (no key material) that the protocol scope must classify as never-answer.
+tests/scopes/security.sh secret-assignment FAKE_SECRET is a per-run test value used to prove the helper never sends or echoes secret values.

@@ -1,0 +1,45 @@
+name: Bug report
+description: Something in herdr-peers does not behave as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security issues go through SECURITY.md (private reporting), never here.
+        Do not paste API keys, tokens or private hostnames — name variables instead.
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `herdr-peers --version` and `herdr --version`.
+      placeholder: herdr-peers 0.1.0 (protocol 1) · herdr 0.9.1
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: OS, shell, python3 version, local or cross-machine (`--machine`).
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The commands you ran and, for `check`, the message text (with secrets removed).
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Output and exit code. `herdr-peers log --json` helps for record problems.
+    validations:
+      required: true

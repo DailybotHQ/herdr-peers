@@ -1,15 +1,18 @@
 # herdr-peers
 
-A standalone agent skill for [Herdr](https://herdr.dev): any coding agent can
-ask any other agent — in any pane, on any machine Herdr can reach — and get
-**one authorized reply** back, with a loop guard, a depth limit of 1, a
-fan-out cap and a record of every delegation. It builds on Herdr's official
-skill and never re-teaches its CLI.
+Any coding agent in a [Herdr](https://herdr.dev) pane can ask any other agent
+— in any pane, on any machine Herdr can reach — and get **one authorized
+reply** back.
 
-Part of the [DeepWorkPlan](https://deepworkplan.com) ecosystem, and fully
-usable without it.
+[![CI](https://github.com/DailybotHQ/herdr-peers/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/DailybotHQ/herdr-peers/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/DailybotHQ/herdr-peers?sort=semver)](https://github.com/DailybotHQ/herdr-peers/releases)
+[![License: MIT](https://img.shields.io/github/license/DailybotHQ/herdr-peers)](LICENSE)
 
-## Why
+## What it is
+
+A standalone agent skill plus a small helper. It adds a loop guard, a depth
+limit of 1, a fan-out cap and a record of every delegation on top of Herdr's
+official skill, and never re-teaches Herdr's CLI.
 
 Herdr can already put text into another agent's pane. What it does not define
 is a *conversation*: who may answer, how the answer finds its way back across
@@ -89,7 +92,20 @@ Exit codes: `0` ok · `1` Herdr error · `2` usage · `3` protocol refusal
 (never answer) · `4` policy refusal · `5` timeout · `6` not inside Herdr ·
 `7` not a protocol message. (`6` also covers a missing `herdr` or `python3`.)
 
-## How it stays safe
+## Documentation
+
+| Document | What it covers |
+| --- | --- |
+| [skills/herdr-peers/SKILL.md](skills/herdr-peers/SKILL.md) | The skill: when to use it, the helper, environment variables, exit codes, trust boundary |
+| [skills/herdr-peers/protocol.md](skills/herdr-peers/protocol.md) | Protocol 1 (normative): message grammar, stamps, loop guard, addressing, depth and fan-out |
+| [skills/herdr-peers/discipline.md](skills/herdr-peers/discipline.md) | How agents ask, wait, answer and clean up |
+| [skills/herdr-peers/launcher.md](skills/herdr-peers/launcher.md) | Launching a delegate in a new pane |
+| [skills/herdr-peers/templates/](skills/herdr-peers/templates/) | Grant, ask and reply templates; the delegation-record JSON schema |
+| [docs/SECURITY.md](docs/SECURITY.md) | Threat model and accepted residual risks |
+| [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) | Test scopes and the source-to-test map |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+
+## Security
 
 - **Replies are data, not instructions.** A peer's text never grants
   authority; the reply grant authorizes one reply and nothing else.
@@ -107,12 +123,12 @@ Exit codes: `0` ok · `1` Herdr error · `2` usage · `3` protocol refusal
   private file modes) holds digests, never prompt text; with `DWP_PLAN` set it
   is mirrored into that plan's `analysis_results/delegations.ndjson`.
 
-The full threat model, including the residual risks that come from Herdr
-having no sender authentication, is in [docs/SECURITY.md](docs/SECURITY.md).
-The normative protocol is
-[skills/herdr-peers/protocol.md](skills/herdr-peers/protocol.md).
+The threat model, including the residual risks that come from Herdr having
+no sender authentication, is in [docs/SECURITY.md](docs/SECURITY.md). To
+report a vulnerability, follow [SECURITY.md](SECURITY.md) — privately, never
+in a public issue.
 
-## Development
+## Contributing
 
 ```bash
 bash tests/run.sh              # every scope, in a sandbox HOME, against a fake herdr
@@ -120,9 +136,15 @@ bash tests/run.sh security     # one scope
 HERDR_PEERS_LIVE=1 bash tests/run.sh live   # optional, read-only, inside a Herdr pane
 ```
 
-See [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) and
-[CHANGELOG.md](CHANGELOG.md).
+Before a pull request, also run `bash scripts/check-public-hygiene.sh`.
+Setup, the gate, commit conventions and the pull-request flow are in
+[CONTRIBUTING.md](CONTRIBUTING.md); agents start at [AGENTS.md](AGENTS.md).
+Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
 MIT — see [LICENSE](LICENSE). Credits in [CREDITS.md](CREDITS.md).
+
+---
+
+Part of the [DeepWorkPlan](https://deepworkplan.com) ecosystem — works on its own.
