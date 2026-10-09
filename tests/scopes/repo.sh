@@ -30,8 +30,11 @@ check "SECURITY.md has supported versions and private reporting" \
 check "CHANGELOG follows Keep a Changelog" grep -q 'keepachangelog.com' "$ROOT/CHANGELOG.md"
 check "issue config turns blank issues off" grep -q 'blank_issues_enabled: false' "$ROOT/.github/ISSUE_TEMPLATE/config.yml"
 check "PR template asks for no secrets or private context" grep -qi 'no secrets' "$ROOT/.github/PULL_REQUEST_TEMPLATE.md"
-check ".gitignore covers .dwp/, tmp/, .env and .env.*" \
-  sh -c 'for p in ".dwp/" "tmp/" ".env" ".env.*" "!.env.example"; do grep -qxF "$p" "$1" || exit 1; done' _ "$ROOT/.gitignore"
+check ".gitignore covers .dwp/* (registry tracked), tmp/, .env and .env.*" \
+  sh -c 'for p in ".dwp/*" "!.dwp/config.json" "tmp/" ".env" ".env.*" "!.env.example"; do grep -qxF "$p" "$1" || exit 1; done' _ "$ROOT/.gitignore"
+assert_eq "skills/ ships only the herdr-peers skill (no vendored-skill links)" \
+  "$ROOT/skills/herdr-peers" "$(find "$ROOT/skills" -mindepth 1 -maxdepth 1 | sort | tr '\n' ' ' | sed 's/ $//')"
+check "no stray agent/ install directory" test ! -e "$ROOT/agent"
 check "CI runs the public-hygiene check" grep -q 'check-public-hygiene.sh' "$ROOT/.github/workflows/ci.yml"
 
 order=$(sed -n 's/^## //p' "$ROOT/README.md" | tr '\n' '|')

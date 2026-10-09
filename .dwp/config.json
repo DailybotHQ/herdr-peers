@@ -1,0 +1,14 @@
+{
+  "addons": {
+    "ai-diff-reviewer": {
+      "enabled": true,
+      "note": "Installed with the v7.0.0 upgrade: local review only, CI leg not wired.",
+      "version": "v3.3.0"
+    },
+    "herdr": {
+      "enabled": true,
+      "note": "This repository ships herdr-peers; the checkout helper is bin/herdr-peers.",
+      "version": "v0.1.0"
+    }
+  }
+}
