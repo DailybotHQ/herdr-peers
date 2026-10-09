@@ -44,16 +44,18 @@ cleanup() { [ "${HERDR_PEERS_KEEP_SANDBOX:-}" = 1 ] || rm -rf "$SANDBOX"; }
 trap cleanup EXIT
 
 # Opt-in live scope only: remember the real Herdr context before isolation.
-LIVE_HERDR_BIN="" LIVE_ENV=""
+# Kept in plain (not exported) shell variables, so no other scope's child
+# process can inherit them; the live scope passes them explicitly.
+# shellcheck disable=SC2034  # read by tests/scopes/live.sh, which is sourced
+LIVE_HERDR_BIN="" LIVE_SOCKET="" LIVE_PANE="" LIVE_WORKSPACE="" LIVE_TAB=""
+# shellcheck disable=SC2034  # same: consumed by the sourced live scope
 if [ "${HERDR_PEERS_LIVE:-}" = 1 ] && [ "${HERDR_ENV:-}" = 1 ]; then
   LIVE_HERDR_BIN=$(command -v herdr || true)
-  for v in HERDR_ENV HERDR_SOCKET_PATH HERDR_PANE_ID HERDR_WORKSPACE_ID HERDR_TAB_ID HERDR_BIN_PATH; do
-    eval "val=\${$v:-}"
-    # shellcheck disable=SC2154
-    [ -n "$val" ] && LIVE_ENV="$LIVE_ENV $v=$val"
-  done
+  LIVE_SOCKET=${HERDR_SOCKET_PATH:-}
+  LIVE_PANE=${HERDR_PANE_ID:-}
+  LIVE_WORKSPACE=${HERDR_WORKSPACE_ID:-}
+  LIVE_TAB=${HERDR_TAB_ID:-}
 fi
-export LIVE_HERDR_BIN LIVE_ENV
 
 # Isolate the environment.
 for v in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p'); do

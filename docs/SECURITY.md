@@ -61,10 +61,10 @@ once with `herdr-peers reply`. Both sides keep an append-only local record.
 | T9 | **Reply misrouting across machines** — `local` resolved on the wrong server. | A caller never sends `from=local` to another machine; it names an address the peer can reach (`HERDR_PEERS_SELF`, `--from`, or a probe matching its own `terminal_id`) or refuses with *no reply route*. | `helper` |
 | T10 | **Terminal manipulation** — escape sequences, C1 controls, bidi overrides or zero-width characters that hide or fake text. | Outgoing messages with such characters are refused; received ones are never answered; every string printed from Herdr or a peer (titles, kinds, labels, errors) is neutralized. | `security` |
 | T11 | **Option/argument injection into `herdr`** | Every call is an argv list (no shell); addresses and ids are validated with full-string matches (no trailing-newline tricks); machine ids never start with `-`; a message starting with `-` is shifted by one space. | `security` |
-| T12 | **Oversized messages** | 16384-byte limit (`HERDR_PEERS_MAX_BYTES` lowers it) on send and receive. | `security` |
+| T12 | **Oversized messages** | 16384-byte limit on send and receive; `HERDR_PEERS_MAX_BYTES` can lower it, never raise it. | `security` |
 | T13 | **Secret leakage** in messages, logs or replies. | Outgoing text containing the value of any variable named `*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*_SECRET_KEY`, `*_ACCESS_KEY` or `*_PASSWORD` (case-insensitive, ≥ 8 chars), a private-key block or a known token shape is refused — naming the variable, never the value. A received message carrying one is never answered and never stored. Records hold `sha256:` digests of prompts, never their text. | `security`, `templates` |
 | T14 | **Scope bypass** — labels, case variants, `local` vs ids. | Scope compares exact machine ids (and workspaces); anything not listed is refused (fail-closed). | `security` |
-| T15 | **Record tampering and filesystem tricks** | Log and reply copies are `0600` in a `0700` directory with a `.gitignore`; symlinked log or reply files are refused (`O_NOFOLLOW`) and nothing is sent when the record cannot be written; reply paths are rebuilt from the validated id, never read from the log. | `security` |
+| T15 | **Record tampering and filesystem tricks** | Files the helper writes (log, reply copies, `self.json`, `.gitignore`) are created `0600` without following symlinks (`O_NOFOLLOW`), directories it creates are `0700`; an existing `.gitignore` is never touched; symlinked log or reply files are refused and nothing is sent when the record cannot be written; reply paths are rebuilt from the validated id, never read from the log. | `security` |
 | T16 | **Malformed or hostile JSON from Herdr** | Every field is type-checked; malformed machines/agents are dropped; nothing crashes into a traceback. | `security` |
 | T17 | **Panes and layout** — closing or moving others' work. | Discipline: close only panes you created; layout changes are recorded intent; launched peers get default permissions, never a bypass flag. | `skill` (marketplace rules) |
 
@@ -103,5 +103,8 @@ Runtime code is `bash` and the `python3` standard library only — no packages
 are installed. The official Herdr skill is referenced pinned
 (`herdrdev/herdr@v0.9.3`) or via the installed binary's `herdr --skill`. CI
 pins GitHub Actions by commit SHA and verifies the shellcheck download
-against its published SHA-256. Releases carry a `SHA256SUMS` file over the
-shipped files.
+against its published SHA-256. The v0.1.0 release carries a `SHA256SUMS`
+asset over the shipped files (`skills/herdr-peers/**`, `bin/herdr-peers`,
+`LICENSE`), generated at release time from the tagged tree with
+`git ls-files skills bin LICENSE | LC_ALL=C sort | xargs shasum -a 256`;
+verify a checkout with `shasum -a 256 -c SHA256SUMS`.

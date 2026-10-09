@@ -2,18 +2,19 @@
 # Scope `live`: optional checks against a real Herdr server. Opt-in only —
 # run `HERDR_PEERS_LIVE=1 bash tests/run.sh live` from inside a Herdr pane.
 # Everything here is read-only against the server: no pane, tab or session
-# is created, changed or closed, and HOME stays the sandbox (so no saved
-# machines are contacted). Without the opt-in, or without a server, the
+# is created, changed or closed, and the listing is scoped to the local
+# server, so no saved machine is contacted. Without the opt-in, or without a server, the
 # scope reports `unavailable` — never a pass.
 
 if [ "${HERDR_PEERS_LIVE:-}" != 1 ]; then
   t_skip "live: unavailable (opt-in: HERDR_PEERS_LIVE=1 inside a Herdr pane)"
-elif [ -z "$LIVE_HERDR_BIN" ] || [ -z "$LIVE_ENV" ]; then
+elif [ -z "$LIVE_HERDR_BIN" ] || [ -z "$LIVE_PANE" ]; then
   t_skip "live: unavailable (not inside a Herdr pane, or herdr is not installed)"
 else
   live() {
-    # shellcheck disable=SC2086
-    env $LIVE_ENV PATH="$(dirname "$LIVE_HERDR_BIN"):$SANDBOX/bin:/usr/bin:/bin" "$@"
+    env HERDR_ENV=1 HERDR_SOCKET_PATH="$LIVE_SOCKET" HERDR_PANE_ID="$LIVE_PANE" \
+      HERDR_WORKSPACE_ID="$LIVE_WORKSPACE" HERDR_TAB_ID="$LIVE_TAB" \
+      PATH="$(dirname "$LIVE_HERDR_BIN"):$SANDBOX/bin:/usr/bin:/bin" "$@"
   }
   run live herdr status
   if [ "$RC" != 0 ] || ! printf '%s' "$OUT" | grep -q 'status: running'; then
@@ -27,7 +28,7 @@ else
       t_fail "live: server version >= 0.9.1" "server version: $version"
     fi
     mkdir -p "$SANDBOX/live" && cd "$SANDBOX/live" || exit 2
-    run live "$HELPER" list --json
+    run live "$HELPER" list --json --scope local   # local server only: no saved machine is contacted
     assert_rc "live: herdr-peers list runs against the real server" 0
     you=$(printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(1 for r in d["rows"] if r.get("you")))' 2>/dev/null)
     assert_eq "live: the real listing marks exactly one row as you" "1" "$you"

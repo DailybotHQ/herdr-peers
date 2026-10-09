@@ -80,9 +80,14 @@ is still outstanding.
 | `reply <machine>:<pane> <id> "<answer>"` | Answer an ask exactly once. |
 | `log`, `cancel <id>` | The delegation record; close an open ask. |
 
+Optional environment: `HERDR_PEERS_SCOPE`, `HERDR_PEERS_SELF`,
+`HERDR_PEERS_DEPTH`, `HERDR_PEERS_FANOUT` (lower only), `HERDR_PEERS_MAX_BYTES`,
+`HERDR_PEERS_LOG`, `HERDR_PEERS_PYTHON`, `DWP_PLAN`/`DWP_TASK` — see the table
+in [SKILL.md](skills/herdr-peers/SKILL.md#2-the-helper).
+
 Exit codes: `0` ok · `1` Herdr error · `2` usage · `3` protocol refusal
 (never answer) · `4` policy refusal · `5` timeout · `6` not inside Herdr ·
-`7` not a protocol message.
+`7` not a protocol message. (`6` also covers a missing `herdr` or `python3`.)
 
 ## How it stays safe
 

@@ -4,6 +4,30 @@ All notable changes to herdr-peers. Versions follow semantic versioning
 (0.x: breaking changes bump the minor version and, when the wire format
 changes, the protocol number).
 
+## [Unreleased]
+
+Fixes from the v0.1.0 Final Review (on `main`; the `v0.1.0` tag is unchanged).
+
+### Fixed
+
+- A reply recorded from a pane capture (`wait`) can no longer be replaced by
+  a different reply: `check` reports a conflict and keeps the stored copy.
+- `self.json` and `.gitignore` are written `0600` without following
+  symlinks; an existing `.gitignore` is never touched; the `DWP_PLAN` mirror
+  directory is created `0700`.
+- `cancel` runs under the log lock; `log --open` honours `--id`.
+- `HERDR_PEERS_MAX_BYTES` can lower the size limit, never raise it.
+- Test runner: the real Herdr context for the opt-in `live` scope is no
+  longer exported to other scopes, survives paths with spaces, and the live
+  listing is scoped to the local server.
+
+### Documentation
+
+- Environment-variable table in `SKILL.md` (and a pointer in the README);
+  accurate log/reply locations with `HERDR_PEERS_LOG`; how the release
+  `SHA256SUMS` is produced; exit code `6` also covers a missing `herdr` or
+  `python3`; the self-address probe's assumption.
+
 ## [0.1.0] — 2026-10-08
 
 First release. Interface version: **protocol 1** (`metadata.protocol: 1` in

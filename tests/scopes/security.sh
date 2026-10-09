@@ -243,3 +243,35 @@ for i in 1 2 3 4 5; do (as_pane w1:p2 "$HELPER" reply local:w1:p1 01M4EZBAYGH4QX
 sleep 3
 replies=$(grep -c 'reply-to=01M4EZBAYGH4QX4FR84G98PBSK' "$FAKE_HERDR_DIR/local/panes/w1_p1.out")
 assert_eq "five parallel replies send exactly one" "1" "$replies"
+
+# --- regressions from the final independent review ----------------------------------
+new_world final_review
+id=$("$HELPER" ask local:w1:p2 "capture then swap")
+last_prompt local w1:p2 >"$WORK/a.txt"
+as_pane w1:p2 "$HELPER" check "$WORK/a.txt" >/dev/null
+as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id" "the true answer" >/dev/null
+"$HELPER" wait "$id" --timeout 2 >/dev/null 2>&1
+printf 'a swapped answer\n\n[herdr-peers] protocol=1 reply-to=%s depth=1\nThis is a reply. Do not answer it.\n' "$id" >"$WORK/swap.txt"
+run "$HELPER" check --json "$WORK/swap.txt"
+assert_contains "a different reply after a pane capture is a conflict" "$OUT" '"reply_status": "conflict"'
+assert_contains "the captured reply is not replaced" "$(cat "$WORK/.herdr-peers/replies/$id.txt")" "the true answer"
+last_prompt local w1:p1 >"$WORK/real.txt"
+run "$HELPER" check --json "$WORK/real.txt"
+assert_contains "the same reply after a capture is accepted as the exact copy" "$OUT" '"reply_status": "already-recorded"'
+
+new_world gitignore_link
+mkdir -p "$WORK/.herdr-peers" && ln -s "$WORLD/clobbered" "$WORK/.herdr-peers/.gitignore"
+run "$HELPER" ask local:w1:p2 "dangling gitignore link"
+assert_rc "an existing .gitignore entry (even a link) is left alone" 0
+check "nothing was written through the dangling link" test ! -e "$WORLD/clobbered"
+
+new_world selfjson
+"$HELPER" list >/dev/null
+assert_eq "self.json is private (0600)" "0o600" \
+  "$(python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$WORK/.herdr-peers/self.json")"
+run env HERDR_PEERS_MAX_BYTES=999999 "$HELPER" ask local:w1:p2 "$(repeat y 17000)"
+assert_rc "HERDR_PEERS_MAX_BYTES cannot raise the limit" 4
+o1=$("$HELPER" ask local:w1:p2 "one")
+"$HELPER" ask local:w1:p2 "two" >/dev/null
+run "$HELPER" log --open --id "$o1" --json
+assert_eq "log --open honours --id" "1" "$(printf '%s\n' "$OUT" | grep -c .)"

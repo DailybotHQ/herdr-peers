@@ -55,6 +55,19 @@ opinion nobody asked for, or to avoid doing the work yourself.
 | `log [--open] [--json]` | The delegation record. |
 | `cancel <id> [--reason R]` | Closes an open ask (yours, or one you decline). |
 
+Environment (all optional):
+
+| Variable | Effect |
+| --- | --- |
+| `HERDR_PEERS_SCOPE` | Allow-list: `*`, `<machine>`, `<machine>:<workspace>`, comma-separated (`--scope` per call). |
+| `HERDR_PEERS_SELF` | This machine's id as saved on remote peers — the `from=` for asks to other machines. Authoritative; without it the helper probes for the saved machine that is this server, which is right only when every host saves this machine under the same id. |
+| `HERDR_PEERS_DEPTH` | `1` marks this pane as a delegate: it may not ask. Set by the launcher. |
+| `HERDR_PEERS_FANOUT` | Lowers the open-ask cap (never above 4; raise per call with `--fanout N --reason`). |
+| `HERDR_PEERS_MAX_BYTES` | Message size limit (default 16384). |
+| `HERDR_PEERS_LOG` | Log file path (default `.herdr-peers/log.ndjson` at the repository root). |
+| `HERDR_PEERS_PYTHON` | Python interpreter for the helper (default `python3`). |
+| `DWP_PLAN`, `DWP_TASK` | When a plan directory is set, records are mirrored to its `analysis_results/delegations.ndjson`, tagged with the task. |
+
 Exit codes: `0` ok · `1` Herdr error · `2` usage · `3` protocol refusal —
 never answer · `4` policy refusal (scope, self, fan-out, size, control
 characters, secrets, no reply route) · `5` timeout · `6` not inside Herdr ·
@@ -125,9 +138,11 @@ named here) and `Read`.
 - Messages to other panes, only through `herdr-peers ask` / `reply` (which
   use `herdr agent prompt`), only to addresses inside the scope when one is
   set.
-- The local delegation log: `.herdr-peers/` at the repository root (or
-  `$HERDR_PEERS_LOG`), created with a `.gitignore` so it is never committed;
-  reply copies under `.herdr-peers/replies/`. When `DWP_PLAN` names a plan
+- The local delegation log: `.herdr-peers/log.ndjson` at the repository root,
+  in a directory created with a `.gitignore` so it is never committed, with
+  reply copies under `.herdr-peers/replies/`. With `HERDR_PEERS_LOG` set, the
+  log is that file and reply copies go to `replies/` beside it (no
+  `.gitignore` is written there — keep it out of version control yourself). When `DWP_PLAN` names a plan
   directory, the same records are appended to that plan's
   `analysis_results/delegations.ndjson`.
 - Panes, only when the human or the plan asked for a new peer

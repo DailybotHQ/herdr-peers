@@ -81,3 +81,4 @@ assert_rc "unknown subcommand is a syntax error (exit 2)" 2
 
 run bash "$ROOT/tests/run.sh" no-such-scope
 assert_rc "runner refuses an unknown scope (exit 2)" 2
+assert_eq "no real Herdr context is exported to child processes" "" "$(env | grep -E '^LIVE_' || true)"
