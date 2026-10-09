@@ -25,6 +25,7 @@ exits 2.
 | `skill` | Frontmatter (name, `metadata.protocol: 1`, versions equal to the helper, `allowed-tools`, strict trigger description ≤ 1024 chars), pinned official-skill dependency, Trust boundary section, marketplace rules (no fetch-piped-to-shell, no bypass flag, pinned installs, no vendor or methodology names), relative links resolve, docs carry the helper's grant/clause verbatim, `--skill`, and a copy of only the skill directory works (install simulation). | `skills/herdr-peers/*.md`, `scripts/` |
 | `templates` | The four templates exist; the delegation-record schema requires every plan-agnostic delegation field; a scripted run produces every role/state the helper writes (caller launched/completed/cancelled/failed, delegate launched/completed) and every line — and the `DWP_PLAN` mirror — validates (`tests/tools/validate_records.py`, stdlib); negative records are rejected; message templates match real helper output. | `skills/herdr-peers/templates/`, the helper's record writer |
 | `security` | Hostile input end to end (threat model in `docs/SECURITY.md`): spoofed asks and forged/guessed replies, path-like ids, stamp smuggling, oversized messages, control/bidi/zero-width characters, option injection into the herdr argv, scope bypass (labels, case, local), fan-out env cannot raise the cap, secrets (variable values, token shapes, PEM) never sent/stored/echoed, terminal escapes from Herdr output, file modes and symlinked logs, malformed `depth`, newline tricks, `wait` capture validation, pane identity, hostile Herdr JSON, and concurrency (8 parallel asks → 4 open; 5 parallel replies → 1 sent). | the helper, `docs/SECURITY.md` |
+| `live` | **Opt-in** (`HERDR_PEERS_LIVE=1`, inside a Herdr pane): read-only checks against the real server — it answers, version ≥ 0.9.1, `herdr-peers list` parses the real JSON and marks exactly one row as you, a failed ask to a missing pane records nothing. Creates, changes and closes nothing; HOME stays the sandbox, so no saved machine is contacted. Without the opt-in or a server it reports `skip - live: unavailable (…)`. The two-pane round trip is not run live (it would create panes in the human's session); the fake covers it. | the helper against real Herdr |
 | `lint` | `shellcheck` (pinned `v0.11.0` in CI) over every shell file, `bash -n`, python compilation, JSON validity. Skips honestly when `shellcheck` is not installed. | every `*.sh`, both helper entry points, every `*.py`, every `*.json` |
 
 ## Source-to-test map
@@ -40,6 +41,7 @@ When a change touches… run at least…
 | `skills/herdr-peers/scripts/`, `bin/herdr-peers` | `protocol helper lint`, then the full suite before a release |
 | `docs/SECURITY.md` | `security` |
 | `.github/workflows/ci.yml` | `lint` locally; CI itself on push |
+| a Herdr upgrade | `HERDR_PEERS_LIVE=1 bash tests/run.sh live` from a Herdr pane, then update `tests/fakes/herdr` if a shape changed |
 | anything else | the full suite |
 
 ## Posture
@@ -60,9 +62,13 @@ When a change touches… run at least…
 - **Python floor.** Runtime code targets python3 ≥ 3.9 (standard library
   only). Run the suite against a specific interpreter with
   `HERDR_PEERS_TEST_PYTHON=/path/to/python3 bash tests/run.sh`
-  (e.g. `/usr/bin/python3`, 3.9 on macOS). CI runs 3.13.
+  (e.g. `/usr/bin/python3`, 3.9 on macOS). CI runs 3.13. The v0.1.0 suite
+  was run green on 3.9.6, 3.12.14 and 3.14 before release.
 - **Bash floor.** Scripts stay bash 3.2 compatible (macOS `/bin/bash`): no
   associative arrays, no `mapfile`.
+- **Live context.** Only when `HERDR_PEERS_LIVE=1` and the run starts inside
+  a Herdr pane does the runner keep the real `HERDR_*` values and `herdr`
+  path aside for the `live` scope; every other scope still sees none of them.
 - **Output.** TAP-like: `ok N - …`, `not ok N - …` with `#` diagnostics,
   `skip - …`.
 

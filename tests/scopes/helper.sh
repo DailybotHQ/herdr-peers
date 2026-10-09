@@ -220,3 +220,89 @@ run "$HELPER" log --path
 assert_eq "the log lives at the git toplevel" "$(cd "$WORK" && pwd -P)/.herdr-peers/log.ndjson" "$OUT"
 run env HERDR_PEERS_LOG="$WORLD/custom/peers.ndjson" "$HELPER" log --path
 assert_eq "HERDR_PEERS_LOG overrides the location" "$WORLD/custom/peers.ndjson" "$OUT"
+
+# --- coverage: every verb's remaining exit paths ------------------------------------
+new_world coverage
+run "$HELPER"
+assert_rc "no verb prints help and exits 2" 2
+run "$HELPER" --help
+assert_contains "--help lists the verbs" "$OUT" "ask"
+run env HERDR_PEERS_PYTHON=/nonexistent/python3 "$HELPER" --version
+assert_rc "a missing python is an environment error (exit 6)" 6
+run env PATH="$SANDBOX/bin:/usr/bin:/bin" "$HELPER" ask local:w1:p2 "no herdr"
+assert_rc "a missing herdr binary is an environment error (exit 6)" 6
+for verb in "reply local:w1:p2 01M4EZBBXRJMRNV7E9Z0C1HT0H x" "list" "wait 01M4EZBBXRJMRNV7E9Z0C1HT0H"; do
+  # shellcheck disable=SC2086
+  run env HERDR_ENV=0 "$HELPER" $verb
+  assert_rc "${verb%% *} outside Herdr exits 6" 6
+done
+
+run sh -c "printf 'hello\n' | '$HELPER' check"
+assert_rc "check reads stdin; a plain message is not protocol (exit 7)" 7
+assert_contains "the human verdict says NONE" "$OUT" "NONE (rule 1)"
+run sh -c "cat '$FIXTURES/messages/never-reply.txt' | '$HELPER' check --json --no-record -"
+assert_rc "check - reads stdin too" 3
+
+id=$("$HELPER" ask local:w1:p2 "send fails for the reply")
+last_prompt local w1:p2 >"$WORK/ask.txt"
+as_pane w1:p2 "$HELPER" check "$WORK/ask.txt" >/dev/null
+run as_pane w1:p2 env FAKE_HERDR_FAIL="agent prompt" "$HELPER" reply local:w1:p1 "$id" "answer"
+assert_rc "a failed reply send exits 1" 1
+assert_contains "it says nothing was recorded and a retry is allowed" "$ERR" "nothing recorded; you may retry"
+run as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id" "answer"
+assert_rc "the retry succeeds" 0
+
+run env FAKE_HERDR_FAIL="agent prompt" "$HELPER" ask local:w1:p2 "will fail"
+assert_rc "a failed ask send exits 1" 1
+assert_eq "a failed ask is recorded failed" "failed" "$("$HELPER" log --json | tail -1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
+failed_id=$("$HELPER" log --json | tail -1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+run "$HELPER" wait "$failed_id" --timeout 1
+assert_rc "wait on a failed ask exits 3" 3
+
+id_c=$("$HELPER" ask local:w1:p2 "to be cancelled")
+"$HELPER" cancel "$id_c" >/dev/null
+printf 'late\n\n[herdr-peers] protocol=1 reply-to=%s depth=1\nThis is a reply. Do not answer it.\n' "$id_c" >"$WORK/late.txt"
+run "$HELPER" check --json "$WORK/late.txt"
+assert_contains "a reply to a cancelled ask is late and not recorded" "$OUT" '"reply_status": "late"'
+
+# Declining frees the depth hold.
+id_d=$("$HELPER" ask local:w1:p2 "decline me")
+last_prompt local w1:p2 >"$WORK/d.txt"
+as_pane w1:p2 "$HELPER" check "$WORK/d.txt" >/dev/null
+run as_pane w1:p2 "$HELPER" ask local:w2:p1 "can I?"
+assert_rc "holding an ask blocks delegation" 3
+run as_pane w1:p2 "$HELPER" cancel "$id_d" --reason "declined: out of my scope"
+assert_rc "the delegate can decline (cancel) a received ask" 0
+run as_pane w1:p2 "$HELPER" ask local:w2:p1 "now I can"
+assert_rc "after declining, the pane may ask again" 0
+
+run "$HELPER" log
+assert_contains "log prints a human table" "$OUT" "caller"
+run "$HELPER" log --id "$id_d" --json
+assert_eq "log --id returns only that ask's records (caller, delegate, cancel)" \
+  "3 3" "$(printf '%s\n' "$OUT" | grep -c . ) $(printf '%s\n' "$OUT" | grep -c "$id_d")"
+
+# Replies to a remote caller are routed through --machine.
+new_world remote_reply
+id=$("$HELPER" ask bb22:w1:p1 "remote round trip")
+cp "$FAKE_HERDR_DIR/bb22/panes/w1_p1.last" "$WORK/remote-ask.txt"
+run as_pane w1:p1 env HERDR_PEERS_LOG="$WORLD/box-log.ndjson" "$HELPER" check "$WORK/remote-ask.txt"
+assert_rc "the remote peer may answer" 0
+run as_pane w1:p1 env HERDR_PEERS_LOG="$WORLD/box-log.ndjson" "$HELPER" reply aa11:w1:p1 "$id" "box is fine"
+assert_rc "the remote peer replies to the caller's machine id" 0
+assert_contains "the reply travels through --machine aa11" "$(tail -1 "$FAKE_HERDR_DIR/argv.log")" '"--machine", "aa11", "agent", "prompt", "w1:p1"'
+assert_contains "the reply lands in the caller's pane" "$(cat "$FAKE_HERDR_DIR/aa11/panes/w1_p1.last")" "box is fine"
+
+# The self probe is cached per terminal: a second remote ask does not probe again.
+: >"$FAKE_HERDR_DIR/argv.log"
+"$HELPER" ask bb22:w1:p1 "second remote ask" >/dev/null
+assert_not_contains "the cached self id avoids a second probe" "$(cat "$FAKE_HERDR_DIR/argv.log")" '"pane", "get"'
+
+# A probe skips unreachable machines; a session with no agents row is reported.
+new_world empty
+echo '[]' >"$FAKE_HERDR_DIR/bb22/agents.json"
+run "$HELPER" list
+assert_contains "an empty machine is a 'no agents' row" "$OUT" "no agents"
+python3 -c 'import json,sys; p=sys.argv[1]; a=[x for x in json.load(open(p)) if x["pane_id"]!="w1:p1"]; json.dump(a, open(p,"w"))' "$FAKE_HERDR_DIR/local/agents.json"
+run "$HELPER" list
+assert_contains "a session that is not an agent row says so" "$OUT" "this session is not a row"

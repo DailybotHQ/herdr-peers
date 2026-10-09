@@ -43,11 +43,23 @@ SANDBOX=$(mktemp -d "$ROOT/tmp/test-sandbox.XXXXXX")
 cleanup() { [ "${HERDR_PEERS_KEEP_SANDBOX:-}" = 1 ] || rm -rf "$SANDBOX"; }
 trap cleanup EXIT
 
+# Opt-in live scope only: remember the real Herdr context before isolation.
+LIVE_HERDR_BIN="" LIVE_ENV=""
+if [ "${HERDR_PEERS_LIVE:-}" = 1 ] && [ "${HERDR_ENV:-}" = 1 ]; then
+  LIVE_HERDR_BIN=$(command -v herdr || true)
+  for v in HERDR_ENV HERDR_SOCKET_PATH HERDR_PANE_ID HERDR_WORKSPACE_ID HERDR_TAB_ID HERDR_BIN_PATH; do
+    eval "val=\${$v:-}"
+    # shellcheck disable=SC2154
+    [ -n "$val" ] && LIVE_ENV="$LIVE_ENV $v=$val"
+  done
+fi
+export LIVE_HERDR_BIN LIVE_ENV
+
 # Isolate the environment.
 for v in $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p'); do
   case "$v" in
     HERDR_PEERS_TEST_PYTHON | HERDR_PEERS_KEEP_SANDBOX | HERDR_PEERS_LIVE) ;;
-    HERDR_* | DWP_* | *_API_KEY | *_TOKEN) unset "$v" ;;
+    HERDR_* | DWP_* | *_API_KEY | *_TOKEN | *_SECRET | *_SECRET_KEY | *_ACCESS_KEY | *_PASSWORD) unset "$v" ;;
   esac
 done
 REAL_HOME=$HOME
