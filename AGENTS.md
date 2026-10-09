@@ -19,6 +19,9 @@ herdr-peers (skill + helper script)
 | `bin/herdr-peers` | Checkout shim that runs the skill's helper |
 | `tests/` | `run.sh` (sandboxed runner), `lib.sh`, `fakes/herdr`, `scopes/`, `fixtures/messages/`, `tools/` |
 | `docs/` | `TESTING_GUIDE.md`, `SECURITY.md` (threat model) |
+| `scripts/` | `check-public-hygiene.sh` (public-hygiene check; allow-list in `.public-hygiene-allow`), `release-assets.sh` (release notes + `SHA256SUMS`) |
+| `.github/` | `workflows/ci.yml` (suite on Ubuntu + macOS, `public hygiene` job), `workflows/release.yml` (annotated tag → release), issue/PR templates, `CODEOWNERS`, `dependabot.yml` |
+| Root | `README.md`, `CHANGELOG.md` (Keep a Changelog), `SECURITY.md` (policy), `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `CREDITS.md`, `LICENSE`; `CLAUDE.md` is a symlink to this file |
 
 The protocol's interface version is `metadata.protocol` in `SKILL.md`; a wire
 change bumps it (and the minor version while 0.x). Keep `protocol.md`, the
@@ -31,6 +34,7 @@ scopes compare them.
 | --- | --- |
 | Full | `bash tests/run.sh` |
 | Scoped | `bash tests/run.sh <scope>` |
+| Public hygiene | `bash scripts/check-public-hygiene.sh` |
 
 The test map lives in [`docs/TESTING_GUIDE.md`](docs/TESTING_GUIDE.md).
 
@@ -42,6 +46,13 @@ The test map lives in [`docs/TESTING_GUIDE.md`](docs/TESTING_GUIDE.md).
 4. Never spell a fetch-piped-to-shell install line in a skill file (marketplace rule E005); never inject a permission-bypass flag by default (E006); pin every cross-repo install to a tag (W012).
 5. Developing is not installing: tests run in a sandbox `HOME`; nothing is installed into the real `$HOME` while developing.
 6. Pin every external tool by version.
+7. This repository is public: never commit personal absolute paths, private
+   organization or repository names, internal hostnames, or real credentials.
+   Secret-shaped test data says it is fake and is listed in
+   `.public-hygiene-allow` with a reason. Never rewrite history; a leaked
+   secret is rotated first.
+8. Changes land through a pull request with green CI; releases come from an
+   annotated `vX.Y.Z` tag (`.github/workflows/release.yml`).
 
 ## Deep Work Plans
 

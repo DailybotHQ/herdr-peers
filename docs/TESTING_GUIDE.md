@@ -26,7 +26,8 @@ exits 2.
 | `templates` | The four templates exist; the delegation-record schema requires every plan-agnostic delegation field; a scripted run produces every role/state the helper writes (caller launched/completed/cancelled/failed, delegate launched/completed) and every line — and the `DWP_PLAN` mirror — validates (`tests/tools/validate_records.py`, stdlib); negative records are rejected; message templates match real helper output. | `skills/herdr-peers/templates/`, the helper's record writer |
 | `security` | Hostile input end to end (threat model in `docs/SECURITY.md`): spoofed asks and forged/guessed replies, path-like ids, stamp smuggling, oversized messages, control/bidi/zero-width characters, option injection into the herdr argv, scope bypass (labels, case, local), fan-out env cannot raise the cap, secrets (variable values, token shapes, PEM) never sent/stored/echoed, terminal escapes from Herdr output, file modes and symlinked logs, malformed `depth`, newline tricks, `wait` capture validation, pane identity, hostile Herdr JSON, and concurrency (8 parallel asks → 4 open; 5 parallel replies → 1 sent). | the helper, `docs/SECURITY.md` |
 | `live` | **Opt-in** (`HERDR_PEERS_LIVE=1`, inside a Herdr pane): read-only checks against the real server — it answers, version ≥ 0.9.1, `herdr-peers list` parses the real JSON and marks exactly one row as you, a failed ask to a missing pane records nothing. Creates, changes and closes nothing; the listing is scoped to the local server (`--scope local`), so no saved machine is contacted. Without the opt-in or a server it reports `skip - live: unavailable (…)`. The two-pane round trip is not run live (it would create panes in the human's session); the fake covers it. | the helper against real Herdr |
-| `lint` | `shellcheck` (pinned `v0.11.0` in CI) over every shell file, `bash -n`, python compilation, JSON validity. Skips honestly when `shellcheck` is not installed. | every `*.sh`, both helper entry points, every `*.py`, every `*.json` |
+| `repo` | The public repository standard: required root and `.github/` files, `CLAUDE.md` → `AGENTS.md`, README section order and footer; `scripts/check-public-hygiene.sh` passes on this repository and catches every rule on planted hits in a throwaway git repository (never printing the matched text), honours the public aliases, the vendored-pack exclusion and the allow-list rules (reason required, fake marker required, private names never allowed); `scripts/release-assets.sh` extracts one version's notes and a `SHA256SUMS` that `shasum -c` verifies. | `scripts/`, `.public-hygiene-allow`, root docs, `.github/` |
+| `lint` | `shellcheck` (pinned `v0.11.0` in CI) over every shell file, `bash -n`, python compilation, JSON validity. Skips honestly when `shellcheck` is not installed. | every `*.sh` (incl. `scripts/`), both helper entry points, every `*.py`, every `*.json` |
 
 ## Source-to-test map
 
@@ -40,7 +41,8 @@ When a change touches… run at least…
 | `skills/herdr-peers/templates/`, `tests/tools/` | `templates skill` |
 | `skills/herdr-peers/scripts/`, `bin/herdr-peers` | `protocol helper lint`, then the full suite before a release |
 | `docs/SECURITY.md` | `security` |
-| `.github/workflows/ci.yml` | `lint` locally; CI itself on push |
+| `.github/workflows/ci.yml`, `release.yml` | `lint repo` locally; CI itself on push |
+| `scripts/`, `.public-hygiene-allow`, root docs, `.github/` templates | `repo lint`, and `bash scripts/check-public-hygiene.sh` |
 | a Herdr upgrade | `HERDR_PEERS_LIVE=1 bash tests/run.sh live` from a Herdr pane, then update `tests/fakes/herdr` if a shape changed |
 | anything else | the full suite |
 
