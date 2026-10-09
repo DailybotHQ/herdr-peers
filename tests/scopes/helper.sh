@@ -106,7 +106,7 @@ assert_rc "an invalid scope entry is a usage error (exit 2)" 2
 # --- receive: check records, depth via holding, reply exactly once ---------------
 new_world receive
 id=$("$HELPER" ask local:w1:p2 "Is the migration safe?")
-pane_text local w1:p2 >"$WORK/ask.txt"
+last_prompt local w1:p2 >"$WORK/ask.txt"
 run as_pane w1:p2 "$HELPER" check --json "$WORK/ask.txt"
 assert_rc "receiver check of a valid ask exits 0" 0
 assert_eq "check records the inbound ask" "delegate launched" \
@@ -126,9 +126,18 @@ run as_pane w1:p2 "$HELPER" check --json "$WORK/ask.txt"
 assert_contains "an answered id is never answered again (rule 12)" "$OUT" '"rule": 12'
 run "$HELPER" reply local:w1:p2 "$id" "answering my own question's reply"
 assert_rc "replying to an id you originated is refused (exit 3)" 3
-pane_text local w1:p1 >"$WORK/reply.txt"
+last_prompt local w1:p1 >"$WORK/reply.txt"
 run as_pane w1:p2 "$HELPER" reply --message "$WORK/reply.txt" local:w1:p1 "$id" "loop"
 assert_rc "reply --message refuses a message that is a reply (exit 3)" 3
+id_b=$("$HELPER" ask local:w1:p2 "bound reply?")
+run as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id_b" "unchecked"
+assert_rc "a reply needs the ask recorded by check first (exit 3)" 3
+assert_contains "the refusal says to run check first" "$ERR" "run \`herdr-peers check\` on the ask first"
+last_prompt local w1:p2 >"$WORK/ask_b.txt"
+as_pane w1:p2 "$HELPER" check "$WORK/ask_b.txt" >/dev/null
+run as_pane w1:p2 "$HELPER" reply local:w2:p1 "$id_b" "redirected"
+assert_rc "a reply cannot be redirected away from the asker (exit 3)" 3
+assert_eq "the redirected reply reached nobody" "" "$(pane_text local w2:p1)"
 run "$HELPER" reply local:w1:p2 NOTANID "x"
 assert_rc "reply with a malformed id is a usage error (exit 2)" 2
 
@@ -151,7 +160,7 @@ assert_contains "a reply nobody here asked for is unsolicited" "$OUT" '"reply_st
 # Self-loop and scope on receive.
 new_world selfloop
 id=$("$HELPER" ask local:w1:p2 "loop me")
-pane_text local w1:p2 >"$WORK/ask.txt"
+last_prompt local w1:p2 >"$WORK/ask.txt"
 run "$HELPER" check --json --no-record "$WORK/ask.txt"
 assert_contains "an ask from your own pane is a self-loop (rule 10)" "$OUT" '"rule": 10'
 run as_pane w1:p2 env HERDR_PEERS_SCOPE=bb22 "$HELPER" check --json --no-record "$WORK/ask.txt"
@@ -160,6 +169,8 @@ assert_contains "an ask from outside your scope is never answered (rule 11)" "$O
 # --- wait ---------------------------------------------------------------------
 new_world wait
 id=$("$HELPER" ask local:w1:p2 "What is 2+2?")
+last_prompt local w1:p2 >"$WORK/ask.txt"
+as_pane w1:p2 "$HELPER" check "$WORK/ask.txt" >/dev/null
 as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id" "4" >/dev/null 2>&1
 run "$HELPER" wait "$id" --timeout 5
 assert_rc "wait returns once the reply is in this pane" 0

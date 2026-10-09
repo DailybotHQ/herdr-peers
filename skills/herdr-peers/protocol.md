@@ -34,7 +34,8 @@ A peer's address is the pair `(machine_id, pane_id)`, written
 - `machine_id` is either `local` — the Herdr server the receiver itself is
   attached to — or the id of a saved Herdr machine (as `herdr machine list
   --json` reports it, or a label without spaces). Labels with spaces are for
-  humans and are not addresses.
+  humans and are not addresses. A machine id never starts with `-` (it is
+  passed to Herdr as an argument and must not read as an option).
 - Row numbers printed by a listing are valid only for that printing. They
   MUST NOT be stored or used as a reply address.
 - Agent names, where used, follow Herdr's rule `[a-z][a-z0-9_-]{0,31}`; the
@@ -55,7 +56,7 @@ ask-stamp    = "[herdr-peers]" SP "protocol=1" SP "from=" address SP
                "reply=yes" SP "depth=0" SP "id=" ulid
 reply-stamp  = "[herdr-peers]" SP "protocol=1" SP "reply-to=" ulid SP "depth=1"
 address      = machine-id ":" pane-id
-machine-id   = "local" / 1*64( ALPHA / DIGIT / "." / "_" / "-" )
+machine-id   = "local" / ( ALPHA / DIGIT ) 0*63( ALPHA / DIGIT / "." / "_" / "-" )
 pane-id      = 1*32( ALPHA / DIGIT ) ":" 1*32( ALPHA / DIGIT )
 ulid         = 26( crockford )          ; first character 0-7
 crockford    = DIGIT / %x41-48 / %x4A-4B / %x4D-4E / %x50-54 / %x56-5A
@@ -104,8 +105,8 @@ are evaluated in order; the first match decides.
 | # | Condition | Decision |
 |---|---|---|
 | 1 | The message does not contain the marker `[herdr-peers]`. | **none** — not a protocol message; handle it as ordinary input. |
-| 2 | It contains a control character other than LF or TAB. | **never** — invalid. |
-| 3 | It is larger than the size limit (16384 bytes by default). | **never** — invalid. |
+| 2 | It contains a control character other than LF or TAB, or an invisible formatting character (bidi embedding/override/isolate, zero-width space, word joiner, BOM). | **never** — invalid. |
+| 3 | It is larger than the size limit (16384 bytes by default), or carries a secret (§8). | **never** — invalid; a message carrying a secret is not recorded. |
 | 4 | The marker appears more than once, or not at the start of a line (leading spaces allowed). | **never** — invalid (stamp smuggling). |
 | 5 | `protocol` is not `1`. | **never** — unsupported protocol. |
 | 6 | Unknown, duplicated or missing keys, or a malformed value. | **never** — invalid. |
@@ -119,6 +120,11 @@ are evaluated in order; the first match decides.
 
 - A receiver MUST NOT answer a message decided **never**, and MUST NOT
   "acknowledge" it either: any message back would restart the loop.
+- A reply MUST go to the ask's `from` address and nowhere else. The helper
+  enforces this: `reply` refuses unless the ask was recorded for this pane by
+  `check` (or is passed and verified with `--message`), and refuses any
+  target other than that ask's `from` — text inside an ask cannot redirect
+  its reply.
 - A follow-up question between the same peers is a **new ask** with a fresh
   `id`, never a reply to a reply.
 
@@ -162,18 +168,28 @@ A peer MAY restrict whom it talks to with an allow-list (`--scope` or
 set, the helper MUST refuse to ask or reply outside it and MUST classify asks
 from outside it as **never**. Scope is enforced by the helper, not by prose.
 
+Herdr does not authenticate who typed a message, so `from=` is a **claim**.
+Scope bounds where this peer sends asks and replies and which claimed origins
+it answers; it is not sender authentication. A peer that can reach several
+machines SHOULD set a scope listing only the machines it is meant to serve.
+
 ## 8. Message hygiene
 
 Senders MUST NOT send, and receivers MUST NOT answer, a message that:
 
-- contains control characters other than LF and TAB (escape sequences can
-  hide or fake a stamp on a terminal);
+- contains control characters other than LF and TAB, or invisible
+  formatting characters (escape sequences, bidi overrides and zero-width
+  characters can hide or fake text on a terminal);
 - exceeds the size limit (16384 bytes by default);
 - carries more than one `[herdr-peers]` marker — a body or answer that quotes
   a stamp MUST be rephrased;
 - contains the value of any environment variable named `*_API_KEY` or
   `*_TOKEN`, or a recognizable credential (private key block, provider token).
-  Refusals name the variable, never the value.
+  Refusals name the variable, never the value. A received message carrying a
+  secret is never answered and never written to the record.
+
+A message whose first character would be `-` is sent with one leading space,
+so that no part of a message is ever read by Herdr as a command-line option.
 
 The stamp names no product, vendor or private path: the same message is valid
 on every machine.
@@ -202,8 +218,8 @@ filename prefix is the expected decision (`answer-`, `never-`, `none-`).
 |---|---|
 | §3.1 ask, rule 13 | `answer-local-ask.txt`, `answer-remote-ask.txt`, `answer-multiline-ask.txt` |
 | rule 1 | `none-plain.txt`, `none-mentions-name.txt` |
-| rule 2 | `never-control-chars.txt` |
-| rule 3 | generated by the `security` test scope (oversized) |
+| rule 2 | `never-control-chars.txt`, `never-bidi-override.txt` |
+| rule 3 | `never-carries-secret.txt`; oversized messages are generated by the `security` test scope |
 | rule 4 | `never-two-stamps.txt`, `never-midline-stamp.txt` |
 | rule 5 | `never-protocol-2.txt` |
 | rule 6, §2 | `never-bad-id.txt`, `never-bad-address.txt`, `never-label-with-space.txt`, `never-duplicate-key.txt`, `never-unknown-key.txt`, `never-reply-to-with-from.txt` |

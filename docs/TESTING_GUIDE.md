@@ -24,6 +24,7 @@ exits 2.
 | `skills/herdr-peers/scripts/`, `bin/herdr-peers` |
 | `skill` | Frontmatter (name, `metadata.protocol: 1`, versions equal to the helper, `allowed-tools`, strict trigger description ≤ 1024 chars), pinned official-skill dependency, Trust boundary section, marketplace rules (no fetch-piped-to-shell, no bypass flag, pinned installs, no vendor or methodology names), relative links resolve, docs carry the helper's grant/clause verbatim, `--skill`, and a copy of only the skill directory works (install simulation). | `skills/herdr-peers/*.md`, `scripts/` |
 | `templates` | The four templates exist; the delegation-record schema requires every plan-agnostic delegation field; a scripted run produces every role/state the helper writes (caller launched/completed/cancelled/failed, delegate launched/completed) and every line — and the `DWP_PLAN` mirror — validates (`tests/tools/validate_records.py`, stdlib); negative records are rejected; message templates match real helper output. | `skills/herdr-peers/templates/`, the helper's record writer |
+| `security` | Hostile input end to end (threat model in `docs/SECURITY.md`): spoofed asks and forged/guessed replies, path-like ids, stamp smuggling, oversized messages, control/bidi/zero-width characters, option injection into the herdr argv, scope bypass (labels, case, local), fan-out env cannot raise the cap, secrets (variable values, token shapes, PEM) never sent/stored/echoed, terminal escapes from Herdr output, file modes and symlinked logs, malformed `depth`, newline tricks, `wait` capture validation, pane identity, hostile Herdr JSON, and concurrency (8 parallel asks → 4 open; 5 parallel replies → 1 sent). | the helper, `docs/SECURITY.md` |
 | `lint` | `shellcheck` (pinned `v0.11.0` in CI) over every shell file, `bash -n`, python compilation, JSON validity. Skips honestly when `shellcheck` is not installed. | every `*.sh`, both helper entry points, every `*.py`, every `*.json` |
 
 ## Source-to-test map
@@ -37,6 +38,7 @@ When a change touches… run at least…
 | `skills/herdr-peers/SKILL.md`, `discipline.md`, `launcher.md` | `skill` |
 | `skills/herdr-peers/templates/`, `tests/tools/` | `templates skill` |
 | `skills/herdr-peers/scripts/`, `bin/herdr-peers` | `protocol helper lint`, then the full suite before a release |
+| `docs/SECURITY.md` | `security` |
 | `.github/workflows/ci.yml` | `lint` locally; CI itself on push |
 | anything else | the full suite |
 

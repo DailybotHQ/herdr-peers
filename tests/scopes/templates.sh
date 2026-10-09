@@ -22,12 +22,14 @@ assert_eq "state enum is launched|completed|failed|cancelled" "launched,complete
 # Drive the helper through every record-writing path in one world.
 new_world records
 id=$("$HELPER" ask --task T-demo --profile work --worktree /wt/a local:w1:p2 "Template run")   # caller launched
-pane_text local w1:p2 >"$WORK/ask.txt"
+last_prompt local w1:p2 >"$WORK/ask.txt"
 as_pane w1:p2 "$HELPER" check "$WORK/ask.txt" >/dev/null                                      # delegate launched
 as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id" "done" >/dev/null                              # delegate completed
-pane_text local w1:p1 >"$WORK/reply.txt"
+last_prompt local w1:p1 >"$WORK/reply.txt"
 "$HELPER" check "$WORK/reply.txt" >/dev/null                                                   # caller completed (message)
 id2=$("$HELPER" ask local:w1:p2 "second")
+last_prompt local w1:p2 >"$WORK/ask2.txt"
+as_pane w1:p2 "$HELPER" check "$WORK/ask2.txt" >/dev/null                                     # delegate launched
 as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id2" "two" >/dev/null
 "$HELPER" wait "$id2" --timeout 2 >/dev/null 2>&1                                              # caller completed (pane-capture)
 id3=$("$HELPER" ask --fanout 5 --reason "demo" local:w1:p2 "third")
@@ -39,7 +41,7 @@ assert_eq "the run covers every role and state the helper writes" \
   "caller:cancelled caller:completed caller:failed caller:launched delegate:completed delegate:launched" "$seen"
 run python3 "$VALIDATE" "$SCHEMA" "$LOG"
 assert_rc "every helper log line validates against delegation-record.json" 0
-assert_contains "the validator saw all lines" "$OUT" "valid 11"
+assert_contains "the validator saw all lines" "$OUT" "valid 12"
 assert_contains "task, profile and worktree are recorded" "$(head -1 "$LOG")" '"worktree": "/wt/a"'
 
 # The validator is not vacuous.

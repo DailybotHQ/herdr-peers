@@ -121,6 +121,11 @@ pane_text() {
   cat "$FAKE_HERDR_DIR/$1/panes/$(printf '%s' "$2" | tr ':' '_').out" 2>/dev/null
 }
 
+# last_prompt MACHINE PANE — the latest prompt delivered to that pane, alone.
+last_prompt() {
+  cat "$FAKE_HERDR_DIR/$1/panes/$(printf '%s' "$2" | tr ':' '_').last" 2>/dev/null
+}
+
 # as_pane PANE CMD... — run CMD as another local pane (a peer), in a subshell.
 as_pane() {
   local pane=$1; shift

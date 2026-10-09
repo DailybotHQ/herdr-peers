@@ -15,7 +15,9 @@ text. Secret values are never printed — refusals name the variable only.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
+import fcntl
 import hashlib
 import json
 import os
@@ -38,13 +40,14 @@ EXIT_POLICY, EXIT_TIMEOUT, EXIT_ENV, EXIT_NONE = 4, 5, 6, 7
 
 CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 ULID_RE = re.compile(r'^[0-7][0-9A-HJKMNP-TV-Z]{25}$')
-MACHINE_RE = r'(?:local|[A-Za-z0-9._-]{1,64})'
+MACHINE_RE = r'(?:local|[A-Za-z0-9][A-Za-z0-9._-]{0,63})'  # never starts with '-'
 PANE_RE = r'[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}'
 ADDR_RE = re.compile(r'^(%s):(%s)$' % (MACHINE_RE, PANE_RE))
-TOKEN_RE = re.compile(r'^([a-z][a-z-]*)=(\S+)$')
+TOKEN_RE = re.compile(r'([a-z][a-z-]*)=(\S+)')
+DEPTH_RE = re.compile(r'[0-9]{1,3}')
 ASK_KEYS = frozenset(['protocol', 'from', 'reply', 'depth', 'id'])
 REPLY_KEYS = frozenset(['protocol', 'reply-to', 'depth'])
-SECRET_NAME_RE = re.compile(r'(_API_KEY|_TOKEN)$')
+SECRET_NAME_RE = re.compile(r'(_API_KEY|_TOKEN|_SECRET|_SECRET_KEY|_ACCESS_KEY|_PASSWORD)$', re.I)
 SECRET_PATTERNS = [
     ('a private key block', re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----')),
     ('a GitHub token', re.compile(r'\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}\b')),
@@ -81,7 +84,7 @@ def digest(text):
 
 
 def parse_address(text):
-    m = ADDR_RE.match(text or '')
+    m = ADDR_RE.fullmatch(text or '')
     if not m:
         return None
     return (m.group(1), m.group(2))
@@ -105,12 +108,27 @@ def max_bytes():
     return env_int('HERDR_PEERS_MAX_BYTES', DEFAULT_MAX_BYTES)
 
 
+# Invisible formatting characters that can disguise text on a terminal:
+# bidi embeddings/overrides/isolates, zero-width space, word joiner, BOM.
+FORMAT_CHARS = frozenset([0x200B, 0x2060, 0xFEFF] + list(range(0x202A, 0x202F))
+                         + list(range(0x2066, 0x206A)))
+
+
 def has_bad_control(text):
     for ch in text:
         o = ord(ch)
-        if (o < 32 and ch not in '\n\t') or o == 127 or 0x80 <= o <= 0x9f:
+        if (o < 32 and ch not in '\n\t') or o == 127 or 0x80 <= o <= 0x9f \
+                or o in FORMAT_CHARS:
             return True
     return False
+
+
+def safe(value):
+    """Printable form of a string that came from Herdr or a peer: control
+    and formatting characters are replaced, so a hostile pane title cannot
+    drive the reader's terminal."""
+    return ''.join('?' if (ord(c) < 32 or ord(c) == 127 or 0x80 <= ord(c) <= 0x9f
+                           or ord(c) in FORMAT_CHARS) else c for c in str(value or ''))
 
 
 def secret_finding(text):
@@ -129,8 +147,8 @@ def check_outgoing(text, what):
     if not text.strip():
         raise Stop(EXIT_USAGE, '%s is empty' % what)
     if has_bad_control(text):
-        raise Stop(EXIT_POLICY, '%s contains control characters (only newline and tab '
-                   'are allowed)' % what)
+        raise Stop(EXIT_POLICY, '%s contains control or invisible formatting characters '
+                   '(only newline and tab are allowed)' % what)
     if MARKER in text:
         raise Stop(EXIT_POLICY, '%s contains the %s marker; rephrase it without quoting '
                    'a stamp' % (what, MARKER))
@@ -155,17 +173,23 @@ def read_text_arg(value):
 
 # ------------------------------------------------------------------ messages
 
+def no_option(message):
+    """The message is one argv element of `herdr agent prompt`; a leading '-'
+    could be parsed as an option, so it is shifted by one space."""
+    return ' ' + message if message.startswith('-') else message
+
+
 def build_ask(body, from_addr, ask_id):
     sender = fmt_address(from_addr)
-    return ('%s\n\n%s protocol=%d from=%s reply=yes depth=0 id=%s\n%s\n'
+    return no_option('%s\n\n%s protocol=%d from=%s reply=yes depth=0 id=%s\n%s\n'
             '  herdr-peers reply %s %s "<answer>"' % (
                 body.rstrip('\n'), MARKER, PROTOCOL, sender, ask_id, GRANT_LINE,
                 sender, ask_id))
 
 
 def build_reply(answer, ask_id):
-    return '%s\n\n%s protocol=%d reply-to=%s depth=1\n%s' % (
-        answer.rstrip('\n'), MARKER, PROTOCOL, ask_id, REPLY_CLAUSE)
+    return no_option('%s\n\n%s protocol=%d reply-to=%s depth=1\n%s' % (
+        answer.rstrip('\n'), MARKER, PROTOCOL, ask_id, REPLY_CLAUSE))
 
 
 def decision(outcome, rule, reason, **extra):
@@ -180,10 +204,14 @@ def parse_stamp(text):
     if MARKER not in text:
         return decision('none', 1, 'not a protocol message (no %s marker)' % MARKER)
     if has_bad_control(text):
-        return decision('never', 2, 'invalid: control characters')
+        return decision('never', 2, 'invalid: control or invisible formatting characters')
     size = len(text.encode('utf-8'))
     if size > max_bytes():
         return decision('never', 3, 'invalid: %d bytes exceeds the limit' % size)
+    found = secret_finding(text)
+    if found:
+        return decision('never', 3, 'invalid: the message carries %s; it is not recorded '
+                        'and must not be answered' % found)
     count = text.count(MARKER)
     if count != 1:
         return decision('never', 4, 'invalid: the marker appears %d times '
@@ -195,7 +223,7 @@ def parse_stamp(text):
         return decision('never', 4, 'invalid: the marker is not at the start of a line')
     fields = {}
     for token in line[len(MARKER):].split():
-        m = TOKEN_RE.match(token)
+        m = TOKEN_RE.fullmatch(token)
         if not m:
             return decision('never', 6, 'invalid: malformed token %r' % token[:40])
         key, value = m.group(1), m.group(2)
@@ -211,6 +239,14 @@ def parse_stamp(text):
 
 
 def classify(text, ctx):
+    """Never raises: anything unparseable is invalid and never answered."""
+    try:
+        return _classify(text, ctx)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return decision('never', 6, 'invalid: unparseable stamp')
+
+
+def _classify(text, ctx):
     """Protocol §4: the first matching rule decides. ctx keys: self (set of
     addresses), scope (parsed or None), answered (set of ids)."""
     parsed = parse_stamp(text)
@@ -219,17 +255,19 @@ def classify(text, ctx):
     fields, body = parsed
     keys = set(fields)
     if keys == REPLY_KEYS:
-        if not ULID_RE.match(fields['reply-to']) or not fields['depth'].isdigit():
+        if not ULID_RE.fullmatch(fields['reply-to']) or not DEPTH_RE.fullmatch(fields['depth']):
             return decision('never', 6, 'invalid: malformed reply stamp')
         return decision('never', 7, 'this is a reply; do not answer it',
                         kind='reply', reply_to=fields['reply-to'], body=body)
     if keys != ASK_KEYS:
         return decision('never', 6, 'invalid: keys %s' % ','.join(sorted(keys)))
     sender = parse_address(fields['from'])
-    if sender is None or not ULID_RE.match(fields['id']) or \
-            not fields['depth'].isdigit():
+    if sender is None or not ULID_RE.fullmatch(fields['id']) or \
+            not DEPTH_RE.fullmatch(fields['depth']):
         return decision('never', 6, 'invalid: malformed from, id or depth')
     common = {'kind': 'ask', 'id': fields['id'], 'from': fields['from']}
+    if fields['depth'] != '0' and int(fields['depth']) == 0:
+        return decision('never', 6, 'invalid: depth must be written 0', **common)
     if int(fields['depth']) >= 1:
         return decision('never', 8, 'depth limit: a delegate never delegates', **common)
     if fields['reply'] != 'yes':
@@ -256,9 +294,9 @@ def parse_scope(raw):
             continue
         if item == '*':
             return None
-        if re.match(r'^%s$' % MACHINE_RE, item):
+        if re.fullmatch(MACHINE_RE, item):
             entries.append((item, None))
-        elif re.match(r'^(%s):([A-Za-z0-9]{1,32})$' % MACHINE_RE, item):
+        elif re.fullmatch(r'(%s):([A-Za-z0-9]{1,32})' % MACHINE_RE, item):
             machine, ws = item.split(':', 1)
             entries.append((machine, ws))
         else:
@@ -312,7 +350,7 @@ def herdr_json(argv, machine=None, timeout=30):
 
 def last_line(text):
     lines = [l for l in (text or '').strip().splitlines() if l.strip()]
-    return lines[-1][:300] if lines else '(no output)'
+    return safe(lines[-1][:300]) if lines else '(no output)'
 
 
 def require_herdr_env():
@@ -323,7 +361,7 @@ def require_herdr_env():
 
 def my_pane():
     pane = os.environ.get('HERDR_PANE_ID')
-    if pane and re.match(r'^%s$' % PANE_RE, pane):
+    if pane and re.fullmatch(PANE_RE, pane):
         return pane
     data = herdr_json(['pane', 'current', '--current'], timeout=8)
     pane = (data.get('result') or {}).get('pane', {}).get('pane_id')
@@ -345,7 +383,10 @@ def enabled_machines():
         machines = json.loads(out)
     except ValueError:
         return []
-    return [m for m in machines if isinstance(m, dict) and m.get('enabled') and m.get('id')]
+    if not isinstance(machines, list):
+        return []
+    return [m for m in machines if isinstance(m, dict) and m.get('enabled') is True
+            and isinstance(m.get('id'), str) and re.fullmatch(MACHINE_RE, m['id'])]
 
 
 def probe_self(pane, store):
@@ -385,7 +426,7 @@ def env_self(pane):
     raw = os.environ.get('HERDR_PEERS_SELF')
     if not raw:
         return None
-    if re.match(r'^%s$' % MACHINE_RE, raw):
+    if re.fullmatch(MACHINE_RE, raw):
         return raw
     addr = parse_address(raw)
     if addr and addr[1] == pane:
@@ -419,7 +460,17 @@ def cached_self(pane, store):
 def agent_info(addr):
     machine, pane = addr
     data = herdr_json(['agent', 'get', pane], machine=machine, timeout=20)
-    return (data.get('result') or {}).get('agent') or {}
+    result = data.get('result') if isinstance(data, dict) else None
+    agent = result.get('agent') if isinstance(result, dict) else None
+    return agent if isinstance(agent, dict) else {}
+
+
+def kind_of(info):
+    """The agent kind as recorded: a short, printable token or None."""
+    kind = info.get('agent')
+    if isinstance(kind, str) and re.fullmatch(r'[A-Za-z0-9._-]{1,32}', kind):
+        return kind
+    return None
 
 
 # ----------------------------------------------------------------------- log
@@ -441,7 +492,7 @@ class Store(object):
 
     def ensure(self):
         if not os.path.isdir(self.dir):
-            os.makedirs(self.dir)
+            os.makedirs(self.dir, 0o700)
         if self.owned_dir:
             ignore = os.path.join(self.dir, '.gitignore')
             if not os.path.exists(ignore):
@@ -487,18 +538,46 @@ class Store(object):
             else:
                 warn('DWP_PLAN is set but is not a directory; the plan record was skipped')
 
+    def reply_path(self, ask_id):
+        return os.path.join(self.replies, ask_id + '.txt')
+
+    @contextlib.contextmanager
+    def lock(self):
+        """Serialize check-then-append across panes sharing this log."""
+        self.ensure()
+        fd = os.open(os.path.join(self.dir, '.lock'), os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
     def save_reply(self, ask_id, text):
         self.ensure()
+        if not ULID_RE.fullmatch(ask_id):
+            raise Stop(EXIT_PROTOCOL, 'refusing to store a reply under a malformed id')
         if not os.path.isdir(self.replies):
-            os.makedirs(self.replies)
-        path = os.path.join(self.replies, ask_id + '.txt')
-        with open(path, 'w', encoding='utf-8') as fh:
+            os.makedirs(self.replies, 0o700)
+        path = self.reply_path(ask_id)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | NOFOLLOW, 0o600)
+        except OSError as exc:
+            raise Stop(EXIT_POLICY, 'cannot store the reply at %s (%s)' % (path, exc.strerror))
+        with os.fdopen(fd, 'w', encoding='utf-8') as fh:
             fh.write(text.rstrip('\n') + '\n')
         return path
 
 
+NOFOLLOW = getattr(os, 'O_NOFOLLOW', 0)
+
+
 def append_line(path, line):
-    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | NOFOLLOW, 0o600)
+    except OSError as exc:
+        raise Stop(EXIT_POLICY, 'cannot write the record at %s (%s); nothing was sent — a '
+                   'symlinked or unwritable log is refused' % (path, exc.strerror))
     try:
         os.write(fd, line.encode('utf-8'))
     finally:
@@ -539,7 +618,7 @@ def record_pane(rec):
 def mine(rec, pane):
     """A log may be shared by several panes of one repository: a record is
     this pane's only when its `self` address names this pane."""
-    return rec is not None and (not pane or record_pane(rec) == pane)
+    return rec is not None and bool(pane) and record_pane(rec) == pane
 
 
 def open_records(store, role, pane):
@@ -560,7 +639,7 @@ def answered_ids(store):
 
 
 def warn(message):
-    sys.stderr.write('herdr-peers: %s\n' % message)
+    sys.stderr.write('herdr-peers: %s\n' % safe(message))
 
 
 # --------------------------------------------------------------------- verbs
@@ -582,22 +661,16 @@ def cmd_ask(args):
     if depth >= 1:
         raise Stop(EXIT_PROTOCOL, 'depth limit: this pane is a delegate '
                    '(HERDR_PEERS_DEPTH=%d); a delegate never delegates' % depth)
-    holding = open_records(store, 'delegate', pane)
-    if holding:
-        raise Stop(EXIT_PROTOCOL, 'depth limit: this pane holds an unanswered ask (%s); '
-                   'reply or cancel it before asking anyone' % holding[0]['id'])
-
     cap = DEFAULT_FANOUT
     if args.fanout is not None:
         if not args.reason:
             raise Stop(EXIT_USAGE, '--fanout needs --reason "<why>" (it is recorded)')
         cap = args.fanout
     else:
-        cap = env_int('HERDR_PEERS_FANOUT', DEFAULT_FANOUT)
-    open_asks = open_records(store, 'caller', pane)
-    if len(open_asks) >= cap:
-        raise Stop(EXIT_POLICY, 'fan-out cap: %d open asks (cap %d); wait for, or cancel, '
-                   'one first' % (len(open_asks), cap))
+        # The environment may lower the cap, never raise it: raising needs a
+        # recorded reason on the call itself.
+        cap = min(DEFAULT_FANOUT, env_int('HERDR_PEERS_FANOUT', DEFAULT_FANOUT))
+    guard_limits(store, pane, cap)  # fail fast; re-checked under the lock below
 
     selves, self_id = self_addresses(pane, store, probe=False)
     if target in selves or (target[1] == pane and target[0] == self_id):
@@ -617,11 +690,13 @@ def cmd_ask(args):
     if status == 'working':
         warn('the peer is working; the ask queues behind its current turn')
 
-    rec = dict(kind=info.get('agent'), profile=args.profile, worktree=args.worktree,
+    rec = dict(kind=kind_of(info), profile=args.profile, worktree=args.worktree,
                prompt_digest=digest(message), task=args.task,
                reason=args.reason if args.fanout is not None else None)
-    store.append(make_record('launched', 'caller', ask_id, args.target,
-                             fmt_address(from_addr), **dict(rec)))
+    with store.lock():
+        guard_limits(store, pane, cap)
+        store.append(make_record('launched', 'caller', ask_id, args.target,
+                                 fmt_address(from_addr), **dict(rec)))
     rc, out, err = herdr(['agent', 'prompt', target[1], message], machine=target[0], timeout=60)
     if rc != 0:
         store.append(make_record('failed', 'caller', ask_id, args.target,
@@ -630,6 +705,18 @@ def cmd_ask(args):
         raise Stop(EXIT_HERDR, 'sending failed: %s' % last_line(err or out))
     print(ask_id)
     return EXIT_OK
+
+
+def guard_limits(store, pane, cap):
+    """Depth hold and fan-out cap, from the log (protocol §6)."""
+    holding = open_records(store, 'delegate', pane)
+    if holding:
+        raise Stop(EXIT_PROTOCOL, 'depth limit: this pane holds an unanswered ask (%s); '
+                   'reply or cancel it before asking anyone' % holding[0]['id'])
+    open_asks = open_records(store, 'caller', pane)
+    if len(open_asks) >= cap:
+        raise Stop(EXIT_POLICY, 'fan-out cap: %d open asks (cap %d); wait for, or cancel, '
+                   'one first' % (len(open_asks), cap))
 
 
 def resolve_from(args, target, pane, store):
@@ -656,7 +743,7 @@ def cmd_reply(args):
     target = parse_address(args.target)
     if target is None:
         raise Stop(EXIT_USAGE, 'target must be <machine_id>:<pane_id> as written in the ask')
-    if not ULID_RE.match(args.id):
+    if not ULID_RE.fullmatch(args.id):
         raise Stop(EXIT_USAGE, 'id must be the 26-character id from the ask stamp')
     answer = read_text_arg(args.answer)
     check_outgoing(answer, 'the answer')
@@ -667,6 +754,11 @@ def cmd_reply(args):
     selves, _ = self_addresses(pane, store)
     if target in selves:
         raise Stop(EXIT_POLICY, 'refusing to reply to your own pane (%s)' % args.target)
+    with store.lock():
+        return reply_locked(args, target, answer, store, pane, selves)
+
+
+def reply_locked(args, target, answer, store, pane, selves):
     latest = store.latest()
     if mine(latest.get(('caller', args.id)), pane):
         raise Stop(EXIT_PROTOCOL, 'loop guard: %s is an ask this pane sent; its reply is '
@@ -684,6 +776,12 @@ def cmd_reply(args):
         if verdict.get('id') != args.id or verdict.get('from') != args.target:
             raise Stop(EXIT_PROTOCOL, 'the message stamp names id=%s from=%s, not this reply\'s '
                        'id and target' % (verdict.get('id'), verdict.get('from')))
+    elif not (mine(prior, pane) and prior.get('state') == 'launched'):
+        raise Stop(EXIT_PROTOCOL, 'no received ask %s is recorded for this pane; run '
+                   '`herdr-peers check` on the ask first (or pass --message)' % args.id)
+    if mine(prior, pane) and prior.get('target') != args.target:
+        raise Stop(EXIT_PROTOCOL, 'ask %s came from %s; its reply goes only there, not to %s'
+                   % (args.id, prior.get('target'), args.target))
     message = build_reply(answer, args.id)
     check_size(message)
     info = agent_info(target)
@@ -694,7 +792,7 @@ def cmd_reply(args):
     others = sorted(selves - {('local', pane)})
     own_addr = fmt_address(others[0] if others else ('local', pane))
     store.append(make_record('completed', 'delegate', args.id, args.target, own_addr,
-                             kind=info.get('agent'),
+                             kind=kind_of(info),
                              prompt_digest=(prior or {}).get('prompt_digest'),
                              reply_digest=digest(message), task=args.task))
     print('replied %s' % args.id)
@@ -719,6 +817,9 @@ def cmd_check(args):
                               'answered': answered_ids(store)})
     own_addr = fmt_address(('local', pane)) if pane else None
     record = not args.no_record
+    if record and not pane:
+        record = False
+        verdict['note'] = 'not recorded: this pane is unknown (HERDR_PANE_ID is not set)'
 
     if verdict['decision'] == 'answer' and record:
         prior = store.latest().get(('delegate', verdict['id']))
@@ -803,19 +904,23 @@ def human_verdict(v):
 
 def cmd_wait(args):
     require_herdr_env()
-    if not ULID_RE.match(args.id):
+    if not ULID_RE.fullmatch(args.id):
         raise Stop(EXIT_USAGE, 'id must be the id printed by `herdr-peers ask`')
     store = Store()
     asked = store.latest().get(('caller', args.id))
-    if not mine(asked, os.environ.get('HERDR_PANE_ID')):
+    pane = my_pane()
+    if not mine(asked, pane):
         raise Stop(EXIT_USAGE, 'no ask with id %s from this pane in %s' % (args.id, store.path))
-    if asked.get('state') == 'completed' and asked.get('result_path'):
-        print(read_file(asked['result_path']).rstrip('\n'))
+    stored = store.reply_path(args.id)
+    if asked.get('state') == 'completed' and os.path.isfile(stored):
+        print(read_file(stored).rstrip('\n'))  # rebuilt from the id, never from the log
         return EXIT_OK
+    if asked.get('state') == 'completed':
+        raise Stop(EXIT_PROTOCOL, 'ask %s is completed but its reply copy %s is missing'
+                   % (args.id, stored))
     if asked.get('state') in ('failed', 'cancelled'):
         raise Stop(EXIT_PROTOCOL, 'ask %s is %s' % (args.id, asked['state']))
-    pane = my_pane()
-    needle = 'reply-to=%s' % args.id
+    needle = '%s protocol=%d reply-to=%s depth=1' % (MARKER, PROTOCOL, args.id)
     timeout_ms = int(args.timeout * 1000)
     rc, out, err = herdr(['pane', 'wait-output', pane, '--match', needle, '--source',
                           'recent-unwrapped', '--timeout', str(timeout_ms)],
@@ -836,6 +941,9 @@ def cmd_wait(args):
     rc, text, err = herdr(['pane', 'read', pane, '--source', 'recent-unwrapped',
                            '--lines', str(args.lines + 50)], timeout=20)
     excerpt = extract_reply(text if rc == 0 else '', args.id, args.lines)
+    if excerpt is None:
+        raise Stop(EXIT_PROTOCOL, 'the text captured from this pane is not a valid reply to '
+                   '%s; read the pane, then run `herdr-peers check` on the message' % args.id)
     path = store.save_reply(args.id, excerpt)
     store.append(make_record('completed', 'caller', args.id, asked['target'], asked.get('self'),
                              kind=asked.get('kind'), prompt_digest=asked.get('prompt_digest'),
@@ -847,14 +955,17 @@ def cmd_wait(args):
 
 
 def extract_reply(text, ask_id, max_lines):
+    """The reply body before the exact reply stamp, or None when the capture
+    does not hold a valid protocol 1 reply to this id."""
     lines = text.split('\n')
+    want = '%s protocol=%d reply-to=%s depth=1' % (MARKER, PROTOCOL, ask_id)
     stamp = None
     for i in range(len(lines) - 1, -1, -1):
-        if MARKER in lines[i] and ('reply-to=%s' % ask_id) in lines[i]:
+        if lines[i].strip() == want:
             stamp = i
             break
     if stamp is None:
-        return ''
+        return None
     start = stamp
     while start > 0 and stamp - start < max_lines and MARKER not in lines[start - 1]:
         start -= 1
@@ -863,6 +974,10 @@ def extract_reply(text, ask_id, max_lines):
         body.pop(0)
     while body and not body[-1].strip():
         body.pop()
+    candidate = '\n'.join(body + ['', want, REPLY_CLAUSE])
+    verdict = classify(candidate, {})
+    if verdict.get('kind') != 'reply' or verdict.get('reply_to') != ask_id:
+        return None
     return '\n'.join(body)
 
 
@@ -876,7 +991,8 @@ def cmd_list(args):
 
     sources = [('local', 'local')]
     for m in enabled_machines():
-        label = re.sub(r'^\d+\s*-\s*', '', m.get('label') or m['id'])
+        label = m.get('label') if isinstance(m.get('label'), str) else m['id']
+        label = re.sub(r'^\d+\s*-\s*', '', label) or m['id']
         sources.append((m['id'], label))
     rows, self_id = [], None
     for machine, label in sources:
@@ -887,25 +1003,29 @@ def cmd_list(args):
         if rc == 0:
             try:
                 agents = json.loads(out)['result']['agents']
-            except (ValueError, KeyError, TypeError):
+            except (ValueError, KeyError, TypeError, AttributeError):
                 agents = None
         if not isinstance(agents, list):
             rows.append({'machine': machine, 'label': label, 'state': 'unreachable',
                          'note': last_line(err or out)})
             continue
         if machine != 'local' and my_term and any(
-                a.get('terminal_id') == my_term for a in agents):
+                isinstance(a, dict) and a.get('terminal_id') == my_term for a in agents):
             self_id = machine
             continue  # this saved machine is this very server: shown as local
         if not agents:
             rows.append({'machine': machine, 'label': label, 'state': 'no agents'})
         for a in agents:
+            if not isinstance(a, dict):
+                continue
             pane = a.get('pane_id')
+            if not (isinstance(pane, str) and re.fullmatch(PANE_RE, pane)):
+                pane = None
             if pane and not in_scope((machine, pane), scope):
                 continue
-            rows.append({'machine': machine, 'label': label, 'agent': a.get('agent'),
+            rows.append({'machine': machine, 'label': label, 'agent': kind_of(a),
                          'pane': pane, 'state': a.get('agent_status'),
-                         'title': (a.get('terminal_title_stripped') or '').strip(),
+                         'title': safe(a.get('terminal_title_stripped')).strip(),
                          'you': machine == 'local' and pane == my_pane_id})
     if self_id and my_pane_id:
         store.ensure()
@@ -925,13 +1045,14 @@ def cmd_list(args):
                                                   'STATE', 'TITLE'))
     you = None
     for row in rows:
-        title = row.get('title') or ''
+        title = safe(row.get('title'))
         if len(title) > 36:
             title = title[:35] + '…'
-        title = title or row.get('note') or ''  # a diagnosis is never truncated
+        title = title or safe(row.get('note'))  # a diagnosis is never truncated
         print('%-3s %-14s %-12s %-9s %-10s %-11s %s%s' % (
-            row.get('n', '-'), row['label'][:14], row['machine'][:12], row.get('agent') or '-',
-            row.get('pane') or '-', row.get('state') or '-', title,
+            row.get('n', '-'), safe(row['label'])[:14], safe(row['machine'])[:12],
+            safe(row.get('agent')) or '-', safe(row.get('pane')) or '-',
+            safe(row.get('state')) or '-', title,
             '  <- you' if row.get('you') else ''))
         if row.get('you'):
             you = row.get('n')
@@ -964,17 +1085,19 @@ def cmd_log(args):
         return EXIT_OK
     for r in recs:
         print('%s  %-8s %-9s %s  %-20s %s%s' % (
-            r.get('ts'), r.get('role'), r.get('state'), r.get('id'), r.get('target'),
-            r.get('kind') or '-', '  ' + r['result_path'] if r.get('result_path') else ''))
+            safe(r.get('ts')), safe(r.get('role')), safe(r.get('state')), safe(r.get('id')),
+            safe(r.get('target')), safe(r.get('kind')) or '-',
+            '  ' + safe(r['result_path']) if r.get('result_path') else ''))
     return EXIT_OK
 
 
 def cmd_cancel(args):
     store = Store()
+    pane = my_pane()
     latest = store.latest()
     for role in ('caller', 'delegate'):
         rec = latest.get((role, args.id))
-        if mine(rec, os.environ.get('HERDR_PANE_ID')) and rec.get('state') == 'launched':
+        if mine(rec, pane) and rec.get('state') == 'launched':
             store.append(make_record('cancelled', role, args.id, rec.get('target'),
                                      rec.get('self'), kind=rec.get('kind'),
                                      prompt_digest=rec.get('prompt_digest'),
@@ -1061,7 +1184,7 @@ def main(argv=None):
         if not args.verb:
             parser.print_help()
             return EXIT_USAGE
-        if args.verb == 'cancel' and not ULID_RE.match(args.id):
+        if args.verb == 'cancel' and not ULID_RE.fullmatch(args.id):
             raise Stop(EXIT_USAGE, 'id must be a 26-character ask id')
         return VERBS[args.verb](args)
     except Stop as stop:
@@ -1069,6 +1192,9 @@ def main(argv=None):
         return stop.code
     except KeyboardInterrupt:
         return 130
+    except OSError as exc:
+        warn('filesystem error: %s' % exc)
+        return EXIT_HERDR
 
 
 if __name__ == '__main__':

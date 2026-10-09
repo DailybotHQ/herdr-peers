@@ -11,6 +11,7 @@ State lives in $FAKE_HERDR_DIR (required):
   machines.json              saved machines, as `machine list --json` prints
   <machine>/agents.json      agents on that server ("local" = no --machine)
   <machine>/panes/<pane>.out pane text; `agent prompt` appends, `pane read` prints
+  <machine>/panes/<pane>.last the latest prompt alone (what the agent receives)
   unreachable                machine ids (one per line) whose SSH call fails
   argv.log                   one JSON line per invocation: {"machine", "argv"}
 
@@ -67,8 +68,11 @@ class Server(object):
     def agents(self):
         return load_json(os.path.join(self.dir, 'agents.json'), [])
 
+    def agent_dicts(self):
+        return [a for a in self.agents() if isinstance(a, dict)]
+
     def find_agent(self, target):
-        for agent in self.agents():
+        for agent in self.agent_dicts():
             if agent.get('pane_id') == target or agent.get('name') == target:
                 return agent
         return None
@@ -209,6 +213,8 @@ def agent_cmd(srv, verb, tail):
         if agent.get('agent_status') == 'blocked':
             server_error(cid, 'agent_blocked', 'agent %s is blocked' % pos[0])
         srv.append_pane(agent['pane_id'], pos[1])
+        with open(srv.pane_file(agent['pane_id'])[:-4] + '.last', 'w', encoding='utf-8') as fh:
+            fh.write(pos[1] + '\n')  # the latest prompt alone, as an agent receives it
         ok(cid, {'agent': agent, 'type': 'agent_prompt'})
     if verb in ('start', 'wait', 'send-keys', 'read', 'rename', 'focus'):
         ok(cid, {'type': 'agent_' + verb.replace('-', '_')})

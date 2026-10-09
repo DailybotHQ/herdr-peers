@@ -32,7 +32,7 @@ assert_contains "human verdict for a reply says never answer" "$OUT" "NEVER ANSW
 # Round trip: an ask built by the helper is an answerable stamp for the peer.
 run "$HELPER" ask local:w1:p2 "What is the build status?"
 id=$OUT
-pane_text local w1:p2 >"$WORK/received.txt"
+last_prompt local w1:p2 >"$WORK/received.txt"
 run as_pane w1:p2 "$HELPER" check --json --no-record "$WORK/received.txt"
 assert_contains "helper-built ask classifies as answer at the receiver" "$OUT" '"decision": "answer"'
 assert_contains "receiver sees the sender address" "$OUT" '"from": "local:w1:p1"'
