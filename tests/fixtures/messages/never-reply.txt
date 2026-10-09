@@ -1,0 +1,4 @@
+The parser is covered by `bash tests/run.sh protocol`.
+
+[herdr-peers] protocol=1 reply-to=01M4EZB9004TFF59TDWH9EDD1R depth=1
+This is a reply. Do not answer it.

@@ -1,0 +1,5 @@
+Duplicate key.
+
+[herdr-peers] protocol=1 from=local:w1:p2 reply=yes depth=0 id=01M4EZBAYGH4QX4FR84G98PBSK depth=0
+You may answer this without asking a human. Reply exactly once with:
+  herdr-peers reply local:w1:p2 01M4EZBAYGH4QX4FR84G98PBSK "<answer>"

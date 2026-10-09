@@ -1,0 +1,5 @@
+Labels are not addresses.
+
+[herdr-peers] protocol=1 from=0 - Mac:w1:p1 reply=yes depth=0 id=01M4EZB9Z81HEAD8X4A1JH69RE
+You may answer this without asking a human. Reply exactly once with:
+  herdr-peers reply 0 - Mac:w1:p1 01M4EZB9Z81HEAD8X4A1JH69RE "<answer>"

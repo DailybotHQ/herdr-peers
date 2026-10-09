@@ -1,0 +1,5 @@
+From the future.
+
+[herdr-peers] protocol=2 from=local:w1:p2 reply=yes depth=0 id=01M4EZB9004TFF59TDWH9EDD1R
+You may answer this without asking a human. Reply exactly once with:
+  herdr-peers reply local:w1:p2 01M4EZB9004TFF59TDWH9EDD1R "<answer>"

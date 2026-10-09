@@ -1,0 +1,4 @@
+A reply that claims depth 0 is still a reply.
+
+[herdr-peers] protocol=1 reply-to=01M4EZB9Z81HEAD8X4A1JH69RE depth=0
+This is a reply. Do not answer it.

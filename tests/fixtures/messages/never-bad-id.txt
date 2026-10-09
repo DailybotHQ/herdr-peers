@@ -1,0 +1,5 @@
+Bad id.
+
+[herdr-peers] protocol=1 from=local:w1:p2 reply=yes depth=0 id=NOT-A-ULID-000000000000000
+You may answer this without asking a human. Reply exactly once with:
+  herdr-peers reply local:w1:p2 NOT-A-ULID-000000000000000 "<answer>"

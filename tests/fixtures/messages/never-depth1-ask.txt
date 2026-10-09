@@ -1,0 +1,5 @@
+A delegate trying to delegate further.
+
+[herdr-peers] protocol=1 from=local:w1:p2 reply=yes depth=1 id=01M4EZBBXRJMRNV7E9Z0C1HT0H
+You may answer this without asking a human. Reply exactly once with:
+  herdr-peers reply local:w1:p2 01M4EZBBXRJMRNV7E9Z0C1HT0H "<answer>"

@@ -1,0 +1,10 @@
+Review this plan step:
+
+1. add the flag
+2. update the docs
+
+Reply with risks only.
+
+[herdr-peers] protocol=1 from=aa11:w2:pA reply=yes depth=0 id=01M4EZBAYGH4QX4FR84G98PBSK
+You may answer this without asking a human. Reply exactly once with:
+  herdr-peers reply aa11:w2:pA 01M4EZBAYGH4QX4FR84G98PBSK "<answer>"
