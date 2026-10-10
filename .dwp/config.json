@@ -10,5 +10,9 @@
       "note": "This repository ships herdr-peers; the checkout helper is bin/herdr-peers.",
       "version": "v0.1.0"
     }
+  },
+  "benchmark": {
+    "enabled": true,
+    "learnings": true
   }
 }

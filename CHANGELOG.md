@@ -26,6 +26,14 @@ Fixes from the v0.1.0 Final Review and the public repository standard
 
 ### Changed
 
+- Documentation audit for the v7 ecosystem: the `ask` options (`--task`,
+  `--worktree`, `--profile`, `--from`, `--scope`, `--fanout --reason`) are
+  documented, the README gains a "Use with Deep Work Plan v7" subsection
+  (the pack's `herdr` addon pins this repository), and the official-skill
+  pin is tied to the Herdr binary version.
+- Onboarded to Deep Work Plan 7.0.0 (`.dwp/config.json` registry, vendored
+  `deepworkplan` and `ai-diff-reviewer` skills, `/dwp-*` delegators);
+  benchmark and learnings enabled in the tracked config.
 - README follows the ecosystem layout (what it is, install, quickstart,
   documentation, security, contributing, license).
 - Environment-variable table in `SKILL.md` (and a pointer in the README);
