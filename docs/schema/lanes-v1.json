@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "herdr-peers/lanes-v1",
+  "title": "herdr-peers lanes view (lanes-v1)",
+  "description": "What `herdr-peers lanes --json` prints: one row per peer (lane) this pane has asked, from the delegation log, with the peer's live state from `herdr-peers status`. Producers may add keys within a schema version; consumers must ignore unknown keys. A breaking change is a new schema id (lanes-v2). Never carries prompt text, reply text, screen text or secret values.",
+  "type": "object",
+  "required": ["schema", "protocol", "self", "generated_at", "lanes"],
+  "properties": {
+    "schema": { "const": "herdr-peers/lanes-v1" },
+    "protocol": { "const": 1, "description": "The herdr-peers protocol (interface) version." },
+    "self": { "type": "string",
+              "pattern": "^(local|[A-Za-z0-9._-]{1,64}):[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}$",
+              "description": "The caller's own address, <machine_id>:<pane>." },
+    "generated_at": { "type": "string",
+                      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      "description": "RFC 3339 UTC time of the listing." },
+    "lanes": {
+      "type": "array",
+      "description": "Empty when this pane has asked nobody (exit 0).",
+      "items": {
+        "type": "object",
+        "required": ["peer", "label", "agent", "profile", "vendor", "state", "screen",
+                     "open_asks", "last"],
+        "properties": {
+          "peer": { "type": "string",
+                    "pattern": "^(local|[A-Za-z0-9._-]{1,64}):[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}$",
+                    "description": "The peer's address, <machine_id>:<pane>." },
+          "label": { "type": "string", "description": "The machine's label (local for this server)." },
+          "agent": { "type": ["string", "null"], "description": "Agent kind as Herdr reports it (claude, codex, …)." },
+          "profile": { "type": ["string", "null"], "pattern": "^@",
+                       "description": "The account/profile recorded with --profile, as @name." },
+          "vendor": { "type": ["string", "null"],
+                      "description": "--vendor, else derived from the agent kind (anthropic, openai, …)." },
+          "state": { "enum": ["working", "idle", "blocked", "done", "unknown", "no_agent", "unreachable"],
+                     "description": "Herdr's lifecycle state; unknown = an agent is present but unclassified; no_agent = the pane runs no agent; unreachable = Herdr could not answer for it." },
+          "screen": { "enum": ["none", "folder_trust", "bypass_ack", "login", "permission", "unknown"],
+                      "description": "Class of the waiting screen (blocked, unknown or no_agent lanes); none otherwise." },
+          "open_asks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "task", "since"],
+              "properties": {
+                "id": { "type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+                "task": { "type": ["string", "null"] },
+                "since": { "type": "string",
+                           "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" }
+              }
+            }
+          },
+          "last": {
+            "type": ["object", "null"],
+            "required": ["id", "state", "at"],
+            "description": "The most recent ask to this peer and its current state.",
+            "properties": {
+              "id": { "type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+              "state": { "enum": ["launched", "completed", "failed", "cancelled"] },
+              "at": { "type": "string",
+                      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

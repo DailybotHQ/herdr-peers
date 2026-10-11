@@ -2,7 +2,7 @@
 # Scope `live`: optional checks against a real Herdr server. Opt-in only —
 # run `HERDR_PEERS_LIVE=1 bash tests/run.sh live` from inside a Herdr pane.
 # Everything here is read-only against the server: no pane, tab or session
-# is created, changed or closed, and the listing is scoped to the local
+# is created, changed or closed, no key is sent, and the listing is scoped to the local
 # server, so no saved machine is contacted. Without the opt-in, or without a server, the
 # scope reports `unavailable` — never a pass.
 
@@ -35,6 +35,17 @@ else
     run live "$HELPER" ask --scope local local:w0:p0 "never sent"
     assert_rc "live: asking a pane that does not exist fails cleanly (exit 1)" 1
     check "live: nothing was recorded for the failed ask" sh -c "! grep -q '\"state\": \"launched\"' '$SANDBOX/live/.herdr-peers/log.ndjson' 2>/dev/null"
+    run live "$HELPER" status --json "local:$LIVE_PANE"
+    assert_rc "live: status reads this pane's real state" 0
+    state=$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])' 2>/dev/null)
+    case "$state" in
+      working | idle | blocked | done | unknown | no_agent) t_ok "live: status names a lane state ($state)" ;;
+      *) t_fail "live: status names a lane state" "$OUT" ;;
+    esac
+    run live "$HELPER" lanes --json
+    printf '%s\n' "$OUT" >"$SANDBOX/live/lanes.json"
+    run python3 "$ROOT/tests/tools/validate_records.py" --doc "$ROOT/docs/schema/lanes-v1.json" "$SANDBOX/live/lanes.json"
+    assert_rc "live: lanes --json validates against lanes-v1" 0
     t_skip "live: two-pane ask/reply round trip not run — it creates panes in the live session; v0.1.0 covers the round trip against the fake (helper scope)"
   fi
 fi

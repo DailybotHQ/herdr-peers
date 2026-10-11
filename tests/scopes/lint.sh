@@ -31,7 +31,7 @@ for f in "$ROOT/tests/fakes/herdr" "$ROOT"/skills/herdr-peers/scripts/*.py "$ROO
     'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' "$f"
 done
 
-json_files=$(find "$ROOT/skills" "$ROOT/tests/fixtures" -name '*.json' 2>/dev/null | sort)
+json_files=$(find "$ROOT/skills" "$ROOT/tests/fixtures" "$ROOT/docs/schema" -name '*.json' 2>/dev/null | sort)
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   check "valid JSON $(basename "$f")" python3 -m json.tool "$f"

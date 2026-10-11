@@ -5,7 +5,8 @@
 #
 # Writes into OUTDIR:
 #   RELEASE_NOTES.md  the `## [X.Y.Z]` section of CHANGELOG.md
-#   SHA256SUMS        sha256 of every shipped file (skills/, bin/, LICENSE),
+#   SHA256SUMS        sha256 of every shipped file (skills/, bin/, LICENSE,
+#                     docs/schema/ — the lanes-v1 contract),
 #                     in the format `shasum -a 256 -c SHA256SUMS` verifies
 #
 # Used by .github/workflows/release.yml; runnable locally to reproduce a
@@ -47,7 +48,7 @@ if ! grep -q . "$out/RELEASE_NOTES.md"; then
   exit 1
 fi
 
-files=$(git ls-files skills bin LICENSE | LC_ALL=C sort)
+files=$(git ls-files skills bin LICENSE docs/schema | LC_ALL=C sort)
 if [ -z "$files" ]; then
   echo "release-assets: no shipped files tracked under skills/, bin/, LICENSE" >&2
   exit 1
