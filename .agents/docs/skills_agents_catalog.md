@@ -4,8 +4,8 @@
 
 | Skill | Version | Purpose |
 | --- | --- | --- |
-| `deepworkplan` | 7.0.1 | Deep Work Plans: create, execute, refine, resume, status, verify, upgrade |
-| `ai-diff-reviewer` | 3.3.0 | Local review of the branch diff (configured by `.review/extension.md`) |
+| `deepworkplan` | 7.6.0 | Deep Work Plans: create, execute, refine, resume, status, verify, upgrade |
+| `ai-diff-reviewer` | 3.3.9 | Local review of the branch diff (configured by `.review/extension.md`) |
 
 The product skill `skills/herdr-peers/` is what this repository ships; it is
 not installed into `.agents/`.
