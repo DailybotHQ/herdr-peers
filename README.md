@@ -41,6 +41,8 @@ checkout instead: `git clone --branch v0.1.0 https://github.com/DailybotHQ/herdr
 and use `bin/herdr-peers`.
 
 Requirements: Herdr ≥ 0.9.1, `bash`, `python3` ≥ 3.9 (standard library only).
+Keep the official skill matched to your binary: the pin above is for Herdr
+0.9.3; for another version use `herdr --skill`.
 
 ## Quickstart
 
@@ -74,10 +76,28 @@ The reply arrives with `reply-to=<id> depth=1` and "This is a reply. Do not
 answer it." — so the conversation stops. `herdr-peers log --open` shows what
 is still outstanding.
 
+### Use with Deep Work Plan v7
+
+The [Deep Work Plan](https://deepworkplan.com) `herdr` addon pins this
+repository (`v0.1.0`, protocol 1) as the interactive transport for a v7 plan
+that grants `agent_delegation`. The plan's ledger records the delegation
+(`ledger.py delegate launch|observe|collect|cancel`); herdr-peers carries the
+ask. Run the ask with the plan and task set, so the record is mirrored into
+the plan:
+
+```bash
+DWP_PLAN=<plan-dir> DWP_TASK=<T-id> herdr-peers ask [--worktree <path>] local:w1:p2 "<brief>"
+herdr-peers wait "<ask-id>"       # or: herdr-peers log --id "<ask-id>"
+```
+
+`check` classifies a *received message* (a file or stdin), not an ask id; to
+inspect an ask use `log --id`. The addon's flow is in the pack's
+`addons/herdr/` folder; everything here works without a plan.
+
 | Verb | Purpose |
 | --- | --- |
 | `list [--json]` | Live table of agents on every enabled machine; marks your row. |
-| `ask <machine>:<pane> "<prompt>"` | Send an ask with the reply grant; prints its id. |
+| `ask <machine>:<pane> "<prompt>"` | Send an ask with the reply grant; prints its id. Options: `--task`, `--worktree`, `--profile`, `--scope`, `--fanout --reason`. |
 | `wait <id>` | Block until the reply arrives in your pane; record it. |
 | `check [FILE]` | Classify a received message and record it. |
 | `reply <machine>:<pane> <id> "<answer>"` | Answer an ask exactly once. |

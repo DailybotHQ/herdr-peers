@@ -48,7 +48,7 @@ opinion nobody asked for, or to avoid doing the work yourself.
 | Verb | What it does |
 | --- | --- |
 | `list [--json]` | Live table of every agent on every enabled machine; marks your row `<- you`. Run it now when asked who is available — never answer from an old table. |
-| `ask <machine>:<pane> "<prompt>"` | Sends the prompt with the stamp and the reply grant; records it; prints the ask id. |
+| `ask <machine>:<pane> "<prompt>"` | Sends the prompt with the stamp and the reply grant; records it; prints the ask id. Options: `--from ADDR`, `--scope S`, `--fanout N --reason R`, `--task T` (default `$DWP_TASK`), and for the record only `--profile NAME` (the peer's agent profile) and `--worktree PATH` (a writing peer's worktree). A prompt of `-` reads stdin. |
 | `wait <id> [--timeout S]` | Blocks until the reply arrives in your pane, records it, prints it. |
 | `check [FILE]` | Classifies a received message (stdin or file): answer, never answer, or not a protocol message. Records what it must. |
 | `reply <machine>:<pane> <id> "<answer>"` | Answers an ask exactly once. |
