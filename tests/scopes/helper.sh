@@ -9,7 +9,7 @@ ULID='^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
 
 # --- entry points ------------------------------------------------------------
 run "$HELPER" --version
-assert_eq "--version names version and protocol" "herdr-peers 0.1.0 (protocol 1)" "$OUT"
+assert_eq "--version names version and protocol" "herdr-peers 0.2.0 (protocol 1)" "$OUT"
 run "$ROOT/bin/herdr-peers" --version
 assert_rc "bin/ shim runs the skill's helper" 0
 ln -s "$ROOT/bin/herdr-peers" "$SANDBOX/bin/hp-link"
@@ -296,7 +296,7 @@ assert_contains "the reply lands in the caller's pane" "$(cat "$FAKE_HERDR_DIR/a
 # The self probe is cached per terminal: a second remote ask does not probe again.
 : >"$FAKE_HERDR_DIR/argv.log"
 "$HELPER" ask bb22:w1:p1 "second remote ask" >/dev/null
-assert_not_contains "the cached self id avoids a second probe" "$(cat "$FAKE_HERDR_DIR/argv.log")" '"pane", "get"'
+assert_not_contains "the cached self id avoids a second probe" "$(cat "$FAKE_HERDR_DIR/argv.log")" '"--machine", "aa11", "pane", "get"'
 
 # A probe skips unreachable machines; a session with no agents row is reported.
 new_world empty

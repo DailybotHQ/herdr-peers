@@ -66,6 +66,8 @@ once with `herdr-peers reply`. Both sides keep an append-only local record.
 | T15 | **Record tampering and filesystem tricks** | Files the helper writes (log, reply copies, `self.json`, `.gitignore`) are created `0600` without following symlinks (`O_NOFOLLOW`), directories it creates are `0700`; an existing `.gitignore` is never touched; symlinked log or reply files are refused and nothing is sent when the record cannot be written; reply paths are rebuilt from the validated id, never read from the log. | `security` |
 | T16 | **Malformed or hostile JSON from Herdr** | Every field is type-checked; malformed machines/agents are dropped; nothing crashes into a traceback. | `security` |
 | T17 | **Panes and layout** — closing or moving others' work. | Discipline: close only panes you created; layout changes are recorded intent; launched peers get default permissions, never a bypass flag. | `skill` (marketplace rules) |
+| T18 | **Stale sender address** — an agent inherits a `HERDR_PANE_ID` that names a gone pane or another session's pane, so its `from=` routes replies nowhere or into someone else's pane. | `ask` and `reply` verify their own pane first: it must exist on the local server and, when Herdr's `pane process-info` pids are visible in this process table, one of them must be an ancestor of the helper; otherwise exit 6 and nothing is sent or recorded. Pids from another PID namespace (a container) cannot be compared: the pane's existence is the check there. | `orchestra` |
+| T19 | **Screen reading** — `status`/`lanes` read a waiting lane's visible screen, which may show secrets or hostile text, and could be tempted to answer it. | Read-only: they print a class and the name of the matched pattern, never screen text, and never send keys (`argv.log` proves no `send-keys`). Unblocking is the lead's decision, limited to the two first-run screens under the user's standing authorization; login, permission and unknown screens escalate. | `orchestra` |
 
 ## Residual risk (accepted)
 
@@ -102,8 +104,9 @@ Runtime code is `bash` and the `python3` standard library only — no packages
 are installed. The official Herdr skill is referenced pinned
 (`herdrdev/herdr@v0.9.3`) or via the installed binary's `herdr --skill`. CI
 pins GitHub Actions by commit SHA and verifies the shellcheck download
-against its published SHA-256. The v0.1.0 release carries a `SHA256SUMS`
+against its published SHA-256. Every release carries a `SHA256SUMS`
 asset over the shipped files (`skills/herdr-peers/**`, `bin/herdr-peers`,
-`LICENSE`), generated at release time from the tagged tree with
-`git ls-files skills bin LICENSE | LC_ALL=C sort | xargs shasum -a 256`;
+`LICENSE`, and from v0.2.0 the `docs/schema/` contracts), generated at release
+time from the tagged tree with
+`git ls-files skills bin LICENSE docs/schema | LC_ALL=C sort | xargs shasum -a 256`;
 verify a checkout with `shasum -a 256 -c SHA256SUMS`.

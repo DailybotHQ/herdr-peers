@@ -12,6 +12,8 @@ State lives in $FAKE_HERDR_DIR (required):
   <machine>/agents.json      agents on that server ("local" = no --machine)
   <machine>/panes/<pane>.out pane text; `agent prompt` appends, `pane read` prints
   <machine>/panes/<pane>.last the latest prompt alone (what the agent receives)
+  <machine>/panes/<pane>.pids foreground pids, one per line (`pane process-info`;
+                             absent = none reported)
   unreachable                machine ids (one per line) whose SSH call fails
   argv.log                   one JSON line per invocation: {"machine", "argv"}
 
@@ -264,6 +266,19 @@ def pane_cmd(srv, verb, tail):
             if timeout_ms and time.time() >= deadline:
                 server_error(cid, 'timeout', 'timed out waiting for output')
             time.sleep(0.05)
+    if verb == 'process-info':
+        pane = option(tail, '--pane') or os.environ.get('HERDR_PANE_ID')
+        if not pane or not srv.pane_exists(pane):
+            server_error(cid, 'pane_not_found', 'pane not found')
+        try:
+            with open(srv.pane_file(pane)[:-4] + '.pids', 'r', encoding='utf-8') as fh:
+                pids = [int(x) for x in fh.read().split()]
+        except OSError:
+            pids = []
+        ok(cid, {'process_info': {
+            'foreground_process_group_id': pids[0] if pids else None,
+            'foreground_processes': [{'pid': p, 'name': 'agent'} for p in pids]},
+            'type': 'pane_process_info'})
     if verb == 'split':
         n = len(os.listdir(os.path.join(srv.dir, 'panes'))) + 100 \
             if os.path.isdir(os.path.join(srv.dir, 'panes')) else 100

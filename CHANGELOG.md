@@ -8,10 +8,40 @@ the protocol number).
 
 ## [Unreleased]
 
-Fixes from the v0.1.0 Final Review and the public repository standard
-(on `main`; the `v0.1.0` tag is unchanged).
+## [0.2.0] - 2026-10-11
+
+herdr-peers becomes the control plane of an orchestra: a lead agent sees
+and diagnoses its lanes. Protocol stays **1** (no wire change; additive).
+Also ships the fixes from the v0.1.0 Final Review and the public repository
+standard.
 
 ### Added
+
+- `herdr-peers status <machine>:<pane> [--json]`: a lane's state from Herdr
+  (`working`, `idle`, `blocked`, `done`, `unknown`, `no_agent`,
+  `unreachable`), its agent kind, and the class of a waiting screen read
+  with `herdr pane read` — `folder_trust`, `bypass_ack`, `login`,
+  `permission`, `unknown` — with the documented next step: the exact
+  `herdr pane send-keys` for the two first-run screens (only under the
+  user's standing authorization), escalation for everything else.
+  Read-only: never sends keys, never prints screen text.
+- `herdr-peers lanes [--json] [--all]`: one row per peer this pane asked —
+  agent, vendor, profile, live state, screen class, open asks, last ask.
+  `--json` is the frozen contract `herdr-peers/lanes-v1`
+  (`docs/schema/lanes-v1.json`; consumers ignore unknown keys).
+- `ask --vendor NAME`; the vendor is otherwise derived from the agent kind
+  (claude → anthropic, codex → openai, …) and recorded as the optional
+  `vendor` field of the delegation record. Profile, vendor, kind and task
+  are repeated on every later record of an ask; `log` shows vendor and
+  profile.
+- `skills/herdr-peers/orchestra.md`: leading many lanes — the loop, states
+  and screen classes, accounts and vendors with coding-agents-kit (`ak pick`,
+  `ak usage`, `--trust-cwd`), lanes inside devcontainer-kit containers
+  (`dck herdr mesh`, `[agents] host_profiles`), single-branch work,
+  troubleshooting.
+- Test scope `orchestra`; the fake `herdr` models `pane process-info`; the
+  record validator understands arrays and validates one JSON document.
+- `SHA256SUMS` also covers `docs/schema/`.
 
 - Repository standard: `SECURITY.md` (supported versions, private
   reporting, response targets), `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`
@@ -43,6 +73,11 @@ Fixes from the v0.1.0 Final Review and the public repository standard
 
 ### Fixed
 
+- `ask` and `reply` refuse a stale `HERDR_PANE_ID` (exit 6, nothing sent or
+  recorded): the pane must exist on the local server and, when its
+  foreground pids are visible, run an ancestor of the helper. Seen in the
+  field: an agent with an inherited pane id sent `from=` an address that no
+  longer existed, so the reply could not route.
 - `log --open` honours `--id`.
 - Test runner: the real Herdr context for the opt-in `live` scope is no
   longer exported to other scopes, survives paths with spaces, and the live
@@ -83,5 +118,6 @@ First release. Interface version: **protocol 1** (`metadata.protocol: 1` in
   `harness lint protocol helper skill templates security live`; CI on Ubuntu
   and macOS.
 
-[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/DailybotHQ/herdr-peers/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/DailybotHQ/herdr-peers/releases/tag/v0.1.0

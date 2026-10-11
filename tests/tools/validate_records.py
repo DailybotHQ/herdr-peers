@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
-"""Validate NDJSON records against templates/delegation-record.json.
+"""Validate NDJSON records against templates/delegation-record.json, or one
+JSON document (--doc) against docs/schema/lanes-v1.json.
 
 Standard library only; implements exactly the JSON Schema keywords that
 schema uses: type (incl. lists), const, enum, pattern, required, properties,
-additionalProperties: false. Unknown keywords in the schema are an error, so
+additionalProperties: false, items. Unknown keywords in the schema are an error, so
 the validator can never silently ignore a rule.
 
-Usage: validate_records.py SCHEMA FILE.ndjson   -> exit 0, prints "valid N"
+Usage: validate_records.py SCHEMA FILE.ndjson        -> exit 0, prints "valid N"
+       validate_records.py --doc SCHEMA FILE.json   -> exit 0, prints "valid 1"
 """
 import json
 import re
 import sys
 
 KNOWN = {'$schema', '$id', 'title', 'description', 'type', 'required',
-         'additionalProperties', 'properties', 'const', 'enum', 'pattern'}
-TYPES = {'string': str, 'object': dict, 'integer': int, 'null': type(None)}
+         'additionalProperties', 'properties', 'const', 'enum', 'pattern', 'items'}
+TYPES = {'string': str, 'object': dict, 'integer': int, 'null': type(None), 'array': list}
 
 
 def check_keywords(node, where):
@@ -23,6 +25,8 @@ def check_keywords(node, where):
         raise SystemExit('schema %s uses unsupported keywords %s' % (where, sorted(unknown)))
     for name, sub in node.get('properties', {}).items():
         check_keywords(sub, '%s.%s' % (where, name))
+    if 'items' in node:
+        check_keywords(node['items'], where + '[]')
 
 
 def errors(value, schema, where):
@@ -50,10 +54,24 @@ def errors(value, schema, where):
         for key, sub in props.items():
             if key in value:
                 out.extend(errors(value[key], sub, '%s.%s' % (where, key)))
+    if isinstance(value, list) and 'items' in schema:
+        for i, item in enumerate(value):
+            out.extend(errors(item, schema['items'], '%s[%d]' % (where, i)))
     return out
 
 
 def main():
+    if sys.argv[1] == '--doc':
+        schema = json.load(open(sys.argv[2], encoding='utf-8'))
+        check_keywords(schema, '$')
+        try:
+            doc = json.load(open(sys.argv[3], encoding='utf-8'))
+        except ValueError:
+            print('not JSON')
+            return 1
+        problems = errors(doc, schema, '$')
+        print('\n'.join(problems) if problems else 'valid 1')
+        return 1 if problems else 0
     schema = json.load(open(sys.argv[1], encoding='utf-8'))
     check_keywords(schema, '$')
     count, problems = 0, []

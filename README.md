@@ -26,7 +26,7 @@ loop guard) and a helper so agents never hand-build it.
 The skill (the helper ships inside it):
 
 ```bash
-npx --yes skills add DailybotHQ/herdr-peers@v0.1.0 --skill herdr-peers -g
+npx --yes skills add DailybotHQ/herdr-peers@v0.2.0 --skill herdr-peers -g
 ```
 
 Herdr's official skill, which this one depends on — pinned, or use the
@@ -37,7 +37,7 @@ npx --yes skills add herdrdev/herdr@v0.9.3 --skill herdr -g
 ```
 
 Every machine whose agents should answer needs the skill too. From a
-checkout instead: `git clone --branch v0.1.0 https://github.com/DailybotHQ/herdr-peers`
+checkout instead: `git clone --branch v0.2.0 https://github.com/DailybotHQ/herdr-peers`
 and use `bin/herdr-peers`.
 
 Requirements: Herdr ≥ 0.9.1, `bash`, `python3` ≥ 3.9 (standard library only).
@@ -79,7 +79,7 @@ is still outstanding.
 ### Use with Deep Work Plan v7
 
 The [Deep Work Plan](https://deepworkplan.com) `herdr` addon pins this
-repository (`v0.1.0`, protocol 1) as the interactive transport for a v7 plan
+repository by tag (protocol 1) as the interactive transport for a v7 plan
 that grants `agent_delegation`. The plan's ledger records the delegation
 (`ledger.py delegate launch|observe|collect|cancel`); herdr-peers carries the
 ask. Run the ask with the plan and task set, so the record is mirrored into
@@ -97,11 +97,13 @@ inspect an ask use `log --id`. The addon's flow is in the pack's
 | Verb | Purpose |
 | --- | --- |
 | `list [--json]` | Live table of agents on every enabled machine; marks your row. |
-| `ask <machine>:<pane> "<prompt>"` | Send an ask with the reply grant; prints its id. Options: `--task`, `--worktree`, `--profile`, `--scope`, `--fanout --reason`. |
+| `ask <machine>:<pane> "<prompt>"` | Send an ask with the reply grant; prints its id. Options: `--task`, `--worktree`, `--profile`, `--vendor`, `--scope`, `--fanout --reason`. |
 | `wait <id>` | Block until the reply arrives in your pane; record it. |
 | `check [FILE]` | Classify a received message and record it. |
 | `reply <machine>:<pane> <id> "<answer>"` | Answer an ask exactly once. |
 | `log`, `cancel <id>` | The delegation record; close an open ask. |
+| `status <machine>:<pane>` | A lane's state and the class of a waiting screen, with the next step (read-only). |
+| `lanes [--json]` | One row per peer you asked: agent, vendor, profile, state, open and last asks. |
 
 Optional environment: `HERDR_PEERS_SCOPE`, `HERDR_PEERS_SELF`,
 `HERDR_PEERS_DEPTH`, `HERDR_PEERS_FANOUT` (lower only), `HERDR_PEERS_MAX_BYTES`,
@@ -110,7 +112,30 @@ in [SKILL.md](skills/herdr-peers/SKILL.md#2-the-helper).
 
 Exit codes: `0` ok · `1` Herdr error · `2` usage · `3` protocol refusal
 (never answer) · `4` policy refusal · `5` timeout · `6` not inside Herdr ·
-`7` not a protocol message. (`6` also covers a missing `herdr` or `python3`.)
+`7` not a protocol message. (`6` also covers a missing `herdr` or `python3`,
+and a stale `HERDR_PANE_ID`.)
+
+### Orchestrating lanes
+
+A lead agent can run many lanes — panes on this machine, other machines and
+containers, on different vendors and accounts — and watch them from one
+place:
+
+```bash
+herdr-peers ask --profile @work1 local:w4:p1 "<self-contained task>"
+herdr-peers lanes                 # per lane: agent, vendor, profile, state, screen, open/last ask
+herdr-peers status local:w4:p1    # why a lane waits, and the documented next step
+```
+
+`status` classifies a waiting screen — the first-run folder-trust and Claude
+bypass acknowledgement (which the lead may answer under the user's standing
+authorization), login, per-action permission, unknown (escalate) — without
+ever sending keys or printing screen text. `lanes --json` is a frozen
+contract, [`docs/schema/lanes-v1.json`](docs/schema/lanes-v1.json): consumers
+ignore unknown keys. Accounts with coding-agents-kit (`ak pick`, `ak usage`,
+`--trust-cwd`) and lanes inside devcontainer-kit containers (`dck herdr
+mesh`, `[agents] host_profiles`) are covered in
+[orchestra.md](skills/herdr-peers/orchestra.md).
 
 ## Documentation
 
@@ -120,6 +145,8 @@ Exit codes: `0` ok · `1` Herdr error · `2` usage · `3` protocol refusal
 | [skills/herdr-peers/protocol.md](skills/herdr-peers/protocol.md) | Protocol 1 (normative): message grammar, stamps, loop guard, addressing, depth and fan-out |
 | [skills/herdr-peers/discipline.md](skills/herdr-peers/discipline.md) | How agents ask, wait, answer and clean up |
 | [skills/herdr-peers/launcher.md](skills/herdr-peers/launcher.md) | Launching a delegate in a new pane |
+| [skills/herdr-peers/orchestra.md](skills/herdr-peers/orchestra.md) | Leading many lanes: `status`, `lanes`, blocked screens, accounts, containers, troubleshooting |
+| [docs/schema/lanes-v1.json](docs/schema/lanes-v1.json) | The `lanes --json` contract (`herdr-peers/lanes-v1`) |
 | [skills/herdr-peers/templates/](skills/herdr-peers/templates/) | Grant, ask and reply templates; the delegation-record JSON schema |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model and accepted residual risks |
 | [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) | Test scopes and the source-to-test map |
