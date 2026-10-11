@@ -26,7 +26,7 @@ import subprocess
 import sys
 import time
 
-VERSION = '0.2.0'
+VERSION = '0.2.1'
 PROTOCOL = 1
 MARKER = '[herdr-peers]'
 DEFAULT_MAX_BYTES = 16384
@@ -1210,9 +1210,11 @@ def cmd_log(args):
 # ------------------------------------------------------------- status/lanes
 
 # Known screens of an agent that waits for input, matched on the visible
-# screen. Order matters: the first match decides. Only the first two are
-# first-run screens that may be unblocked under the user's standing
-# authorization; every other class escalates to a human.
+# screen. Order matters: the first match decides. Only folder trust may be
+# keyed through, by the lead, on a pane it launched itself, under the user's
+# standing authorization; every other class escalates. Claude's
+# bypass-permissions acknowledgement is never keyed by an agent: the
+# developer accepts it once per profile, when the profile is created.
 SCREENS = [
     ('bypass_ack', [r'Bypass Permissions mode', r'Yes, I accept']),
     ('folder_trust', [r'Do you trust the (files|contents) (in|of) this (folder|directory)',
@@ -1228,10 +1230,9 @@ SCREENS = [
                     r"Yes, and don't ask again", r'(?i)approve (this|the) ',
                     r'(?i)permission (request|required)']),
 ]
-# The two unblockable screens: keys that accept them (Herdr key names). The
-# folder-trust default option is the accepting one; the bypass
-# acknowledgement defaults to "No, exit", so the accepting option is one down.
-UNBLOCK_KEYS = {'folder_trust': ['enter'], 'bypass_ack': ['down', 'enter']}
+# The only keyable screen and the keys that accept it (Herdr key names): the
+# folder-trust default option is the accepting one.
+UNBLOCK_KEYS = {'folder_trust': ['enter']}
 LANE_STATES = ('working', 'idle', 'blocked', 'done', 'unknown')
 
 
@@ -1256,6 +1257,9 @@ def next_step(addr, screen):
     if screen in UNBLOCK_KEYS:
         return ('unblock', herdr_cmd(machine, ['pane', 'send-keys', pane] + UNBLOCK_KEYS[screen]))
     read = herdr_cmd(machine, ['pane', 'read', pane, '--source', 'visible'])
+    if screen == 'bypass_ack':
+        return ('escalate', 'escalate to the developer: accept once per profile; never keyed '
+                'by an agent. Inspect: ' + read)
     if screen == 'login':
         return ('escalate', 'a human signs this agent in (or restarts it on a signed-in '
                 'profile); never type credentials into a pane. Inspect: ' + read)
@@ -1322,8 +1326,8 @@ def cmd_status(args):
     if st['screen'] != 'none':
         print('screen: %s' % st['screen'])
         if st['action'] == 'unblock':
-            print('next (only under the user\'s standing authorization to unblock first-run '
-                  'screens): %s' % st['next'])
+            print('next (folder trust only, on a pane you launched yourself, under the '
+                  'user\'s standing authorization): %s' % st['next'])
         else:
             print('next: escalate — %s' % st['next'])
     return EXIT_OK if st['state'] != 'unreachable' else EXIT_HERDR

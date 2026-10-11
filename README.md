@@ -34,7 +34,7 @@ The skill (the helper ships inside it, at
 `~/.agents/skills/herdr-peers/scripts/herdr-peers` for a global install):
 
 ```bash
-npx --yes skills add DailybotHQ/herdr-peers@v0.2.0 --skill herdr-peers -g -y
+npx --yes skills add DailybotHQ/herdr-peers@v0.2.1 --skill herdr-peers -g -y
 ```
 
 Herdr's official skill, which this one depends on — pinned, or use the
@@ -48,11 +48,11 @@ Every machine whose agents should answer needs the skill too. From a
 checkout of the tag instead, verified against the release's `SHA256SUMS`:
 
 ```bash
-git clone --branch v0.2.0 https://github.com/DailybotHQ/herdr-peers
+git clone --branch v0.2.1 https://github.com/DailybotHQ/herdr-peers
 cd herdr-peers
-curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v0.2.0/SHA256SUMS
+curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v0.2.1/SHA256SUMS
 shasum -a 256 -c SHA256SUMS      # every shipped file: OK
-bin/herdr-peers --version        # herdr-peers 0.2.0 (protocol 1)
+bin/herdr-peers --version        # herdr-peers 0.2.1 (protocol 1)
 ```
 
 Requirements: Herdr ≥ 0.9.1, `bash`, `python3` ≥ 3.9 (standard library
@@ -114,7 +114,7 @@ $ herdr-peers status bb22:w1:p3
 bb22:w1:p3  blocked  agent=codex
 title: waiting for approval
 screen: folder_trust
-next (only under the user's standing authorization to unblock first-run screens): herdr --machine bb22 pane send-keys w1:p3 enter
+next (folder trust only, on a pane you launched yourself, under the user's standing authorization): herdr --machine bb22 pane send-keys w1:p3 enter
 ```
 
 | Verb | Purpose |
@@ -128,9 +128,11 @@ next (only under the user's standing authorization to unblock first-run screens)
 | `lanes [--json] [--all]` | One row per peer you asked: agent, vendor, profile, live state, screen class, open asks, last ask. `--json` is the frozen contract [`herdr-peers/lanes-v1`](docs/schema/lanes-v1.json); consumers ignore unknown keys. |
 | `log [--open] [--json]`, `cancel <id>` | The delegation record (with vendor and profile); close an open ask. |
 
-Only the two first-run screens (`folder_trust`, `bypass_ack`) may be
-unblocked, by the lead, under the user's standing authorization; logins,
-per-action permissions and unknown screens go to a human. `ask` and `reply`
+Folder trust is the only screen an agent may key through: by the lead, on a
+pane it launched itself, under the user's standing authorization. Claude's
+bypass-permissions acknowledgement (`bypass_ack`) is never keyed by an
+agent — the developer accepts it once per profile, when the profile is
+created. Logins, per-action permissions and unknown screens go to a human. `ask` and `reply`
 refuse a stale `HERDR_PANE_ID` (exit 6), so a reply is never addressed to a
 pane that no longer exists. Leading many lanes — accounts, vendors,
 containers, troubleshooting — is in

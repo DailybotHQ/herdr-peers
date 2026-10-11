@@ -50,6 +50,8 @@ assert_eq "a Claude folder-trust screen is folder_trust" "folder_trust" "$(jget 
 assert_eq "folder trust may be unblocked" "unblock" "$(jget "$OUT" action)"
 assert_eq "the unblock step accepts the default option" \
   "herdr --machine bb22 pane send-keys w1:p3 enter" "$(jget "$OUT" next)"
+run "$HELPER" status "$B"
+assert_contains "the folder-trust step names its limits" "$OUT" "folder trust only, on a pane you launched yourself"
 screen bb22 w1:p3 "Do you trust the contents of this directory? Working with untrusted contents
 › 1. Yes, continue
   2. No, quit"
@@ -60,8 +62,15 @@ screen bb22 w1:p3 "WARNING: Claude Code running in Bypass Permissions mode
    2. Yes, I accept"
 run "$HELPER" status --json "$B"
 assert_eq "the bypass acknowledgement is bypass_ack" "bypass_ack" "$(jget "$OUT" screen)"
-assert_eq "the bypass step moves off the default No" \
-  "herdr --machine bb22 pane send-keys w1:p3 down enter" "$(jget "$OUT" next)"
+assert_eq "the bypass acknowledgement escalates, never unblocks" "escalate" "$(jget "$OUT" action)"
+assert_contains "the bypass step goes to the developer, once per profile" "$(jget "$OUT" next)" \
+  "escalate to the developer: accept once per profile; never keyed by an agent"
+assert_not_contains "no bypass next step suggests keys" "$(jget "$OUT" next)" "send-keys"
+run "$HELPER" status "$B"
+assert_not_contains "the human view of bypass_ack suggests no keys" "$OUT" "send-keys"
+assert_contains "the human view of bypass_ack says escalate" "$OUT" "next: escalate"
+ukeys=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import herdr_peers as h; print(" ".join(sorted(h.UNBLOCK_KEYS)))' "$ROOT/skills/herdr-peers/scripts")
+assert_eq "folder trust is the only keyable screen" "folder_trust" "$ukeys"
 screen bb22 w1:p3 "Select login method:
  ❯ 1. Claude account with subscription"
 run "$HELPER" status --json "$B"
