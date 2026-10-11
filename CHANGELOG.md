@@ -8,6 +8,12 @@ the protocol number).
 
 ## [Unreleased]
 
+### Changed
+
+- Development harness: the vendored `deepworkplan` skill is 7.6.0 and the
+  `ai-diff-reviewer` skill 3.3.9, upgraded through the pack's all-addons
+  onboarding; the shipped skill and helper are unchanged.
+
 ## [0.2.1] - 2026-10-11
 
 Protocol stays **1**; the `herdr-peers/lanes-v1` schema is unchanged.
