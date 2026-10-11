@@ -39,7 +39,7 @@ check "CI runs the public-hygiene check" grep -q 'check-public-hygiene.sh' "$ROO
 
 order=$(sed -n 's/^## //p' "$ROOT/README.md" | tr '\n' '|')
 assert_eq "README sections follow the standard order" \
-  "What it is|Install|Quickstart|Documentation|Security|Contributing|License|" "$order"
+  "What it is|Install|Quickstart|Usage|How it fits with DeepWorkPlan|Part of the DeepWorkPlan ecosystem|Security|Documentation|Contributing|License|" "$order"
 check "README ends with the ecosystem footer" \
   sh -c 'tail -1 "$1" | grep -qF "Part of the [DeepWorkPlan](https://deepworkplan.com) ecosystem — works on its own."' _ "$ROOT/README.md"
 
