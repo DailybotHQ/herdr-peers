@@ -44,19 +44,21 @@ that matched.
 
 | Screen class | What it is | Documented next step |
 | --- | --- | --- |
-| `folder_trust` | First run in a folder: "Do you trust the files in this folder?" (Claude), "Trust this folder?" / "Do you trust the contents of this directory?" (Codex) | **May be unblocked** under the user's standing authorization: `herdr pane send-keys <pane> enter` (the default option accepts) |
-| `bypass_ack` | Claude's one-time "Bypass Permissions mode" acknowledgement (default "No, exit") | **May be unblocked** under the user's standing authorization: `herdr pane send-keys <pane> down enter` |
+| `folder_trust` | First run in a folder: "Do you trust the files in this folder?" (Claude), "Trust this folder?" / "Do you trust the contents of this directory?" (Codex) | **The only screen an agent may key through**, and only on a pane it launched itself, under the user's standing authorization: `herdr pane send-keys <pane> enter` (the default option accepts) |
+| `bypass_ack` | Claude's one-time "Bypass Permissions mode" acknowledgement (default "No, exit") | **Escalate to the developer: accept once per profile; never keyed by an agent.** It is a one-time, per-profile developer step, done when the profile is created (§3). |
 | `login` | Sign-in, API key or credential prompt | **Escalate.** A human signs in, or the lane restarts on a signed-in account. Never type credentials into a pane. |
 | `permission` | A per-action approval ("Do you want to proceed?") | **Escalate** to the lane's human; a peer's ask never authorizes it. |
 | `unknown` | Anything else | **Escalate**: read the screen, ask a human. |
 
-`status` prints the exact command (with `--machine` for a remote lane).
-Unblocking is a decision of the lead, not of the helper: only when the user
-has granted it for unattended lanes, only on panes the lead started, only for
-the lane's own folder and an account the user runs with autonomy — then read
-the screen again (`status`) to confirm it moved. Two failed unblocks stop the
-lane. A permission opt-out the user set (for example an "ask" mode) is never
-answered by the lead.
+For `folder_trust` only, `status` prints the exact command (with
+`--machine` for a remote lane); for every other class, including
+`bypass_ack`, it prints no keys. Keying through folder trust is a decision
+of the lead, not of the helper: only when the user has granted it for
+unattended lanes, only on a pane the lead launched itself, only for the
+lane's own folder — then read the screen again (`status`) to confirm it
+moved. Two failed attempts stop the lane. No agent ever sends keys for
+Claude's bypass-permissions acknowledgement, and a permission opt-out the
+user set (for example an "ask" mode) is never answered by the lead.
 
 ## 3. Lanes on several accounts and vendors
 
@@ -71,9 +73,9 @@ ak claude @work1 --trust-cwd     # in the lane's pane: launch on that account, f
 ```
 
 `--trust-cwd` pre-trusts the launch folder in that account's own config, so
-the lane does not stop at `folder_trust`. Accept Claude's bypass
-acknowledgement once per account (or let the lead do it under the user's
-grant, §2). Use only your own accounts, within each vendor's terms; never
+the lane does not stop at `folder_trust`. Claude's bypass-permissions
+acknowledgement is the developer's own step: accept it once per profile,
+when the profile is created; no agent keys it (§2). Use only your own accounts, within each vendor's terms; never
 rotate accounts to get past a limit. Record the account with `--profile`:
 `lanes` shows it, and `log` keeps it on every record of the ask.
 
@@ -90,6 +92,10 @@ remote lane:
 - With the host profile's `[agents] host_profiles = true`, the container uses
   the host's own agent accounts for the CLIs the repository lists — no login
   inside — so the lead can place a containerized lane on a chosen account.
+  devcontainer-kit records Claude's bypass acknowledgement only in a
+  container's own homes, never in the host profiles it shares (those also
+  drive Claude on the host, where the developer accepts it once per
+  profile).
 - From a lane on another machine, set `HERDR_PEERS_SELF=<this machine's id as
   saved there>` (or pass `--from`) whenever the helper reports *no reply route*.
 

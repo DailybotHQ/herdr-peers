@@ -8,6 +8,20 @@ the protocol number).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-11
+
+Protocol stays **1**; the `herdr-peers/lanes-v1` schema is unchanged.
+
+### Fixed
+
+- `bypass_ack` (Claude's bypass-permissions acknowledgement) now escalates:
+  "escalate to the developer: accept once per profile; never keyed by an
+  agent". It is no longer in `UNBLOCK_KEYS`, so `status` never suggests
+  keys for it. v0.2.0 documented and printed `send-keys down enter` for it.
+  Folder trust is the only screen an agent may key through, and only on a
+  pane it launched itself; `status` says so in its next step. Docs
+  (`orchestra.md`, `SKILL.md`, README, `docs/SECURITY.md`) and tests follow.
+
 ## [0.2.0] - 2026-10-11
 
 herdr-peers becomes the control plane of an orchestra: a lead agent sees
@@ -118,6 +132,7 @@ First release. Interface version: **protocol 1** (`metadata.protocol: 1` in
   `harness lint protocol helper skill templates security live`; CI on Ubuntu
   and macOS.
 
-[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/DailybotHQ/herdr-peers/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/DailybotHQ/herdr-peers/releases/tag/v0.1.0
