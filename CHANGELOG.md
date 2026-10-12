@@ -8,12 +8,66 @@ the protocol number).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-12
+
+Protocol stays **1**: notices reuse the ask stamp's keys (`reply=no`), and a
+0.2.x receiver decides every notice *never*. `herdr-peers/lanes-v1` stays
+compatible (additive fields and screen class); new schema
+`herdr-peers/lead-v1`.
+
+### Added
+
+- `notify <addr|lead> "<text>"`: a one-way notice stamped `reply=no depth=0`
+  with the clause "This is a notice. Do not answer it." `check` decides
+  **notice** (rule 14, exit 3), records it once (`notified received`; a
+  repeated id is rule 12) and never replies. Notices use no fan-out slot and
+  may be sent while holding an ask or as a marked delegate; they get the
+  ask's hygiene (size, control characters, marker, secrets, scope). A
+  `swarm-lead:` line is reserved for lead notices. Template `notice.md`.
+- Plan leadership: `lead claim|show|handover|takeover|release` keep a
+  `herdr-peers/lead-v1` record per plan (`plan, lead, epoch, succession[],
+  lanes[], updated_at`; `docs/schema/lead-v1.json`) in the machine-scoped
+  state (`leads/`, `0600`, atomic writes, no symlinks). Every change is
+  recorded in the delegation log (and the plan mirror) and sent as a lead
+  notice to every lane and successor, with `local:` addresses rewritten for
+  remote receivers. Takeover is refused while an earlier successor is
+  reachable, and while the lead is reachable unless `--reason` is recorded.
+- Fenced acceptance of lead notices (protocol.md §12): first claim only from
+  the briefer (`HERDR_PEERS_BRIEFER` or a recorded asker), handover and
+  release only from the current lead at epoch + 1, takeover only by the first
+  reachable successor at epoch + 1, ties to the earlier succession position,
+  stale epochs rejected; a lead that adopts a newer epoch prints `STEP DOWN`
+  and its lead verbs are refused.
+- The address `lead` in `ask` and `notify` resolves to the current lead of
+  `--plan` / `$DWP_PLAN` (falling back to the one record that lists this
+  pane, for lanes whose `DWP_PLAN` is a child plan).
+- Screen class `usage_limit` (Claude, Codex and generic rate-limit messages,
+  HTTP 429) in `status` and `lanes`, also detected from the last 15 lines of
+  an idle or done lane; next step "hand off", never keyed.
+- `lanes --json` adds `plan`, `lead`, `epoch` and a per-lane `capacity`
+  parsed from `capacity=<verdict> [NN%] [@profile]` lines in recorded asks,
+  replies and notices; lanes listed in the lead record appear even when
+  never asked (`last: null`). The table gains a CAPACITY column.
+- Delegation records: roles `notifier`, `notified`, `lead`; states `sent`,
+  `received`, `claimed`, `refreshed`, `handed_over`, `taken_over`,
+  `released`, `adopted`, `stepped_down`, `rejected`; optional `plan`,
+  `epoch`, `capacity`.
+- Tests: `lead` scope; notice fixtures with a frozen v0.2.3 receiver
+  (`tests/compat/`) proving old peers decide *never*; every new assertion was
+  shown to fail on a seeded defect first.
+
 ### Changed
 
-- Development harness: the vendored `deepworkplan` skill is 7.6.1 (from the
-  v7.6.1 tag, all 175 files checked against its SHA256SUMS), through the
-  pack's addon planner; the AI Diff Reviewer skill stays at v3.3.9, the
-  pack's pin. The shipped skill and helper are unchanged.
+- `reply=no` is now a notice instead of rule 9 *never* (rule 9 now covers any
+  other value); the fixture `never-reply-no.txt` became
+  `notice-grant-text-ignored.txt` and `never-reply-maybe.txt` covers rule 9.
+- orchestra.md: lane ↔ lane asks (information and coordination; work is
+  assigned only by the lead), authority comes from the plan (a relayed
+  approval adds none), succession and handoff, lead notices.
+  discipline.md §7 and protocol.md §9 use the escalation taxonomy C1–C7.
+- Development harness only (the shipped skill is not affected): the vendored
+  `deepworkplan` skill moved to 7.6.3 and the AI Diff Reviewer skill to
+  v3.3.11, the pack's pins (`skills-lock.json`).
 
 ## [0.2.3] - 2026-10-12
 

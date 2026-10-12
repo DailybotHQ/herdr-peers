@@ -135,7 +135,7 @@ legacy reply stamp without `from`:
 [herdr-peers] protocol=1 reply-to=<id> depth=1
 ```
 
-`check` accepts that legacy shape. A v0.2.3 caller's `wait` also accepts an
+`check` accepts that legacy shape. A v0.2.3 or later caller's `wait` also accepts an
 exact legacy stamp from the reply pane, records the reply with the sender
 identity unverified, and warns that the peer should be upgraded. New peers
 MUST emit `from` so `wait` can reject caller-pane captures and replies from a
@@ -252,12 +252,13 @@ on every machine.
 
 ## 9. Escalation to a human
 
-A peer escalates to its human only for: a material decision it cannot infer;
-a destructive, public or credential-touching action; a missing tool or
-credential no peer has; disagreement between peers after one reconciliation;
-or no reachable peer and no single-agent path. Everything else is peer work.
-An escalation states what was tried, what the peers said, and the specific
-decision needed.
+A peer escalates to its human only for a critical item of the taxonomy in
+[discipline.md](discipline.md) §7 — C1 authority, C2 consent screen, C3
+irreducible ambiguity (incl. peers that disagree after one reconciliation),
+C4 quality conflict, C5 damage, C6 terms, C7 capacity exhausted (incl. no
+reachable peer and no single-agent path). Everything else is peer work,
+decided and recorded. An escalation names its class and states what was
+tried, what the peers said, and the specific decision needed.
 
 ## 10. Versioning
 

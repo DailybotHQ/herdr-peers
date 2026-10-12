@@ -9,7 +9,7 @@ ULID='^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
 
 # --- entry points ------------------------------------------------------------
 run "$HELPER" --version
-assert_eq "--version names version and protocol" "herdr-peers 0.2.3 (protocol 1)" "$OUT"
+assert_eq "--version names version and protocol" "herdr-peers 0.3.0 (protocol 1)" "$OUT"
 run "$ROOT/bin/herdr-peers" --version
 assert_rc "bin/ shim runs the skill's helper" 0
 ln -s "$ROOT/bin/herdr-peers" "$SANDBOX/bin/hp-link"
