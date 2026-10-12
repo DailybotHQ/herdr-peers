@@ -86,7 +86,7 @@ Environment (all optional):
 | `HERDR_PEERS_LOG` | Shared log file override (default is machine-scoped XDG state: `$XDG_STATE_HOME/herdr-peers/<server>/log.ndjson`). Records are filtered to the current server; use `log --all-machines` to inspect a shared override. |
 | `HERDR_PEERS_PYTHON` | Python interpreter for the helper (default `python3`). |
 | `HERDR_PEERS_BRIEFER` | The address that launched or briefed this pane (set by the launcher): the only sender whose *first* lead notice for a plan is accepted (a peer whose ask this pane recorded counts too). |
-| `DWP_PLAN`, `DWP_TASK` | Plan directory or id: ids resolve to `<git checkout root>/.dwp/plans/<id>` when that directory exists. Records mirror to `analysis_results/delegations.ndjson`, tagged with the task. A directory basename or the id itself is the default `--plan` (including `repo/id`). Missing directories warn and skip the mirror. |
+| `DWP_PLAN`, `DWP_TASK` | Plan directory or id: ids resolve under the git checkout root using the `.dwp`, `plans`, `<id>` path components when that directory exists. Records mirror to `analysis_results/delegations.ndjson`, tagged with the task. A directory basename or the id itself is the default `--plan` (including `repo/id`). Missing directories warn and skip the mirror. |
 
 Exit codes: `0` ok · `1` Herdr error · `2` usage · `3` protocol refusal —
 never answer (also a notice) · `4` policy refusal (scope, self, fan-out, size, control

@@ -394,8 +394,8 @@ lead of the one stored record that lists this peer as a lane or successor.
 ### Plan mirror resolution
 
 `DWP_PLAN` may name an existing directory or a plan id. If it is not a
-directory, the helper resolves `<git checkout root>/.dwp/plans/<id>`
-from the caller's cwd. The checkout root (not the common root) keeps a
+directory, the helper resolves the git checkout root from the caller's
+cwd, then appends the `.dwp`, `plans`, and `<id>` path components. The checkout root (not the common root) keeps a
 linked worktree's plan mirror local. When no directory is found, the
 existing warning is retained and mirroring is skipped; the helper's
 machine-scoped record still works. Mirrors remain private (0600).
