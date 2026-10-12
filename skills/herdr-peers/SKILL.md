@@ -1,11 +1,11 @@
 ---
 name: herdr-peers
 description: "Ask another coding agent in a Herdr pane — on this machine or another one — and get exactly one authorized reply back, with a loop guard, depth limit 1, a fan-out cap and a record of every delegation. Use only when the user mentions Herdr, peers, or another agent, pane or machine, or when a plan you are executing delegates a task through Herdr. Do not use merely because parallel work could help. Requires HERDR_ENV=1 and Herdr's official herdr skill."
-version: "0.2.2"
+version: "0.2.3"
 license: MIT
 allowed-tools: Bash, Read
 metadata:
-  version: "0.2.2"
+  version: "0.2.3"
   protocol: 1
 ---
 
@@ -49,10 +49,10 @@ opinion nobody asked for, or to avoid doing the work yourself.
 | --- | --- |
 | `list [--json]` | Live table of every agent on every enabled machine; marks your row `<- you`. Run it now when asked who is available — never answer from an old table. |
 | `ask <machine>:<pane> "<prompt>"` | Sends the prompt with the stamp and the reply grant; records it; prints the ask id. Options: `--from ADDR`, `--scope S`, `--fanout N --reason R`, `--task T` (default `$DWP_TASK`), and for the record only `--profile NAME` (the peer's account/profile, e.g. `@work1`), `--vendor NAME` (default: derived from the agent kind) and `--worktree PATH` (a writing peer's worktree). A prompt of `-` reads stdin. |
-| `wait <id> [--timeout S]` | Blocks until the reply arrives in your pane, records it, prints it. |
+| `wait <id> [--timeout S]` | Blocks until a reply stamped for the asked peer arrives, records it, prints it; rejects caller-pane captures, accepts the exact v0.2.2 legacy stamp with an unverified-identity warning, and reports unroutable asks. |
 | `check [FILE]` | Classifies a received message (stdin or file): answer, never answer, or not a protocol message. Records what it must. |
 | `reply <machine>:<pane> <id> "<answer>"` | Answers an ask exactly once. |
-| `log [--open] [--json]` | The delegation record (with each ask's vendor and profile). |
+| `log [--open] [--json] [--all-machines]` | The current server's delegation record (with each ask's vendor and profile); include every server in a shared log with `--all-machines`. |
 | `status <machine>:<pane> [--json]` | A peer lane's state (`working`, `idle`, `blocked`, `done`, `unknown`, `no_agent`, `unreachable`), agent kind, and the class of a waiting screen with its documented next step. Read-only: never sends keys. |
 | `lanes [--json] [--all]` | One row per peer you asked: agent, vendor, profile, live state, screen class, open asks, last ask. `--json` prints the `herdr-peers/lanes-v1` contract. |
 | `cancel <id> [--reason R]` | Closes an open ask (yours, or one you decline). |
@@ -73,7 +73,7 @@ Environment (all optional):
 | `HERDR_PEERS_DEPTH` | `1` marks this pane as a delegate: it may not ask. Set by the launcher. |
 | `HERDR_PEERS_FANOUT` | Lowers the open-ask cap (never above 4; raise per call with `--fanout N --reason`). |
 | `HERDR_PEERS_MAX_BYTES` | Message size limit (default 16384). |
-| `HERDR_PEERS_LOG` | Log file path (default `.herdr-peers/log.ndjson` at the repository root). |
+| `HERDR_PEERS_LOG` | Shared log file override (default is machine-scoped XDG state: `$XDG_STATE_HOME/herdr-peers/<server>/log.ndjson`). Records are filtered to the current server; use `log --all-machines` to inspect a shared override. |
 | `HERDR_PEERS_PYTHON` | Python interpreter for the helper (default `python3`). |
 | `DWP_PLAN`, `DWP_TASK` | When a plan directory is set, records are mirrored to its `analysis_results/delegations.ndjson`, tagged with the task. |
 
@@ -123,7 +123,8 @@ answer it, or `cancel` it to decline.
 ## 5. Rules in one screen
 
 The normative text is [protocol.md](protocol.md). In short: one stamp per
-message; a reply carries `reply-to=` and `depth=1` and is never answered; a
+message; a reply carries `reply-to=`, the asked peer's `from=` address and
+`depth=1` and is never answered; a
 delegate never delegates; at most 4 open asks per caller (raise it only with
 `--fanout N --reason "…"`); stay inside the scope when one is set
 (`HERDR_PEERS_SCOPE`); never send secrets — the helper refuses values of
@@ -149,11 +150,15 @@ named here) and `Read`.
 - Messages to other panes, only through `herdr-peers ask` / `reply` (which
   use `herdr agent prompt`), only to addresses inside the scope when one is
   set.
-- The local delegation log: `.herdr-peers/log.ndjson` at the repository root,
-  in a directory created with a `.gitignore` so it is never committed, with
-  reply copies under `.herdr-peers/replies/`. With `HERDR_PEERS_LOG` set, the
-  log is that file and reply copies go to `replies/` beside it (no
-  `.gitignore` is written there — keep it out of version control yourself). When `DWP_PLAN` names a plan
+- The local delegation state: machine-scoped under
+  `$XDG_STATE_HOME/herdr-peers/<server>/` (falling back to
+  `~/.local/state/herdr-peers/<server>/`), with the log and reply copies kept
+  outside the repository. With `HERDR_PEERS_LOG` set, that path is used for
+  the shared log, each record carries its server id, and the lock, self cache
+  and reply copies remain machine-scoped. `log --all-machines` includes every
+  server's records in an overridden log. An old checkout `.herdr-peers/self.json`
+  is migrated only when its terminal id matches the current Herdr pane.
+  When `DWP_PLAN` names a plan
   directory, the same records are appended to that plan's
   `analysis_results/delegations.ndjson`.
 - Panes, only when the human or the plan asked for a new peer

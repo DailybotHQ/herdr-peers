@@ -54,7 +54,7 @@
             "description": "The most recent ask to this peer and its current state.",
             "properties": {
               "id": { "type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
-              "state": { "enum": ["launched", "completed", "failed", "cancelled"] },
+              "state": { "enum": ["launched", "completed", "failed", "cancelled", "unroutable"] },
               "at": { "type": "string",
                       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" }
             }

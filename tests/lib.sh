@@ -82,6 +82,7 @@ stderr: $ERR"; fi
 #   dd44 "gone"  enabled but unreachable (SSH fails)
 new_world() {
   WORLD="$SANDBOX/worlds/${1:-w}.$T_N.$RANDOM"
+  export FAKE_HERDR_SERVER_ID="fake-${1:-w}-$T_N-$RANDOM"
   export FAKE_HERDR_DIR="$WORLD/herdr"
   WORK="$WORLD/work"
   mkdir -p "$FAKE_HERDR_DIR/local/panes" "$FAKE_HERDR_DIR/aa11/panes" \
@@ -115,6 +116,10 @@ JSON
     HERDR_PEERS_FANOUT HERDR_PEERS_MAX_BYTES DWP_PLAN DWP_TASK
   cd "$WORK" || return 1
 }
+
+# state_log/state_dir — the helper's machine-scoped XDG state locations.
+state_log() { "$HELPER" log --path; }
+state_dir() { dirname "$(state_log)"; }
 
 # pane_text MACHINE PANE — what the fake server shows in that pane.
 pane_text() {

@@ -4,12 +4,12 @@
 # cap, scope, self-refusal, reply routing and record-before-rely.
 
 field() { python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d.get(sys.argv[2]))' "$1" "$2" 2>/dev/null; }
-last_log() { tail -1 "$WORK/.herdr-peers/log.ndjson" 2>/dev/null; }
+last_log() { tail -1 "$(state_log)" 2>/dev/null; }
 ULID='^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
 
 # --- entry points ------------------------------------------------------------
 run "$HELPER" --version
-assert_eq "--version names version and protocol" "herdr-peers 0.2.2 (protocol 1)" "$OUT"
+assert_eq "--version names version and protocol" "herdr-peers 0.2.3 (protocol 1)" "$OUT"
 run "$ROOT/bin/herdr-peers" --version
 assert_rc "bin/ shim runs the skill's helper" 0
 ln -s "$ROOT/bin/herdr-peers" "$SANDBOX/bin/hp-link"
@@ -35,7 +35,7 @@ assert_eq "ask is recorded launched before relying" "launched" "$(field "$rec" s
 assert_eq "record names the peer kind" "codex" "$(field "$rec" kind)"
 assert_contains "record stores a prompt digest" "$(field "$rec" prompt_digest)" "sha256:"
 assert_not_contains "record never stores the prompt text" "$rec" "parser"
-check "log dir carries a .gitignore" test -f "$WORK/.herdr-peers/.gitignore"
+check "default state is outside the checkout" test ! -e "$WORK/.herdr-peers"
 check "nothing is written under .dwp without DWP_PLAN" test ! -e "$WORK/.dwp"
 
 run "$HELPER" ask local:w1:p1 "talking to myself"
@@ -117,9 +117,8 @@ run as_pane w1:p2 "$HELPER" reply --message "$WORK/ask.txt" local:w1:p1 "$id" "Y
 assert_rc "the delegate replies once" 0
 reply=$(pane_text local w1:p1)
 assert_contains "the reply reaches the caller pane" "$reply" "Yes, it is additive only."
-assert_contains "the reply stamp is exact" "$reply" "[herdr-peers] protocol=1 reply-to=$id depth=1"
+assert_contains "the reply stamp is exact" "$reply" "[herdr-peers] protocol=1 reply-to=$id from=local:w1:p2 depth=1"
 assert_contains "the reply carries the reply clause" "$reply" "This is a reply. Do not answer it."
-assert_not_contains "the reply stamp offers no from= address" "$reply" "reply-to=$id depth=1 from="
 run as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id" "Second answer"
 assert_rc "a second reply to the same id is refused (exit 3)" 3
 run as_pane w1:p2 "$HELPER" check --json "$WORK/ask.txt"
@@ -178,6 +177,14 @@ assert_eq "wait prints the reply body" "4" "$OUT"
 assert_eq "wait records completion before printing" "completed" "$(field "$(last_log)" state)"
 run "$HELPER" wait "$id" --timeout 2
 assert_eq "wait on a completed ask prints the stored reply" "4" "$OUT"
+id_legacy=$("$HELPER" ask local:w1:p2 "legacy reply compatibility")
+printf 'legacy answer\n\n[herdr-peers] protocol=1 reply-to=%s depth=1\nThis is a reply. Do not answer it.\n' \
+  "$id_legacy" >>"$FAKE_HERDR_DIR/local/panes/w1_p1.out"
+run "$HELPER" wait "$id_legacy" --timeout 2
+assert_rc "wait accepts a v0.2.2 legacy reply stamp" 0
+assert_eq "wait prints the legacy reply body" "legacy answer" "$OUT"
+assert_contains "legacy wait warns that from is unverified" "$ERR" "from is unverified"
+assert_contains "legacy wait records a compatibility note" "$(last_log)" "v0.2.2 compatibility"
 id2=$("$HELPER" ask local:w1:p2 "Never answered")
 run "$HELPER" wait "$id2" --timeout 0.3
 assert_rc "wait times out with exit 5" 5
@@ -223,7 +230,7 @@ run "$HELPER" ask "${LONG_C:0:12}:w1:p1" "via the 12 characters an older list pr
 assert_rc "ask accepts a unique 12-character id prefix" 0
 assert_contains "the prefix is routed to the full machine id" "$(tail -1 "$FAKE_HERDR_DIR/argv.log")" \
   "\"--machine\", \"$LONG_C\""
-assert_contains "the record carries the full id" "$(tail -1 "$WORK/.herdr-peers/log.ndjson")" "$LONG_C:w1:p1"
+assert_contains "the record carries the full id" "$(tail -1 "$(state_log)")" "$LONG_C:w1:p1"
 run "$HELPER" status "${LONG_C:0:12}:w1:p1" --json
 assert_rc "status accepts a unique prefix too" 0
 assert_contains "status reports the full id" "$OUT" "$LONG_C:w1:p1"
@@ -256,7 +263,7 @@ assert_eq "log --json prints one JSON record per line" "2" "$lines"
 new_world location
 git init -q "$WORK" && mkdir -p "$WORK/sub/dir" && cd "$WORK/sub/dir" || exit 2
 run "$HELPER" log --path
-assert_eq "the log lives at the git toplevel" "$(cd "$WORK" && pwd -P)/.herdr-peers/log.ndjson" "$OUT"
+assert_contains "the log lives under XDG state" "$OUT" "/herdr-peers/"
 run env HERDR_PEERS_LOG="$WORLD/custom/peers.ndjson" "$HELPER" log --path
 assert_eq "HERDR_PEERS_LOG overrides the location" "$WORLD/custom/peers.ndjson" "$OUT"
 
@@ -287,7 +294,13 @@ last_prompt local w1:p2 >"$WORK/ask.txt"
 as_pane w1:p2 "$HELPER" check "$WORK/ask.txt" >/dev/null
 run as_pane w1:p2 env FAKE_HERDR_FAIL="agent prompt" "$HELPER" reply local:w1:p1 "$id" "answer"
 assert_rc "a failed reply send exits 1" 1
-assert_contains "it says nothing was recorded and a retry is allowed" "$ERR" "nothing recorded; you may retry"
+assert_contains "it records the reply as unroutable" "$ERR" "unroutable and was recorded"
+run "$HELPER" log --id "$id" --json
+assert_contains "the replier's log carries unroutable" "$OUT" '"role": "delegate"'
+assert_contains "the caller's visible log closes unroutable" "$OUT" '"state": "unroutable"'
+run "$HELPER" wait "$id" --timeout 0.1
+assert_rc "wait surfaces an unroutable ask" 3
+assert_contains "wait names the unroutable outcome" "$ERR" "ask $id is unroutable"
 run as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id" "answer"
 assert_rc "the retry succeeds" 0
 
@@ -300,7 +313,7 @@ assert_rc "wait on a failed ask exits 3" 3
 
 id_c=$("$HELPER" ask local:w1:p2 "to be cancelled")
 "$HELPER" cancel "$id_c" >/dev/null
-printf 'late\n\n[herdr-peers] protocol=1 reply-to=%s depth=1\nThis is a reply. Do not answer it.\n' "$id_c" >"$WORK/late.txt"
+printf 'late\n\n[herdr-peers] protocol=1 reply-to=%s from=local:w1:p2 depth=1\nThis is a reply. Do not answer it.\n' "$id_c" >"$WORK/late.txt"
 run "$HELPER" check --json "$WORK/late.txt"
 assert_contains "a reply to a cancelled ask is late and not recorded" "$OUT" '"reply_status": "late"'
 
@@ -325,9 +338,9 @@ assert_eq "log --id returns only that ask's records (caller, delegate, cancel)" 
 new_world remote_reply
 id=$("$HELPER" ask bb22:w1:p1 "remote round trip")
 cp "$FAKE_HERDR_DIR/bb22/panes/w1_p1.last" "$WORK/remote-ask.txt"
-run as_pane w1:p1 env HERDR_PEERS_LOG="$WORLD/box-log.ndjson" "$HELPER" check "$WORK/remote-ask.txt"
+run as_pane w1:p1 env FAKE_HERDR_SERVER_ID=remote-box HERDR_PEERS_LOG="$WORLD/box-log.ndjson" "$HELPER" check "$WORK/remote-ask.txt"
 assert_rc "the remote peer may answer" 0
-run as_pane w1:p1 env HERDR_PEERS_LOG="$WORLD/box-log.ndjson" "$HELPER" reply aa11:w1:p1 "$id" "box is fine"
+run as_pane w1:p1 env FAKE_HERDR_SERVER_ID=remote-box HERDR_PEERS_LOG="$WORLD/box-log.ndjson" "$HELPER" reply aa11:w1:p1 "$id" "box is fine"
 assert_rc "the remote peer replies to the caller's machine id" 0
 assert_contains "the reply travels through --machine aa11" "$(tail -1 "$FAKE_HERDR_DIR/argv.log")" '"--machine", "aa11", "agent", "prompt", "w1:p1"'
 assert_contains "the reply lands in the caller's pane" "$(cat "$FAKE_HERDR_DIR/aa11/panes/w1_p1.last")" "box is fine"

@@ -26,7 +26,7 @@ import subprocess
 import sys
 import time
 
-VERSION = '0.2.2'
+VERSION = '0.2.3'
 PROTOCOL = 1
 MARKER = '[herdr-peers]'
 DEFAULT_MAX_BYTES = 16384
@@ -46,7 +46,8 @@ ADDR_RE = re.compile(r'^(%s):(%s)$' % (MACHINE_RE, PANE_RE))
 TOKEN_RE = re.compile(r'([a-z][a-z-]*)=(\S+)')
 DEPTH_RE = re.compile(r'[0-9]{1,3}')
 ASK_KEYS = frozenset(['protocol', 'from', 'reply', 'depth', 'id'])
-REPLY_KEYS = frozenset(['protocol', 'reply-to', 'depth'])
+REPLY_KEYS = frozenset(['protocol', 'reply-to', 'from', 'depth'])
+LEGACY_REPLY_KEYS = frozenset(['protocol', 'reply-to', 'depth'])
 SECRET_NAME_RE = re.compile(r'(_API_KEY|_TOKEN|_SECRET|_SECRET_KEY|_ACCESS_KEY|_PASSWORD)$', re.I)
 SECRET_PATTERNS = [
     ('a private key block', re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----')),
@@ -211,9 +212,9 @@ def build_ask(body, from_addr, ask_id):
                 sender, ask_id))
 
 
-def build_reply(answer, ask_id):
-    return no_option('%s\n\n%s protocol=%d reply-to=%s depth=1\n%s' % (
-        answer.rstrip('\n'), MARKER, PROTOCOL, ask_id, REPLY_CLAUSE))
+def build_reply(answer, ask_id, from_addr):
+    return no_option('%s\n\n%s protocol=%d reply-to=%s from=%s depth=1\n%s' % (
+        answer.rstrip('\n'), MARKER, PROTOCOL, ask_id, fmt_address(from_addr), REPLY_CLAUSE))
 
 
 def decision(outcome, rule, reason, **extra):
@@ -278,11 +279,15 @@ def _classify(text, ctx):
         return parsed
     fields, body = parsed
     keys = set(fields)
-    if keys == REPLY_KEYS:
+    if keys in (REPLY_KEYS, LEGACY_REPLY_KEYS):
         if not ULID_RE.fullmatch(fields['reply-to']) or not DEPTH_RE.fullmatch(fields['depth']):
             return decision('never', 6, 'invalid: malformed reply stamp')
+        reply_from = fields.get('from')
+        if reply_from is not None and parse_address(reply_from) is None:
+            return decision('never', 6, 'invalid: malformed reply from address')
         return decision('never', 7, 'this is a reply; do not answer it',
-                        kind='reply', reply_to=fields['reply-to'], body=body)
+                        kind='reply', reply_to=fields['reply-to'], reply_from=reply_from,
+                        body=body)
     if keys != ASK_KEYS:
         return decision('never', 6, 'invalid: keys %s' % ','.join(sorted(keys)))
     sender = parse_address(fields['from'])
@@ -556,6 +561,57 @@ def my_terminal_id():
     return ((data.get('result') or {}).get('pane') or {}).get('terminal_id')
 
 
+def server_identity():
+    """Return a stable, non-path Herdr server identity for this process.
+
+    Herdr exposes the socket path to managed panes. Some test or future Herdr
+    servers expose an explicit id through the API instead, so prefer that when
+    the socket environment is unavailable. The value is used to partition
+    local state and is safe to put in records; a socket path is reduced to a
+    digest rather than being written to the log.
+    """
+    raw = os.environ.get('HERDR_SERVER_ID')
+    if raw and re.fullmatch(MACHINE_RE, raw):
+        return raw
+    socket_path = os.environ.get('HERDR_SOCKET_PATH')
+    if socket_path:
+        return 'sha256:' + hashlib.sha256(('socket:' + socket_path).encode('utf-8')).hexdigest()
+    try:
+        data = herdr_json(['api', 'snapshot'], timeout=8)
+        result = data.get('result') if isinstance(data, dict) else None
+        snapshot = result.get('snapshot') if isinstance(result, dict) else None
+        if isinstance(snapshot, dict):
+            for key in ('server_id', 'server_identity', 'id'):
+                value = snapshot.get(key)
+                if isinstance(value, str) and re.fullmatch(MACHINE_RE, value):
+                    return value
+            value = snapshot.get('socket') or snapshot.get('socket_path')
+            if isinstance(value, str) and value:
+                return 'sha256:' + hashlib.sha256(('socket:' + value).encode('utf-8')).hexdigest()
+    except Stop:
+        pass
+    # A standalone `check` can run without Herdr. It has no server context,
+    # so keep that state isolated under an explicit, deterministic bucket.
+    return 'unknown'
+
+
+def state_root():
+    root = os.environ.get('XDG_STATE_HOME')
+    if not root:
+        root = os.path.join(os.path.expanduser('~'), '.local', 'state')
+    return os.path.join(root, 'herdr-peers')
+
+
+def state_key(server_id):
+    """A filesystem-safe key that does not expose a socket path."""
+    return hashlib.sha256(server_id.encode('utf-8')).hexdigest()
+
+
+def self_cache_path(store, pane):
+    """Cache a probe per server and pane; panes on one server are distinct."""
+    return os.path.join(store.dir, 'self-%s.json' % state_key(pane)[:24])
+
+
 def enabled_machines():
     rc, out, err = herdr(['machine', 'list', '--json'], timeout=12)
     if rc != 0:
@@ -572,8 +628,9 @@ def enabled_machines():
 
 def probe_self(pane, store):
     """The saved-machine id whose server hosts this very pane (matched by
-    terminal_id), cached per terminal in the log directory; None if none."""
-    cache = os.path.join(store.dir, 'self.json')
+    terminal_id), cached per terminal in this server's state directory."""
+    cache = self_cache_path(store, pane)
+    migrate_legacy_self(pane, store)
     try:
         terminal = my_terminal_id()
     except Stop:
@@ -628,14 +685,49 @@ def self_addresses(pane, store, probe=False):
 
 
 def cached_self(pane, store):
+    migrate_legacy_self(pane, store)
     try:
-        with open(os.path.join(store.dir, 'self.json'), 'r', encoding='utf-8') as fh:
+        with open(self_cache_path(store, pane), 'r', encoding='utf-8') as fh:
             cached = json.load(fh)
         if cached.get('pane') == pane:
             return cached.get('machine_id')
     except (OSError, ValueError):
         pass
     return None
+
+
+def migrate_legacy_self(pane, store):
+    """Migrate the old checkout cache only when its terminal proves it is ours.
+
+    A checkout may be bind-mounted into another machine. Once this server has
+    inspected the legacy file, a marker prevents a later server from treating
+    the same file as fresh state. A missing terminal identity is not enough to
+    migrate or mark it, so a later Herdr-aware invocation can retry safely.
+    """
+    marker = os.path.join(store.dir, 'legacy-self-%s.migrated' % state_key(pane)[:24])
+    if os.path.exists(marker):
+        return
+    try:
+        terminal = my_terminal_id()
+    except Stop:
+        return
+    legacy = os.path.join(project_root(), '.herdr-peers', 'self.json')
+    cached = None
+    try:
+        with open(legacy, 'r', encoding='utf-8') as fh:
+            cached = json.load(fh)
+    except (OSError, ValueError):
+        pass
+    if isinstance(cached, dict) and cached.get('pane') == pane and \
+            cached.get('terminal_id') == terminal and \
+            isinstance(cached.get('machine_id'), str) and \
+            re.fullmatch(MACHINE_RE, cached['machine_id']):
+        store.ensure()
+        write_private(self_cache_path(store, pane),
+                      json.dumps({'pane': pane, 'terminal_id': terminal,
+                                  'machine_id': cached['machine_id']}))
+    store.ensure()
+    write_private(marker, 'migrated\n')
 
 
 def agent_info(addr):
@@ -681,13 +773,17 @@ class Store(object):
     """Append-only delegation log (protocol §6, record before relying)."""
 
     def __init__(self):
+        self.server_id = server_identity()
+        self.state_dir = os.path.join(state_root(), state_key(self.server_id))
         explicit = os.environ.get('HERDR_PEERS_LOG')
         if explicit:
             self.path = os.path.abspath(explicit)
-            self.dir = os.path.dirname(self.path)
+            # Keep the caller-selected log path, but never share the mutable
+            # lock, self cache or reply copies between Herdr servers.
+            self.dir = self.state_dir
             self.owned_dir = False
         else:
-            self.dir = os.path.join(project_root(), '.herdr-peers')
+            self.dir = self.state_dir
             self.path = os.path.join(self.dir, 'log.ndjson')
             self.owned_dir = True
         self.replies = os.path.join(self.dir, 'replies')
@@ -695,12 +791,14 @@ class Store(object):
     def ensure(self):
         if not os.path.isdir(self.dir):
             os.makedirs(self.dir, 0o700)
-        if self.owned_dir:
-            ignore = os.path.join(self.dir, '.gitignore')
-            if not os.path.lexists(ignore):
-                write_private(ignore, '# herdr-peers local state; never commit it\n*\n')
+        if not self.owned_dir:
+            parent = os.path.dirname(self.path)
+            if parent and not os.path.isdir(parent):
+                os.makedirs(parent, 0o700)
+        # XDG state is outside the checkout, so no repository .gitignore is
+        # needed.
 
-    def records(self):
+    def records(self, all_machines=False):
         out = []
         try:
             with open(self.path, 'r', encoding='utf-8') as fh:
@@ -712,21 +810,24 @@ class Store(object):
                         rec = json.loads(line)
                     except ValueError:
                         continue
-                    if isinstance(rec, dict):
+                    if isinstance(rec, dict) and (all_machines or
+                                                  rec.get('server_id') == self.server_id):
                         out.append(rec)
         except OSError:
             pass
         return out
 
-    def latest(self):
+    def latest(self, all_machines=False):
         """{(role, id): last record}."""
         out = {}
-        for rec in self.records():
+        for rec in self.records(all_machines=all_machines):
             out[(rec.get('role'), rec.get('id'))] = rec
         return out
 
     def append(self, rec):
         self.ensure()
+        rec = dict(rec)
+        rec['server_id'] = self.server_id
         line = json.dumps(rec, sort_keys=True, ensure_ascii=False) + '\n'
         append_line(self.path, line)
         plan = os.environ.get('DWP_PLAN')
@@ -997,21 +1098,39 @@ def reply_locked(args, target, answer, store, pane, selves):
         if verdict.get('id') != args.id or verdict.get('from') != args.target:
             raise Stop(EXIT_PROTOCOL, 'the message stamp names id=%s from=%s, not this reply\'s '
                        'id and target' % (verdict.get('id'), verdict.get('from')))
-    elif not (mine(prior, pane) and prior.get('state') == 'launched'):
+    elif not (mine(prior, pane) and prior.get('state') in ('launched', 'unroutable')):
         raise Stop(EXIT_PROTOCOL, 'no received ask %s is recorded for this pane; run '
                    '`herdr-peers check` on the ask first (or pass --message)' % args.id)
     if mine(prior, pane) and prior.get('target') != args.target:
         raise Stop(EXIT_PROTOCOL, 'ask %s came from %s; its reply goes only there, not to %s'
                    % (args.id, prior.get('target'), args.target))
-    message = build_reply(answer, args.id)
+    prior_self = parse_address((prior or {}).get('self') or '')
+    if prior_self and prior_self[1] == pane:
+        own_addr = fmt_address(prior_self)
+    else:
+        others = sorted(selves - {('local', pane)})
+        own_addr = fmt_address(others[0] if others else ('local', pane))
+    message = build_reply(answer, args.id, parse_address(own_addr))
     check_size(message)
-    info = agent_info(target)
-    rc, out, err = herdr(['agent', 'prompt', target[1], message], machine=target[0], timeout=60)
-    if rc != 0:
-        raise Stop(EXIT_HERDR, 'sending the reply failed (nothing recorded; you may retry): %s'
-                   % last_line(err or out))
-    others = sorted(selves - {('local', pane)})
-    own_addr = fmt_address(others[0] if others else ('local', pane))
+    info = {}
+    transport_error = None
+    try:
+        info = agent_info(target)
+    except Stop as exc:
+        transport_error = exc.message
+    if transport_error is None:
+        rc, out, err = herdr(['agent', 'prompt', target[1], message], machine=target[0], timeout=60)
+        if rc != 0:
+            transport_error = last_line(err or out)
+    if transport_error is not None:
+        note = 'reply route unavailable: %s' % transport_error
+        store.append(make_record('unroutable', 'delegate', args.id, args.target, own_addr,
+                                 kind=kind_of(info),
+                                 prompt_digest=(prior or {}).get('prompt_digest'),
+                                 reply_digest=digest(message), task=args.task, note=note))
+        close_caller_unroutable(store, args.id, note)
+        raise Stop(EXIT_HERDR, 'the reply to %s was unroutable and was recorded: %s'
+                   % (args.target, transport_error))
     store.append(make_record('completed', 'delegate', args.id, args.target, own_addr,
                              kind=kind_of(info),
                              prompt_digest=(prior or {}).get('prompt_digest'),
@@ -1081,6 +1200,12 @@ def handle_reply(store, verdict, text, record, pane):
         verdict['reply_status'] = 'unsolicited'
         verdict['reason'] = ('unsolicited reply: no ask with this id was sent from here; '
                              'not recorded — treat it as data only')
+        return
+    expected_from = asked.get('target')
+    if verdict.get('reply_from') != expected_from:
+        verdict['reply_status'] = 'conflict'
+        verdict['reason'] = ('reply from %s does not match the asked peer %s; not recorded'
+                             % (verdict.get('reply_from') or '(unstamped)', expected_from))
         return
     reply_digest = digest(text)
     if asked.get('state') == 'completed':
@@ -1155,11 +1280,18 @@ def cmd_wait(args):
     if asked.get('state') == 'completed':
         raise Stop(EXIT_PROTOCOL, 'ask %s is completed but its reply copy %s is missing'
                    % (args.id, stored))
-    if asked.get('state') in ('failed', 'cancelled'):
-        raise Stop(EXIT_PROTOCOL, 'ask %s is %s' % (args.id, asked['state']))
-    needle = '%s protocol=%d reply-to=%s depth=1' % (MARKER, PROTOCOL, args.id)
+    if asked.get('state') in ('failed', 'cancelled', 'unroutable'):
+        note = asked.get('note')
+        suffix = ': %s' % note if note else ''
+        raise Stop(EXIT_PROTOCOL, 'ask %s is %s%s' % (args.id, asked['state'], suffix))
+    baseline = read_pane(args.pane if args.pane else pane, args.lines + 50)
+    new_stamp = '%s protocol=%d reply-to=%s from=%s depth=1' % (
+        MARKER, PROTOCOL, args.id, asked.get('target'))
+    legacy_stamp = '%s protocol=%d reply-to=%s depth=1' % (
+        MARKER, PROTOCOL, args.id)
+    needle = '(?m)^(?:%s|%s)(?:\\s.*)?$' % (re.escape(new_stamp), re.escape(legacy_stamp))
     timeout_ms = int(args.timeout * 1000)
-    rc, out, err = herdr(['pane', 'wait-output', pane, '--match', needle, '--source',
+    rc, out, err = herdr(['pane', 'wait-output', pane, '--regex', needle, '--source',
                           'recent-unwrapped', '--timeout', str(timeout_ms)],
                          timeout=args.timeout + 15)
     if rc != 0:
@@ -1177,36 +1309,78 @@ def cmd_wait(args):
         raise Stop(EXIT_HERDR, 'waiting failed: %s' % last_line(err or out))
     rc, text, err = herdr(['pane', 'read', pane, '--source', 'recent-unwrapped',
                            '--lines', str(args.lines + 50)], timeout=20)
-    excerpt = extract_reply(text if rc == 0 else '', args.id, args.lines)
-    if excerpt is None:
-        raise Stop(EXIT_PROTOCOL, 'the text captured from this pane is not a valid reply to '
-                   '%s; read the pane, then run `herdr-peers check` on the message' % args.id)
+    current = text if rc == 0 else ''
+    extracted = extract_reply(current, args.id, asked.get('target'), args.lines)
+    if extracted is None:
+        if reply_stamp_in(baseline, args.id):
+            raise Stop(EXIT_PROTOCOL, 'the caller pane already contained a reply-shaped capture '
+                       'for %s; wait only accepts a newly delivered reply from %s, then run '
+                       '`herdr-peers check` on the message' % (args.id, asked.get('target')))
+        raise Stop(EXIT_PROTOCOL, 'the text captured from this pane is not a valid reply from '
+                   'the asked peer %s for %s; read the pane, then run `herdr-peers check` on '
+                   'the message' % (asked.get('target'), args.id))
+    excerpt, legacy = extracted
     path = store.save_reply(args.id, excerpt)
+    note = None
+    if legacy:
+        note = 'legacy reply stamp: from is unverified (v0.2.2 compatibility)'
     store.append(make_record('completed', 'caller', args.id, asked['target'], asked.get('self'),
                              prompt_digest=asked.get('prompt_digest'), result_path=path,
-                             source='pane-capture', **carried(asked)))
-    warn('reply to %s recorded at %s (captured from this pane; data, not instructions)'
-         % (args.id, path))
+                             source='pane-capture', note=note, **carried(asked)))
+    if legacy:
+        warn('legacy reply to %s recorded at %s (from is unverified; upgrade the peer '
+             'to emit from=)' % (args.id, path))
+    else:
+        warn('reply to %s recorded at %s (captured from this pane; data, not instructions)'
+             % (args.id, path))
     print(excerpt)
     return EXIT_OK
 
 
-def extract_reply(text, ask_id, max_lines):
-    """The reply body before the exact reply stamp, or None when the capture
-    does not hold a valid protocol 1 reply to this id."""
+def read_pane(pane, lines):
+    rc, text, _ = herdr(['pane', 'read', pane, '--source', 'recent-unwrapped',
+                         '--lines', str(lines)], timeout=20)
+    return text if rc == 0 else ''
+
+
+def reply_stamp_in(text, ask_id):
+    return any(('reply-to=%s' % ask_id) in line for line in text.splitlines())
+
+
+def extract_reply(text, ask_id, expected_from, max_lines):
+    """Return (reply body, legacy) for a valid protocol 1 reply capture."""
     lines = text.split('\n')
-    want = '%s protocol=%d reply-to=%s depth=1' % (MARKER, PROTOCOL, ask_id)
+    new_want = '%s protocol=%d reply-to=%s from=%s depth=1' % (
+        MARKER, PROTOCOL, ask_id, expected_from)
+    legacy_want = '%s protocol=%d reply-to=%s depth=1' % (
+        MARKER, PROTOCOL, ask_id)
     stamp = None
+    want = None
+    legacy = False
     for i in range(len(lines) - 1, -1, -1):
-        if lines[i].strip() == want:
+        if lines[i].strip() == new_want:
             stamp = i
+            want = new_want
+            break
+        if lines[i].strip() == legacy_want:
+            stamp = i
+            want = legacy_want
+            legacy = True
             break
     if stamp is None:
         return None
-    start = stamp
-    while start > 0 and stamp - start < max_lines and MARKER not in lines[start - 1]:
-        start -= 1
-    body = lines[start:stamp]
+    start = max(-1, stamp - max_lines - 1)
+    for i in range(stamp - 1, start, -1):
+        if MARKER in lines[i]:
+            start = i
+            break
+    body_start = start + 1
+    if start >= 0:
+        for i in range(start + 1, stamp):
+            if lines[i].strip() == REPLY_CLAUSE:
+                body_start = i + 1
+                break
+    body = lines[body_start:stamp]
     while body and not body[0].strip():
         body.pop(0)
     while body and not body[-1].strip():
@@ -1215,7 +1389,22 @@ def extract_reply(text, ask_id, max_lines):
     verdict = classify(candidate, {})
     if verdict.get('kind') != 'reply' or verdict.get('reply_to') != ask_id:
         return None
-    return '\n'.join(body)
+    if legacy:
+        if verdict.get('reply_from') is not None:
+            return None
+    elif verdict.get('reply_from') != expected_from:
+        return None
+    return '\n'.join(body), legacy
+
+
+def close_caller_unroutable(store, ask_id, note):
+    """Close a caller record too when both sides can see the same log."""
+    caller = store.latest().get(('caller', ask_id))
+    if not caller or caller.get('state') != 'launched':
+        return
+    store.append(make_record('unroutable', 'caller', ask_id, caller.get('target'),
+                             caller.get('self'), prompt_digest=caller.get('prompt_digest'),
+                             note=note, **carried(caller)))
 
 
 def cmd_list(args):
@@ -1266,7 +1455,7 @@ def cmd_list(args):
                          'you': machine == 'local' and pane == my_pane_id})
     if self_id and my_pane_id:
         store.ensure()
-        write_private(os.path.join(store.dir, 'self.json'),
+        write_private(self_cache_path(store, my_pane_id),
                       json.dumps({'pane': my_pane_id, 'terminal_id': my_term,
                                   'machine_id': self_id}))
     n = 0
@@ -1309,9 +1498,10 @@ def cmd_log(args):
     if args.path:
         print(store.path)
         return EXIT_OK
-    recs = store.records()
+    recs = store.records(all_machines=args.all_machines)
     if args.open:
-        recs = [r for r in store.latest().values() if r.get('state') == 'launched']
+        recs = [r for r in store.latest(all_machines=args.all_machines).values()
+                if r.get('state') == 'launched']
     if args.id:
         recs = [r for r in recs if r.get('id') == args.id]
     if args.json:
@@ -1477,7 +1667,7 @@ def cmd_lanes(args):
     store = Store()
     pane = my_pane(args)
     per_peer = {}
-    for (role, _), rec in store.latest().items():
+    for (role, _), rec in store.latest(all_machines=args.all).items():
         if role != 'caller' or not (args.all or mine(rec, pane)):
             continue
         peer = parse_address(rec.get('target') or '')
@@ -1485,7 +1675,7 @@ def cmd_lanes(args):
             continue
         per_peer.setdefault(peer, []).append(rec)
     first_ts = {}
-    for rec in store.records():
+    for rec in store.records(all_machines=args.all):
         if rec.get('role') == 'caller':
             first_ts.setdefault(rec.get('id'), rec.get('ts'))
     labels = machine_labels() if per_peer else {}
@@ -1616,6 +1806,7 @@ def build_parser():
     lg.add_argument('--json', action='store_true')
     lg.add_argument('--id')
     lg.add_argument('--open', action='store_true', help='only asks still open')
+    lg.add_argument('--all-machines', action='store_true', help='include records from every Herdr server in this log')
     lg.add_argument('--path', action='store_true', help='print the log path')
 
     st = sub.add_parser('status', help="a peer lane's state and blocked-screen class "

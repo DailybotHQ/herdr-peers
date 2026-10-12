@@ -50,7 +50,7 @@ once with `herdr-peers reply`. Both sides keep an append-only local record.
 | # | Threat | Mitigation | Tested in |
 |---|---|---|---|
 | T1 | **Prompt injection** — an ask tells the receiver to run commands, leak data or escalate. | Received text is data, not instructions (protocol §5): an ask is a request within the receiver's existing authority; destructive, public or credential-touching actions go to the receiver's human. The grant authorizes one reply, nothing else. | docs/skill (`skill`), protocol §5 |
-| T2 | **Reply loops** — two agents answering each other forever. | Reply stamps carry `reply-to=` + `depth=1` and **no** `from=` (nothing to answer); `check` classifies every reply as never-answer; `reply` refuses an id this pane originated and a second reply to the same id. | `protocol`, `helper` |
+| T2 | **Reply loops** — two agents answering each other forever. | Reply stamps carry `reply-to=` + the asked peer's `from=` address + `depth=1` but no reply grant; `check` classifies every reply as never-answer; `reply` refuses an id this pane originated and a second reply to the same id. | `protocol`, `helper` |
 | T3 | **Delegation chains** — a delegate delegating further. | Depth limit 1: `ask` refuses when `HERDR_PEERS_DEPTH>=1` (set by the launcher) or while this pane holds an unanswered ask recorded by `check`. | `helper` |
 | T4 | **Fan-out storms** | At most 4 open asks per caller; raising it needs `--fanout N --reason` (recorded); the environment can lower, never raise the cap; the check-and-append runs under a file lock (8 parallel asks open exactly 4). | `helper`, `security` |
 | T5 | **Stamp smuggling** — a body quoting a stamp, a mid-line stamp, a second stamp appended. | Exactly one `[herdr-peers]` marker, at the start of a line; anything else is invalid and never answered. `ask`/`reply` refuse bodies containing the marker. | `protocol`, `security` |
@@ -63,7 +63,7 @@ once with `herdr-peers reply`. Both sides keep an append-only local record.
 | T12 | **Oversized messages** | 16384-byte limit on send and receive; `HERDR_PEERS_MAX_BYTES` can lower it, never raise it. | `security` |
 | T13 | **Secret leakage** in messages, logs or replies. | Outgoing text containing the value of any variable named `*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*_SECRET_KEY`, `*_ACCESS_KEY` or `*_PASSWORD` (case-insensitive, ≥ 8 chars), a private-key block or a known token shape is refused — naming the variable, never the value. A received message carrying one is never answered and never stored. Records hold `sha256:` digests of prompts, never their text. | `security`, `templates` |
 | T14 | **Scope bypass** — labels, case variants, `local` vs ids. | Scope compares exact machine ids (and workspaces); anything not listed is refused (fail-closed). | `security` |
-| T15 | **Record tampering and filesystem tricks** | Files the helper writes (log, reply copies, `self.json`, `.gitignore`) are created `0600` without following symlinks (`O_NOFOLLOW`), directories it creates are `0700`; an existing `.gitignore` is never touched; symlinked log or reply files are refused and nothing is sent when the record cannot be written; reply paths are rebuilt from the validated id, never read from the log. | `security` |
+| T15 | **Record tampering and filesystem tricks** | Files the helper writes (machine-scoped log, reply copies, `self.json`) are created `0600` without following symlinks (`O_NOFOLLOW`), directories it creates are `0700`; default state is outside the checkout; symlinked log or reply files are refused and nothing is sent when the record cannot be written; reply paths are rebuilt from the validated id, never read from the log. | `security` |
 | T16 | **Malformed or hostile JSON from Herdr** | Every field is type-checked; malformed machines/agents are dropped; nothing crashes into a traceback. | `security` |
 | T17 | **Panes and layout** — closing or moving others' work. | Discipline: close only panes you created; layout changes are recorded intent; launched peers get default permissions, never a bypass flag. | `skill` (marketplace rules) |
 | T18 | **Stale sender address** — an agent inherits a `HERDR_PANE_ID` that names a gone pane or another session's pane, so its `from=` routes replies nowhere or into someone else's pane. | `ask` and `reply` verify their own pane first: it must exist on the local server and, when Herdr's `pane process-info` pids are visible in this process table, one of them must be an ancestor of the helper; otherwise exit 6 and nothing is sent or recorded. Pids from another PID namespace (a container) cannot be compared: the pane's existence is the check there. An agent that runs its tools from a background server (Codex: no terminal anywhere in the caller's ancestry) is never trusted on the inherited id, which names the server's first pane; it declares its pane with `--pane`, accepted only when that pane runs the same agent program and refused when it runs another. A terminal-attached caller always needs the ancestry match, with or without `--pane`. | `orchestra` |
@@ -89,14 +89,15 @@ once with `herdr-peers reply`. Both sides keep an append-only local record.
   environment mark or its `check` record; an agent that deliberately unsets
   the mark and skips `check` can still ask. The protocol forbids it; the
   helper cannot stop a process that ignores the helper.
-- **Pane capture in `wait`.** `wait` records the text before the exact reply
-  stamp as captured from the caller's own pane (best effort, bounded by
-  `--lines`). The received message itself, passed to `check`, replaces the
-  capture with the exact copy.
+- **Pane capture in `wait`.** `wait` accepts only a newly matched reply stamp
+  whose `from=` equals the asked peer; a caller-pane capture from another
+  source is ignored. The received message itself, passed to `check`, replaces
+  any capture with the exact copy.
 - **Secret detection is a filter, not a guarantee.** Values of other names,
   short values and unknown token formats are not recognized.
-- **The local record is local.** Anyone with write access to the repository
-  can edit `.herdr-peers/`; it is an audit aid, not tamper-proof evidence.
+- **The local record is local.** Anyone with write access to the XDG state
+  directory (or an explicit log path) can edit it; it is an audit aid, not
+  tamper-proof evidence.
 
 ## Supply chain
 

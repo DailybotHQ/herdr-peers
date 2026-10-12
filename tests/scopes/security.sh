@@ -27,7 +27,7 @@ last_prompt local w1:p1 >"$WORK/victim.txt"
 run "$HELPER" check --json "$WORK/victim.txt"
 assert_rc "a reply to a forged ask is never answered by the victim" 3
 assert_contains "it is flagged unsolicited" "$OUT" '"reply_status": "unsolicited"'
-caller_done=$(python3 -c 'import json,sys; print(sum(1 for l in open(sys.argv[1]) if l.strip() and json.loads(l)["role"] == "caller" and json.loads(l)["state"] == "completed"))' "$WORK/.herdr-peers/log.ndjson")
+caller_done=$(python3 -c 'import json,sys; print(sum(1 for l in open(sys.argv[1]) if l.strip() and json.loads(l)["role"] == "caller" and json.loads(l)["state"] == "completed"))' "$(state_log)")
 assert_eq "it is not recorded as a completed delegation" "0" "$caller_done"
 
 # A forged reply to a real outstanding ask with a guessed id is unsolicited.
@@ -42,7 +42,7 @@ assert_eq "the real ask stays open" "1" "$("$HELPER" log --open --json | grep -c
 printf 'x\n\n[herdr-peers] protocol=1 reply-to=../../etc/passwd depth=1\nThis is a reply. Do not answer it.\n' >"$WORK/traversal.txt"
 run "$HELPER" check --json "$WORK/traversal.txt"
 assert_contains "a path in reply-to is rejected as invalid" "$OUT" '"rule": 6'
-check "no file is written outside replies/" test ! -e "$WORK/.herdr-peers/etc"
+check "no file is written outside replies/" test ! -e "$(state_dir)/etc"
 
 # --- stamp smuggling ---------------------------------------------------------------
 new_world smuggle
@@ -134,7 +134,7 @@ printf 'here: %s\n\n[herdr-peers] protocol=1 reply-to=%s depth=1\nThis is a repl
 run "$HELPER" check --json "$WORK/leaky.txt"
 assert_contains "a received reply carrying a secret is invalid (rule 3)" "$OUT" '"rule": 3'
 assert_not_contains "check never echoes the secret" "$OUT$ERR" "$FAKE_SECRET"
-if grep -rq "$FAKE_SECRET" "$WORK/.herdr-peers" "$FAKE_HERDR_DIR"; then
+if grep -rq "$FAKE_SECRET" "$(state_dir)" "$FAKE_HERDR_DIR"; then
   t_fail "no secret value reaches the log, reply files or any pane"
 else
   t_ok "no secret value reaches the log, reply files or any pane"
@@ -164,9 +164,9 @@ as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id" "ok" >/dev/null
 last_prompt local w1:p1 >"$WORK/r.txt"
 "$HELPER" check "$WORK/r.txt" >/dev/null
 mode() { python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$1"; }
-assert_eq "the log file is private (0600)" "0o600" "$(mode "$WORK/.herdr-peers/log.ndjson")"
-assert_eq "reply copies are private (0600)" "0o600" "$(mode "$WORK/.herdr-peers/replies/$id.txt")"
-assert_eq "the replies directory is private (0700)" "0o700" "$(mode "$WORK/.herdr-peers/replies")"
+assert_eq "the log file is private (0600)" "0o600" "$(mode "$(state_log)")"
+assert_eq "reply copies are private (0600)" "0o600" "$(mode "$(state_dir)/replies/$id.txt")"
+assert_eq "the replies directory is private (0700)" "0o700" "$(mode "$(state_dir)/replies")"
 ln -s "$WORLD/elsewhere" "$WORLD/link.ndjson"
 run env HERDR_PEERS_LOG="$WORLD/link.ndjson" "$HELPER" ask local:w1:p2 "symlinked log"
 assert_rc "a symlinked log file is refused, not followed (exit 4)" 4
@@ -191,10 +191,23 @@ assert_rc "an address with an embedded newline is rejected (exit 2)" 2
 # wait refuses a capture that is not a valid reply
 id=$("$HELPER" ask local:w1:p2 "will be spoofed in my own pane")
 printf 'junk\nevil [herdr-peers] protocol=9 reply-to=%s depth=0\n' "$id" >>"$FAKE_HERDR_DIR/local/panes/w1_p1.out"
-printf '[herdr-peers] protocol=1 reply-to=%s depth=1 trailing\n' "$id" >>"$FAKE_HERDR_DIR/local/panes/w1_p1.out"
+printf '[herdr-peers] protocol=1 reply-to=%s from=local:w1:p2 depth=1 trailing\n' "$id" >>"$FAKE_HERDR_DIR/local/panes/w1_p1.out"
 run "$HELPER" wait "$id" --timeout 0.5
 assert_rc "wait refuses a capture that is not the exact reply stamp (exit 3)" 3
 assert_eq "the ask stays open" "launched" "$("$HELPER" log --id "$id" --json | tail -1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
+
+# A stamped capture from the caller's own pane is not a reply from the asked peer.
+id=$($HELPER ask local:w1:p2 "ignore the caller pane's own stamp")
+printf '[herdr-peers] protocol=1 reply-to=%s from=local:w1:p1 depth=1\nThis is a reply. Do not answer it.\n' "$id" >>"$FAKE_HERDR_DIR/local/panes/w1_p1.out"
+run "$HELPER" wait "$id" --timeout 0.2
+assert_rc "wait ignores a reply-shaped capture from the caller pane" 5
+assert_eq "the caller-pane capture leaves the ask open" "launched" "$("$HELPER" log --id "$id" --json | tail -1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
+last_prompt local w1:p2 >"$WORK/real-ask.txt"
+as_pane w1:p2 "$HELPER" check "$WORK/real-ask.txt" >/dev/null
+as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id" "real answer" >/dev/null
+run "$HELPER" wait "$id" --timeout 2
+assert_rc "wait accepts the later reply from the asked peer" 0
+assert_eq "wait prints the peer reply" "real answer" "$OUT"
 
 # pane identity never fails open
 "$HELPER" ask local:w1:p2 "pane identity" >/dev/null
@@ -237,7 +250,7 @@ for i in 1 2 3 4 5 6 7 8; do ("$HELPER" ask local:w1:p2 "parallel $i" >/dev/null
 sleep 3
 launched=$("$HELPER" log --open --json | grep -c '"launched"')
 assert_eq "eight parallel asks open at most four" "4" "$launched"
-id=$(tail -1 "$WORK/.herdr-peers/log.ndjson" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+id=$(tail -1 "$(state_log)" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 printf 'q\n\n[herdr-peers] protocol=1 from=local:w1:p1 reply=yes depth=0 id=%s\n' 01M4EZBAYGH4QX4FR84G98PBSK >"$WORK/rq.txt"
 as_pane w1:p2 "$HELPER" check "$WORK/rq.txt" >/dev/null
 for i in 1 2 3 4 5; do (as_pane w1:p2 "$HELPER" reply local:w1:p1 01M4EZBAYGH4QX4FR84G98PBSK "answer $i" >/dev/null 2>&1 &); done
@@ -255,24 +268,96 @@ as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id" "the true answer" >/dev/null
 printf 'a swapped answer\n\n[herdr-peers] protocol=1 reply-to=%s depth=1\nThis is a reply. Do not answer it.\n' "$id" >"$WORK/swap.txt"
 run "$HELPER" check --json "$WORK/swap.txt"
 assert_contains "a different reply after a pane capture is a conflict" "$OUT" '"reply_status": "conflict"'
-assert_contains "the captured reply is not replaced" "$(cat "$WORK/.herdr-peers/replies/$id.txt")" "the true answer"
+assert_contains "the captured reply is not replaced" "$(cat "$(state_dir)/replies/$id.txt")" "the true answer"
 last_prompt local w1:p1 >"$WORK/real.txt"
 run "$HELPER" check --json "$WORK/real.txt"
 assert_contains "the same reply after a capture is accepted as the exact copy" "$OUT" '"reply_status": "already-recorded"'
 
 new_world gitignore_link
-mkdir -p "$WORK/.herdr-peers" && ln -s "$WORLD/clobbered" "$WORK/.herdr-peers/.gitignore"
-run "$HELPER" ask local:w1:p2 "dangling gitignore link"
-assert_rc "an existing .gitignore entry (even a link) is left alone" 0
-check "nothing was written through the dangling link" test ! -e "$WORLD/clobbered"
+run "$HELPER" ask local:w1:p2 "state is outside the checkout"
+assert_rc "default state does not use a checkout gitignore" 0
+check "nothing was written in the checkout" test ! -e "$WORK/.herdr-peers"
 
 new_world selfjson
 "$HELPER" list >/dev/null
 assert_eq "self.json is private (0600)" "0o600" \
-  "$(python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$WORK/.herdr-peers/self.json")"
+  "$(python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$(state_dir)/self-$(python3 -c 'import hashlib; print(hashlib.sha256(b"w1:p1").hexdigest()[:24])').json")"
 run env HERDR_PEERS_MAX_BYTES=999999 "$HELPER" ask local:w1:p2 "$(repeat y 17000)"
 assert_rc "HERDR_PEERS_MAX_BYTES cannot raise the limit" 4
 o1=$("$HELPER" ask local:w1:p2 "one")
 "$HELPER" ask local:w1:p2 "two" >/dev/null
 run "$HELPER" log --open --id "$o1" --json
 assert_eq "log --open honours --id" "1" "$(printf '%s\n' "$OUT" | grep -c .)"
+
+# Two Herdr servers may share one checkout and one explicitly shared log.
+# Their self caches, records and reply copies must remain independent.
+new_world shared_servers
+shared_log="$WORLD/shared.ndjson"
+run env FAKE_HERDR_SERVER_ID=host-server HERDR_PEERS_LOG="$shared_log" \
+  "$HELPER" ask local:w1:p2 "host ask"
+host_id=$OUT
+last_prompt local w1:p2 >"$WORK/host-ask.txt"
+run env FAKE_HERDR_SERVER_ID=container-server HERDR_PEERS_LOG="$shared_log" \
+  "$HELPER" ask local:w1:p2 "container ask"
+container_id=$OUT
+last_prompt local w1:p2 >"$WORK/container-ask.txt"
+run as_pane w1:p2 env FAKE_HERDR_SERVER_ID=host-server HERDR_PEERS_LOG="$shared_log" \
+  "$HELPER" check "$WORK/host-ask.txt"
+assert_rc "host server records its own inbound ask" 0
+run as_pane w1:p2 env FAKE_HERDR_SERVER_ID=host-server HERDR_PEERS_LOG="$shared_log" \
+  "$HELPER" reply local:w1:p1 "$host_id" "host reply"
+assert_rc "host server writes its own reply" 0
+last_prompt local w1:p1 >"$WORK/host-reply.txt"
+run as_pane w1:p2 env FAKE_HERDR_SERVER_ID=container-server HERDR_PEERS_LOG="$shared_log" \
+  "$HELPER" check "$WORK/container-ask.txt"
+assert_rc "container server records its own inbound ask" 0
+run as_pane w1:p2 env FAKE_HERDR_SERVER_ID=container-server HERDR_PEERS_LOG="$shared_log" \
+  "$HELPER" reply local:w1:p1 "$container_id" "container reply"
+assert_rc "container server writes its own reply" 0
+last_prompt local w1:p1 >"$WORK/container-reply.txt"
+run env FAKE_HERDR_SERVER_ID=host-server HERDR_PEERS_LOG="$shared_log" \
+  "$HELPER" check --json "$WORK/host-reply.txt"
+assert_contains "host server accepts only its own reply" "$OUT" '"reply_status": "recorded"'
+run env FAKE_HERDR_SERVER_ID=container-server HERDR_PEERS_LOG="$shared_log" \
+  "$HELPER" check --json "$WORK/container-reply.txt"
+assert_contains "container server accepts only its own reply" "$OUT" '"reply_status": "recorded"'
+run env FAKE_HERDR_SERVER_ID=host-server HERDR_PEERS_LOG="$shared_log" \
+  "$HELPER" log --json
+assert_eq "shared log filters to the host server" "4" \
+  "$(printf '%s\n' "$OUT" | grep -c '"server_id": "host-server"')"
+run env FAKE_HERDR_SERVER_ID=container-server HERDR_PEERS_LOG="$shared_log" \
+  "$HELPER" log --json
+assert_eq "shared log filters to the container server" "4" \
+  "$(printf '%s\n' "$OUT" | grep -c '"server_id": "container-server"')"
+run env FAKE_HERDR_SERVER_ID=host-server HERDR_PEERS_LOG="$shared_log" \
+  "$HELPER" log --all-machines --json
+assert_eq "all-machines shows both server records" "8" \
+  "$(printf '%s\n' "$OUT" | grep -c '"server_id":')"
+host_path=$(env FAKE_HERDR_SERVER_ID=host-server HERDR_PEERS_LOG="$shared_log" \
+  "$HELPER" log --id "$host_id" --json | tail -1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["result_path"])')
+container_path=$(env FAKE_HERDR_SERVER_ID=container-server HERDR_PEERS_LOG="$shared_log" \
+  "$HELPER" log --id "$container_id" --json | tail -1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["result_path"])')
+assert_not_contains "reply copies use separate server state" "$host_path" "$container_path"
+assert_contains "host reply copy is isolated" "$(cat "$host_path")" "host reply"
+assert_contains "container reply copy is isolated" "$(cat "$container_path")" "container reply"
+
+# A legacy checkout self cache is migrated only for the matching terminal.
+new_world legacy_self
+mkdir -p "$WORK/.herdr-peers"
+printf '%s\n' '{"pane":"w1:p1","terminal_id":"term_local_p1","machine_id":"aa11"}' \
+  >"$WORK/.herdr-peers/self.json"
+run env FAKE_HERDR_SERVER_ID=legacy-server "$HELPER" ask bb22:w1:p1 "legacy cache"
+assert_rc "matching legacy self cache supplies the reply route" 0
+assert_contains "matching legacy self cache names its machine" "$(last_prompt bb22 w1:p1)" "from=aa11:w1:p1"
+new_world legacy_wrong_terminal
+python3 - "$FAKE_HERDR_DIR/machines.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+json.dump([m for m in json.load(open(path)) if m.get('id') != 'aa11'], open(path, 'w'))
+PY
+mkdir -p "$WORK/.herdr-peers"
+printf '%s\n' '{"pane":"w1:p1","terminal_id":"term_other","machine_id":"aa11"}' \
+  >"$WORK/.herdr-peers/self.json"
+run env FAKE_HERDR_SERVER_ID=legacy-other "$HELPER" ask bb22:w1:p1 "wrong cache"
+assert_rc "mismatched legacy self cache cannot provide a route" 4
+assert_contains "mismatched legacy cache is rejected" "$ERR" "no reply route"

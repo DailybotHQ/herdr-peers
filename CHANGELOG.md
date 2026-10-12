@@ -15,6 +15,25 @@ the protocol number).
   pack's addon planner; the AI Diff Reviewer skill stays at v3.3.9, the
   pack's pin. The shipped skill and helper are unchanged.
 
+## [0.2.3] - 2026-10-12
+
+Protocol stays **1**; the `herdr-peers/lanes-v1` schema remains compatible and
+adds the terminal `unroutable` state.
+
+### Fixed
+
+- Runtime state is now isolated per Herdr server under XDG state storage
+  instead of the checkout. Records carry `server_id`, shared explicit logs are
+  filtered to the current server by default (`log --all-machines` shows all),
+  and legacy checkout self caches migrate only after a terminal-id match.
+- Replies carry the asked peer's address, so `wait` rejects caller-pane
+  captures and accepts only replies from the peer that was asked.
+- `wait` accepts the exact v0.2.2 reply stamp without `from` during mixed-version
+  operation, records the sender as unverified, and warns until that peer is
+  upgraded.
+- Failed reply delivery is recorded as `unroutable`; when both sides can see
+  the record, the caller's ask closes with that reason instead of timing out.
+
 ## [0.2.2] - 2026-10-11
 
 Protocol stays **1**; the `herdr-peers/lanes-v1` schema is unchanged.
@@ -172,7 +191,8 @@ First release. Interface version: **protocol 1** (`metadata.protocol: 1` in
   `harness lint protocol helper skill templates security live`; CI on Ubuntu
   and macOS.
 
-[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/DailybotHQ/herdr-peers/compare/v0.1.0...v0.2.0

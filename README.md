@@ -34,7 +34,7 @@ The skill (the helper ships inside it, at
 `~/.agents/skills/herdr-peers/scripts/herdr-peers` for a global install):
 
 ```bash
-npx --yes skills add DailybotHQ/herdr-peers@v0.2.2 --skill herdr-peers -g -y
+npx --yes skills add DailybotHQ/herdr-peers@v0.2.3 --skill herdr-peers -g -y
 ```
 
 Herdr's official skill, which this one depends on — pinned, or use the
@@ -48,11 +48,11 @@ Every machine whose agents should answer needs the skill too. From a
 checkout of the tag instead, verified against the release's `SHA256SUMS`:
 
 ```bash
-git clone --branch v0.2.2 https://github.com/DailybotHQ/herdr-peers
+git clone --branch v0.2.3 https://github.com/DailybotHQ/herdr-peers
 cd herdr-peers
-curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v0.2.2/SHA256SUMS
+curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v0.2.3/SHA256SUMS
 shasum -a 256 -c SHA256SUMS      # every shipped file: OK
-bin/herdr-peers --version        # herdr-peers 0.2.2 (protocol 1)
+bin/herdr-peers --version        # herdr-peers 0.2.3 (protocol 1)
 ```
 
 Requirements: Herdr ≥ 0.9.1, `bash`, `python3` ≥ 3.9 (standard library
@@ -87,7 +87,7 @@ protocol message, and the record), does the work, and replies once:
 herdr-peers reply local:w1:p1 01J… "bash tests/run.sh protocol"
 ```
 
-The reply arrives with `reply-to=<id> depth=1` and "This is a reply. Do not
+The reply arrives with `reply-to=<id> from=<asked-peer> depth=1` and "This is a reply. Do not
 answer it." — so the conversation stops. `herdr-peers log --open` shows what
 is still outstanding.
 
@@ -216,9 +216,13 @@ each release ships `SHA256SUMS`.
 - **Hygiene.** No control or invisible formatting characters, a size limit,
   and secrets (values of `*_API_KEY`, `*_TOKEN` and similar variables, key
   blocks, token shapes) are refused — named, never printed.
-- **Record before relying.** An append-only log (`.herdr-peers/`, gitignored,
-  private file modes) holds digests, never prompt text; with `DWP_PLAN` set it
-  is mirrored into that plan's `analysis_results/delegations.ndjson`.
+- **Record before relying.** Machine-scoped XDG state outside the checkout
+  holds an append-only log and reply copies with private file modes. Records
+  carry the Herdr server id; an explicit shared `HERDR_PEERS_LOG` is filtered
+  to the current server by default and can be inspected with
+  `herdr-peers log --all-machines`. Prompts are stored as digests, never text;
+  with `DWP_PLAN` set the record is mirrored into that plan's
+  `analysis_results/delegations.ndjson`.
 
 The threat model, including the residual risks that come from Herdr having
 no sender authentication, is in [docs/SECURITY.md](docs/SECURITY.md). To
