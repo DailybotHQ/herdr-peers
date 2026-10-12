@@ -49,7 +49,7 @@ opinion nobody asked for, or to avoid doing the work yourself.
 | --- | --- |
 | `list [--json]` | Live table of every agent on every enabled machine; marks your row `<- you`. Run it now when asked who is available — never answer from an old table. |
 | `ask <machine>:<pane> "<prompt>"` | Sends the prompt with the stamp and the reply grant; records it; prints the ask id. Options: `--from ADDR`, `--scope S`, `--fanout N --reason R`, `--task T` (default `$DWP_TASK`), and for the record only `--profile NAME` (the peer's account/profile, e.g. `@work1`), `--vendor NAME` (default: derived from the agent kind) and `--worktree PATH` (a writing peer's worktree). A prompt of `-` reads stdin. |
-| `wait <id> [--timeout S]` | Blocks until a reply stamped for the asked peer arrives, records it, prints it; rejects caller-pane captures and reports unroutable asks. |
+| `wait <id> [--timeout S]` | Blocks until a reply stamped for the asked peer arrives, records it, prints it; rejects caller-pane captures, accepts the exact v0.2.2 legacy stamp with an unverified-identity warning, and reports unroutable asks. |
 | `check [FILE]` | Classifies a received message (stdin or file): answer, never answer, or not a protocol message. Records what it must. |
 | `reply <machine>:<pane> <id> "<answer>"` | Answers an ask exactly once. |
 | `log [--open] [--json] [--all-machines]` | The current server's delegation record (with each ask's vendor and profile); include every server in a shared log with `--all-machines`. |

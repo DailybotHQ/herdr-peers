@@ -177,6 +177,14 @@ assert_eq "wait prints the reply body" "4" "$OUT"
 assert_eq "wait records completion before printing" "completed" "$(field "$(last_log)" state)"
 run "$HELPER" wait "$id" --timeout 2
 assert_eq "wait on a completed ask prints the stored reply" "4" "$OUT"
+id_legacy=$("$HELPER" ask local:w1:p2 "legacy reply compatibility")
+printf 'legacy answer\n\n[herdr-peers] protocol=1 reply-to=%s depth=1\nThis is a reply. Do not answer it.\n' \
+  "$id_legacy" >>"$FAKE_HERDR_DIR/local/panes/w1_p1.out"
+run "$HELPER" wait "$id_legacy" --timeout 2
+assert_rc "wait accepts a v0.2.2 legacy reply stamp" 0
+assert_eq "wait prints the legacy reply body" "legacy answer" "$OUT"
+assert_contains "legacy wait warns that from is unverified" "$ERR" "from is unverified"
+assert_contains "legacy wait records a compatibility note" "$(last_log)" "v0.2.2 compatibility"
 id2=$("$HELPER" ask local:w1:p2 "Never answered")
 run "$HELPER" wait "$id2" --timeout 0.3
 assert_rc "wait times out with exit 5" 5

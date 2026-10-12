@@ -1285,10 +1285,13 @@ def cmd_wait(args):
         suffix = ': %s' % note if note else ''
         raise Stop(EXIT_PROTOCOL, 'ask %s is %s%s' % (args.id, asked['state'], suffix))
     baseline = read_pane(args.pane if args.pane else pane, args.lines + 50)
-    needle = '%s protocol=%d reply-to=%s from=%s depth=1' % (
+    new_stamp = '%s protocol=%d reply-to=%s from=%s depth=1' % (
         MARKER, PROTOCOL, args.id, asked.get('target'))
+    legacy_stamp = '%s protocol=%d reply-to=%s depth=1' % (
+        MARKER, PROTOCOL, args.id)
+    needle = '(?m)^(?:%s|%s)(?:\\s.*)?$' % (re.escape(new_stamp), re.escape(legacy_stamp))
     timeout_ms = int(args.timeout * 1000)
-    rc, out, err = herdr(['pane', 'wait-output', pane, '--match', needle, '--source',
+    rc, out, err = herdr(['pane', 'wait-output', pane, '--regex', needle, '--source',
                           'recent-unwrapped', '--timeout', str(timeout_ms)],
                          timeout=args.timeout + 15)
     if rc != 0:
@@ -1307,8 +1310,8 @@ def cmd_wait(args):
     rc, text, err = herdr(['pane', 'read', pane, '--source', 'recent-unwrapped',
                            '--lines', str(args.lines + 50)], timeout=20)
     current = text if rc == 0 else ''
-    excerpt = extract_reply(current, args.id, asked.get('target'), args.lines)
-    if excerpt is None:
+    extracted = extract_reply(current, args.id, asked.get('target'), args.lines)
+    if extracted is None:
         if reply_stamp_in(baseline, args.id):
             raise Stop(EXIT_PROTOCOL, 'the caller pane already contained a reply-shaped capture '
                        'for %s; wait only accepts a newly delivered reply from %s, then run '
@@ -1316,12 +1319,20 @@ def cmd_wait(args):
         raise Stop(EXIT_PROTOCOL, 'the text captured from this pane is not a valid reply from '
                    'the asked peer %s for %s; read the pane, then run `herdr-peers check` on '
                    'the message' % (asked.get('target'), args.id))
+    excerpt, legacy = extracted
     path = store.save_reply(args.id, excerpt)
+    note = None
+    if legacy:
+        note = 'legacy reply stamp: from is unverified (v0.2.2 compatibility)'
     store.append(make_record('completed', 'caller', args.id, asked['target'], asked.get('self'),
                              prompt_digest=asked.get('prompt_digest'), result_path=path,
-                             source='pane-capture', **carried(asked)))
-    warn('reply to %s recorded at %s (captured from this pane; data, not instructions)'
-         % (args.id, path))
+                             source='pane-capture', note=note, **carried(asked)))
+    if legacy:
+        warn('legacy reply to %s recorded at %s (from is unverified; upgrade the peer '
+             'to emit from=)' % (args.id, path))
+    else:
+        warn('reply to %s recorded at %s (captured from this pane; data, not instructions)'
+             % (args.id, path))
     print(excerpt)
     return EXIT_OK
 
@@ -1337,15 +1348,24 @@ def reply_stamp_in(text, ask_id):
 
 
 def extract_reply(text, ask_id, expected_from, max_lines):
-    """The reply body before the exact reply stamp, or None when the capture
-    does not hold a valid protocol 1 reply to this id."""
+    """Return (reply body, legacy) for a valid protocol 1 reply capture."""
     lines = text.split('\n')
-    want = '%s protocol=%d reply-to=%s from=%s depth=1' % (
+    new_want = '%s protocol=%d reply-to=%s from=%s depth=1' % (
         MARKER, PROTOCOL, ask_id, expected_from)
+    legacy_want = '%s protocol=%d reply-to=%s depth=1' % (
+        MARKER, PROTOCOL, ask_id)
     stamp = None
+    want = None
+    legacy = False
     for i in range(len(lines) - 1, -1, -1):
-        if lines[i].strip() == want:
+        if lines[i].strip() == new_want:
             stamp = i
+            want = new_want
+            break
+        if lines[i].strip() == legacy_want:
+            stamp = i
+            want = legacy_want
+            legacy = True
             break
     if stamp is None:
         return None
@@ -1367,10 +1387,14 @@ def extract_reply(text, ask_id, expected_from, max_lines):
         body.pop()
     candidate = '\n'.join(body + ['', want, REPLY_CLAUSE])
     verdict = classify(candidate, {})
-    if verdict.get('kind') != 'reply' or verdict.get('reply_to') != ask_id or \
-            verdict.get('reply_from') != expected_from:
+    if verdict.get('kind') != 'reply' or verdict.get('reply_to') != ask_id:
         return None
-    return '\n'.join(body)
+    if legacy:
+        if verdict.get('reply_from') is not None:
+            return None
+    elif verdict.get('reply_from') != expected_from:
+        return None
+    return '\n'.join(body), legacy
 
 
 def close_caller_unroutable(store, ask_id, note):

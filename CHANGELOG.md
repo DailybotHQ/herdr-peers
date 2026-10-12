@@ -28,6 +28,9 @@ adds the terminal `unroutable` state.
   and legacy checkout self caches migrate only after a terminal-id match.
 - Replies carry the asked peer's address, so `wait` rejects caller-pane
   captures and accepts only replies from the peer that was asked.
+- `wait` accepts the exact v0.2.2 reply stamp without `from` during mixed-version
+  operation, records the sender as unverified, and warns until that peer is
+  upgraded.
 - Failed reply delivery is recorded as `unroutable`; when both sides can see
   the record, the caller's ask closes with that reason instead of timing out.
 

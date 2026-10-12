@@ -98,6 +98,22 @@ A reply stamp carries the delegate's address only so the caller can reject a
 capture from its own pane or another peer. It still offers no address to
 answer: the loop guard holds even for an agent that ignores the clause.
 
+### 3.3 Compatibility with v0.2.2 peers
+
+Protocol 1 remains compatible with v0.2.2 peers. That version emitted the
+legacy reply stamp without `from`:
+
+```
+[herdr-peers] protocol=1 reply-to=<id> depth=1
+```
+
+`check` accepts that legacy shape. A v0.2.3 caller's `wait` also accepts an
+exact legacy stamp from the reply pane, records the reply with the sender
+identity unverified, and warns that the peer should be upgraded. New peers
+MUST emit `from` so `wait` can reject caller-pane captures and replies from a
+different peer. The legacy path is a compatibility exception and does not
+change the protocol number.
+
 ## 4. Receiving — the loop guard
 
 A receiver MUST classify every message containing the marker `[herdr-peers]`
