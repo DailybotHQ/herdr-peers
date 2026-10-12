@@ -34,7 +34,7 @@ The skill (the helper ships inside it, at
 `~/.agents/skills/herdr-peers/scripts/herdr-peers` for a global install):
 
 ```bash
-npx --yes skills add DailybotHQ/herdr-peers@v0.2.1 --skill herdr-peers -g -y
+npx --yes skills add DailybotHQ/herdr-peers@v0.2.2 --skill herdr-peers -g -y
 ```
 
 Herdr's official skill, which this one depends on — pinned, or use the
@@ -48,11 +48,11 @@ Every machine whose agents should answer needs the skill too. From a
 checkout of the tag instead, verified against the release's `SHA256SUMS`:
 
 ```bash
-git clone --branch v0.2.1 https://github.com/DailybotHQ/herdr-peers
+git clone --branch v0.2.2 https://github.com/DailybotHQ/herdr-peers
 cd herdr-peers
-curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v0.2.1/SHA256SUMS
+curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v0.2.2/SHA256SUMS
 shasum -a 256 -c SHA256SUMS      # every shipped file: OK
-bin/herdr-peers --version        # herdr-peers 0.2.1 (protocol 1)
+bin/herdr-peers --version        # herdr-peers 0.2.2 (protocol 1)
 ```
 
 Requirements: Herdr ≥ 0.9.1, `bash`, `python3` ≥ 3.9 (standard library
@@ -97,13 +97,16 @@ The commands people run, with the shape of their output:
 
 ```console
 $ herdr-peers list
-#   MACHINE        ID           AGENT     PANE       STATE       TITLE
-1   local          local        claude    w1:p1      working     caller session  <- you
-2   local          local        codex     w1:p2      idle        review the diff
-3   box            bb22         codex     w1:p3      blocked     waiting for approval
+#   MACHINE        ID    AGENT     PANE       STATE       TITLE
+1   local          local claude    w1:p1      working     caller session  <- you
+2   local          local codex     w1:p2      idle        review the diff
+3   box            bb22  codex     w1:p3      blocked     waiting for approval
 
 $ herdr-peers ask --profile @work1 --task T-3 local:w1:p2 "Review the parser change"
 01M4P7RJHS7YV6JK8V64EFKQC6
+
+$ herdr-peers ask --pane w2:p4 local:w1:p1 "Done: the parser change"   # from a Codex lane
+01M4P7SA2T4Q9DMWQ0KX5P1V8N
 
 $ herdr-peers lanes
 PEER                 AGENT    VENDOR     PROFILE    STATE       SCREEN        OPEN LAST
@@ -134,7 +137,9 @@ bypass-permissions acknowledgement (`bypass_ack`) is never keyed by an
 agent — the developer accepts it once per profile, when the profile is
 created. Logins, per-action permissions and unknown screens go to a human. `ask` and `reply`
 refuse a stale `HERDR_PANE_ID` (exit 6), so a reply is never addressed to a
-pane that no longer exists. Leading many lanes — accounts, vendors,
+pane that no longer exists. Codex lanes pass their own pane with `--pane`
+(Codex runs commands from a shared background server whose `HERDR_PANE_ID`
+names another pane). Leading many lanes — accounts, vendors,
 containers, troubleshooting — is in
 [orchestra.md](skills/herdr-peers/orchestra.md).
 

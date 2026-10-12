@@ -9,7 +9,7 @@ ULID='^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
 
 # --- entry points ------------------------------------------------------------
 run "$HELPER" --version
-assert_eq "--version names version and protocol" "herdr-peers 0.2.1 (protocol 1)" "$OUT"
+assert_eq "--version names version and protocol" "herdr-peers 0.2.2 (protocol 1)" "$OUT"
 run "$ROOT/bin/herdr-peers" --version
 assert_rc "bin/ shim runs the skill's helper" 0
 ln -s "$ROOT/bin/herdr-peers" "$SANDBOX/bin/hp-link"
@@ -200,6 +200,45 @@ rows=$(printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin);
 assert_eq "the saved machine that is this server is not listed twice" "0" "$rows"
 run "$HELPER" list --json --scope local
 assert_not_contains "list honours the scope" "$OUT" "bb22"
+
+# --- full machine ids: list prints them whole; ask and status take a unique prefix ---
+new_world longids
+LONG_A=77150ec67e6f0edf5620b759b2fb9ac5
+LONG_B=77150ec67e6f1111aaaabbbbccccdddd   # shares 12 characters with LONG_A
+LONG_C=d8d336c7a654fb6eaba5706d8aff1879
+python3 - "$FAKE_HERDR_DIR/machines.json" "$LONG_A" "$LONG_C" <<'PY'
+import json, sys
+path, a, c = sys.argv[1:]
+machines = json.load(open(path))
+machines += [{"id": a, "label": "lane-a", "target": "a", "session": "default", "enabled": True, "selected": False},
+             {"id": c, "label": "lane-c", "target": "c", "session": "default", "enabled": True, "selected": False}]
+json.dump(machines, open(path, "w"))
+PY
+for id in "$LONG_A" "$LONG_C"; do
+  mkdir -p "$FAKE_HERDR_DIR/$id/panes"; cp "$FAKE_HERDR_DIR/bb22/agents.json" "$FAKE_HERDR_DIR/$id/agents.json"
+done
+run "$HELPER" list
+assert_contains "list prints the full 32-character machine id" "$OUT" "$LONG_A"
+run "$HELPER" ask "${LONG_C:0:12}:w1:p1" "via the 12 characters an older list printed"
+assert_rc "ask accepts a unique 12-character id prefix" 0
+assert_contains "the prefix is routed to the full machine id" "$(tail -1 "$FAKE_HERDR_DIR/argv.log")" \
+  "\"--machine\", \"$LONG_C\""
+assert_contains "the record carries the full id" "$(tail -1 "$WORK/.herdr-peers/log.ndjson")" "$LONG_C:w1:p1"
+run "$HELPER" status "${LONG_C:0:12}:w1:p1" --json
+assert_rc "status accepts a unique prefix too" 0
+assert_contains "status reports the full id" "$OUT" "$LONG_C:w1:p1"
+python3 - "$FAKE_HERDR_DIR/machines.json" "$LONG_B" <<'PY'
+import json, sys
+path, b = sys.argv[1:]
+machines = json.load(open(path))
+machines.append({"id": b, "label": "lane-b", "target": "b", "session": "default", "enabled": True, "selected": False})
+json.dump(machines, open(path, "w"))
+PY
+run "$HELPER" ask "${LONG_A:0:12}:w1:p1" "ambiguous"
+assert_rc "an ambiguous prefix is a usage error (exit 2)" 2
+assert_contains "the error names both candidates" "$ERR" "$LONG_B"
+run "$HELPER" ask "${LONG_A}:w1:p1" "full id still works"
+assert_rc "the full id is always accepted" 0
 
 # --- log, DWP_PLAN mirror, location ---------------------------------------------
 new_world plan

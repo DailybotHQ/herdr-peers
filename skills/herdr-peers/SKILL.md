@@ -1,11 +1,11 @@
 ---
 name: herdr-peers
 description: "Ask another coding agent in a Herdr pane — on this machine or another one — and get exactly one authorized reply back, with a loop guard, depth limit 1, a fan-out cap and a record of every delegation. Use only when the user mentions Herdr, peers, or another agent, pane or machine, or when a plan you are executing delegates a task through Herdr. Do not use merely because parallel work could help. Requires HERDR_ENV=1 and Herdr's official herdr skill."
-version: "0.2.1"
+version: "0.2.2"
 license: MIT
 allowed-tools: Bash, Read
 metadata:
-  version: "0.2.1"
+  version: "0.2.2"
   protocol: 1
 ---
 
@@ -57,6 +57,13 @@ opinion nobody asked for, or to avoid doing the work yourself.
 | `lanes [--json] [--all]` | One row per peer you asked: agent, vendor, profile, live state, screen class, open asks, last ask. `--json` prints the `herdr-peers/lanes-v1` contract. |
 | `cancel <id> [--reason R]` | Closes an open ask (yours, or one you decline). |
 
+`ask`, `reply`, `check`, `wait`, `lanes` and `cancel` take `--pane <pane_id>`:
+this session's own pane, which wins over the inherited `HERDR_PANE_ID`. A Codex
+lane needs it — Codex runs its commands from a per-profile background server
+whose `HERDR_PANE_ID` names the pane that first started it — so pass the pane
+the lead's brief names (`herdr-peers ask --pane w2:p4 …`). A machine id may be
+shortened to any unique prefix of at least 4 characters.
+
 Environment (all optional):
 
 | Variable | Effect |
@@ -72,7 +79,7 @@ Environment (all optional):
 
 Exit codes: `0` ok · `1` Herdr error · `2` usage · `3` protocol refusal —
 never answer · `4` policy refusal (scope, self, fan-out, size, control
-characters, secrets, no reply route) · `5` timeout · `6` not inside Herdr, or a stale `HERDR_PANE_ID` ·
+characters, secrets, no reply route) · `5` timeout · `6` not inside Herdr, or a stale pane id (pass `--pane`) ·
 `7` not a protocol message. Never hand-write a stamp: always use the helper.
 
 ## 3. Asking a peer
