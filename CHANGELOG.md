@@ -8,6 +8,29 @@ the protocol number).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-12
+
+Protocol stays **1**; wire formats and schemas are unchanged.
+
+### Fixed
+
+- Lead record changes (claim/refresh, release, handover and takeover) return
+  success when the record was written, even if a listed pane is closed or
+  unreachable. Failed notices still warn, are recorded, and do not stop
+  delivery to reachable lanes. A handover whose designated new lead was
+  not notified still exits 1, with recovery guidance and the record intact.
+  `lead claim --lanes` replaces the list;
+  omitted preserves it on refresh and empty clears it.
+- `check` reports `current` with exit 0 when a lead notice matches the
+  shared record. It remains a notice with no reply grant; fenced notices
+  still exit 3, and adoption and `STEP DOWN` keep their existing statuses.
+- `status` accepts the caller's `--pane` for validation only, without changing
+  the positional peer it inspects.
+- Launcher guidance distinguishes swarm lanes (no depth mark; they may
+  ask once no ask is held) from one-shot delegates (`HERDR_PEERS_DEPTH=1`).
+  The lead claims with empty lanes before launch, then refreshes the list
+  as agents become ready or close.
+
 ## [0.3.0] - 2026-10-12
 
 Protocol stays **1**: notices reuse the ask stamp's keys (`reply=no`), and a
@@ -248,7 +271,9 @@ First release. Interface version: **protocol 1** (`metadata.protocol: 1` in
   `harness lint protocol helper skill templates security live`; CI on Ubuntu
   and macOS.
 
-[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.3...v0.3.0
 [0.2.3]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.0...v0.2.1
