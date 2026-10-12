@@ -264,6 +264,8 @@ decision needed.
 `protocol=1` is this document. A receiver MUST classify any other protocol
 value as **never** (rule 5). A breaking change increments the protocol number
 and the skill's `metadata.protocol`; additive helper features do not.
+Notices (§3.3) and leadership (§12), added in 0.3.0, are additive: they use
+the existing stamp keys, and a 0.2.x receiver decides every notice **never**.
 
 ## 11. Fixtures
 
@@ -285,3 +287,63 @@ filename prefix is the expected decision (`answer-`, `notice-`, `never-`,
 | rule 8 | `never-depth1-ask.txt`, `never-notice-depth1.txt` |
 | rule 9 | `never-reply-maybe.txt` |
 | rules 10–12 | exercised by the `helper` test scope (they depend on the receiver's own address, scope and log) |
+| §12, F1–F9 | exercised by the `lead` test scope (they depend on the receiver's stored record and on which peers are reachable) |
+
+## 12. Leadership (lead notices and fencing)
+
+A **lead** is the peer that holds a plan's lead record. A plan has at most one
+lead; several plans MAY have different leads in one workspace. The record
+(`herdr-peers/lead-v1`, `docs/schema/lead-v1.json` in the repository) is
+`{schema, plan, lead, epoch, succession[], lanes[], updated_at}`; `lead` is
+`null` after a release. Each peer keeps its copy in the helper's machine-scoped
+state, so panes on one Herdr server share it. Only the holder of the
+**highest epoch** acts as lead.
+
+| Change | Who | Epoch |
+|---|---|---|
+| claim | anyone, when no record exists or `lead` is `null` | 1, or current + 1 |
+| refresh | the current lead (lists change) | unchanged |
+| handover | the current lead, naming its successor | current + 1 |
+| takeover | an entry of `succession[]`, when every earlier entry and (unless a recorded reason says asks to it timed out twice) the lead are gone | current + 1 |
+| release | the current lead | current + 1, `lead: null` |
+
+*Gone* means Herdr cannot reach the pane, it runs no agent, or it waits at a
+usage-limit screen.
+
+Every change is written to the delegation log and sent as a **lead notice**
+(§3.3) to every lane and successor — and to the new or old lead on a handover
+or takeover — with the record on one `swarm-lead:` line. For a receiver on
+another machine, `local:` addresses are rewritten to the sender's machine id
+as that receiver reaches it. The lead notice is the single current-state
+broadcast: a newer epoch supersedes every earlier notice, and receivers never
+acknowledge it.
+
+A receiver stores a record from a lead notice only when it is **fenced**; the
+first matching rule decides:
+
+| # | Condition | Outcome |
+|---|---|---|
+| F1 | The `swarm-lead:` line is missing a key, has an unknown key, a malformed value, or appears more than once. | rejected |
+| F2 | Same lead, epoch, succession and lanes as the stored record. | current (nothing changes) |
+| F3 | The stored epoch is higher than the notice's. | rejected (stale) |
+| F4 | No stored record, or the stored `lead` is `null`: the sender briefed this peer (`HERDR_PEERS_BRIEFER`, an ask it recorded from the sender) or released the plan, and the epoch is higher. | adopted (first claim) |
+| F5 | The sender is the stored lead, same epoch, the record names the sender as lead. | adopted (refresh) |
+| F6 | The sender is the stored lead, epoch = stored + 1. | adopted (handover, or release when `lead` is `null`) |
+| F7 | The sender is in the stored `succession[]`, epoch = stored + 1, the record names the sender as lead, and every earlier successor is gone (the receiver checks). | adopted (takeover) |
+| F8 | The stored record came by takeover at the same epoch, and the sender sits earlier in the previous `succession[]` than the stored lead and names itself. | adopted (tie to the earlier position) |
+| F9 | Anything else. | rejected |
+
+Rejections are recorded and otherwise ignored. A peer that was the lead and
+adopts a record naming another peer **steps down**: it stops acting as lead
+(the helper refuses its lead verbs) and continues as a lane or exits. Merges,
+tags and releases are performed only by the current-epoch lead and are
+checked against the remote first, so a stale lead cannot repeat them.
+
+Fencing is protocol correctness among cooperating peers, not sender
+authentication: `from=` stays a claim (§7), and the scope bounds which
+origins a peer hears. A lead record grants no authority: lanes act within the
+plan's own authorization.
+
+The address `lead` in `ask` and `notify` names the current lead of `--plan`
+or `$DWP_PLAN`; when that plan (from `$DWP_PLAN`) has no record, it names the
+lead of the one stored record that lists this peer as a lane or successor.

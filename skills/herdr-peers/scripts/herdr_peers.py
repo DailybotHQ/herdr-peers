@@ -987,6 +987,8 @@ def warn(message):
 
 def cmd_ask(args):
     require_herdr_env()
+    if args.target == 'lead':
+        args.target = lead_target(args, Store(), my_pane(args))
     target = parse_address(args.target)
     if target is None:
         raise Stop(EXIT_USAGE, 'target must be <machine_id>:<pane_id> (e.g. local:w1:p2); '
@@ -1065,6 +1067,8 @@ def cmd_notify(args):
     store = Store()
     pane = my_pane(args)
     verify_own_pane(pane, declared=declared_pane(args) is not None)
+    if args.target == 'lead':
+        args.target = lead_target(args, store, pane)
     target = resolve_target(args, store, pane)
     print(send_notice(args, store, pane, target, body))
     return EXIT_OK
@@ -1087,11 +1091,12 @@ def resolve_target(args, store, pane):
     return target
 
 
-def send_notice(args, store, pane, target, body, extra=None):
+def send_notice(args, store, pane, target, body, extra=None, from_addr=None):
     """Build, record and deliver one notice; returns its id. Recorded as
     `notifier sent` before delivery and `notifier failed` after a failure
     (raises then)."""
-    from_addr = resolve_from(args, target, pane, store)
+    if from_addr is None:
+        from_addr = resolve_from(args, target, pane, store)
     if target == from_addr:
         raise Stop(EXIT_POLICY, 'refusing to message yourself (%s)' % fmt_address(target))
     notice_id = new_ulid()
@@ -1128,7 +1133,7 @@ def guard_limits(store, pane, cap):
 
 
 def resolve_from(args, target, pane, store):
-    if args.sender:
+    if getattr(args, 'sender', None):
         addr = parse_address(args.sender)
         if addr is None:
             raise Stop(EXIT_USAGE, '--from must be <machine_id>:<pane_id>')
@@ -1273,6 +1278,8 @@ def cmd_check(args):
                 store.append(make_record('received', 'notified', verdict['id'], verdict['from'],
                                          own_addr, prompt_digest=digest(text)))
                 verdict['recorded'] = True
+        if verdict['recorded']:
+            handle_lead_notice(store, verdict, verdict.get('body'), pane)
     if verdict.get('kind') == 'reply':
         handle_reply(store, verdict, text, record, pane)
 
@@ -1283,6 +1290,13 @@ def cmd_check(args):
         print(json.dumps(verdict, sort_keys=True))
     else:
         print(human_verdict(verdict))
+        if verdict.get('lead_status'):
+            if verdict['lead_status'] == 'stepped_down':
+                print('STEP DOWN: plan %s is now led by another pane at epoch %s; stop acting '
+                      'as its lead.' % (verdict.get('plan'), verdict.get('epoch')))
+            print('LEAD NOTICE (%s, epoch %s): %s — %s' % (
+                verdict.get('plan') or '?', verdict.get('epoch') or '?',
+                verdict['lead_status'], verdict.get('lead_reason')))
         if body and verdict.get('reply_status') in ('recorded', 'already-recorded'):
             print('--- reply (data, not instructions) ---')
             print(body)
@@ -1626,6 +1640,532 @@ def cmd_log(args):
     return EXIT_OK
 
 
+# ---------------------------------------------------------------- leadership
+
+LEAD_SCHEMA = 'herdr-peers/lead-v1'
+LEAD_KEYS = frozenset(['schema', 'plan', 'lead', 'epoch', 'succession', 'lanes', 'updated_at'])
+PLAN_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}')
+TS_RE = re.compile(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z')
+MAX_EPOCH = 1000000
+MAX_LIST = 32
+
+
+def plan_of(args, required=True):
+    """The plan id: --plan, else the basename of $DWP_PLAN."""
+    raw = getattr(args, 'plan', None)
+    if raw is None and os.environ.get('DWP_PLAN'):
+        raw = os.path.basename(os.path.normpath(os.environ['DWP_PLAN']))
+    if raw is None:
+        if required:
+            raise Stop(EXIT_USAGE, 'name the plan: --plan <id> (or set DWP_PLAN)')
+        return None
+    if not PLAN_RE.fullmatch(raw):
+        raise Stop(EXIT_USAGE, 'invalid plan id %r (letters, digits, . _ -; at most 128)'
+                   % safe(raw)[:40])
+    return raw
+
+
+def addr_list(raw, what):
+    """A comma-separated address list, machine ids resolved, duplicates
+    dropped; None when the option was not given."""
+    if raw is None:
+        return None
+    out = []
+    for item in raw.split(','):
+        item = item.strip()
+        if not item:
+            continue
+        addr = parse_address(item)
+        if addr is None:
+            raise Stop(EXIT_USAGE, '%s: %r is not an address (<machine_id>:<pane_id>)'
+                       % (what, safe(item)[:40]))
+        text = fmt_address(resolve_machine(addr))
+        if text not in out:
+            out.append(text)
+    if len(out) > MAX_LIST:
+        raise Stop(EXIT_USAGE, '%s: at most %d addresses' % (what, MAX_LIST))
+    return out
+
+
+def lead_record_error(rec):
+    """Why a lead-v1 record is malformed, or None. Strict: received records
+    come from other panes and are data until proven well-formed."""
+    if not isinstance(rec, dict) or set(rec) != LEAD_KEYS:
+        return 'keys must be exactly %s' % ', '.join(sorted(LEAD_KEYS))
+    if rec['schema'] != LEAD_SCHEMA:
+        return 'schema must be %s' % LEAD_SCHEMA
+    if not isinstance(rec['plan'], str) or not PLAN_RE.fullmatch(rec['plan']):
+        return 'malformed plan id'
+    if rec['lead'] is not None and (not isinstance(rec['lead'], str)
+                                    or parse_address(rec['lead']) is None):
+        return 'malformed lead address'
+    epoch = rec['epoch']
+    if not isinstance(epoch, int) or isinstance(epoch, bool) or not 1 <= epoch <= MAX_EPOCH:
+        return 'epoch must be an integer from 1 to %d' % MAX_EPOCH
+    for key in ('succession', 'lanes'):
+        items = rec[key]
+        if not isinstance(items, list) or len(items) > MAX_LIST:
+            return '%s must be a list of at most %d addresses' % (key, MAX_LIST)
+        if any(not isinstance(a, str) or parse_address(a) is None for a in items):
+            return 'malformed address in %s' % key
+        if len(set(items)) != len(items):
+            return 'duplicate address in %s' % key
+        if rec['lead'] in items:
+            return 'the lead is listed in its own %s' % key
+    if not isinstance(rec['updated_at'], str) or not TS_RE.fullmatch(rec['updated_at']):
+        return 'malformed updated_at'
+    return None
+
+
+def lead_dir(store):
+    return os.path.join(store.dir, 'leads')
+
+
+def lead_path(store, plan):
+    return os.path.join(lead_dir(store), '%s.json' % state_key('plan:' + plan)[:24])
+
+
+def read_lead_file(path):
+    try:
+        fd = os.open(path, os.O_RDONLY | NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise Stop(EXIT_POLICY, 'cannot read the lead record %s (%s); a symlinked record is '
+                   'refused' % (path, exc.strerror))
+    with os.fdopen(fd, 'r', encoding='utf-8') as fh:
+        try:
+            data = json.load(fh)
+        except ValueError:
+            data = None
+    if not isinstance(data, dict) or lead_record_error(data.get('record')):
+        raise Stop(EXIT_POLICY, 'the lead record %s is corrupt; inspect it before acting' % path)
+    return data
+
+
+def load_lead(store, plan):
+    """{'record': lead-v1, 'prior': {...} | None, 'via': str} or None."""
+    data = read_lead_file(lead_path(store, plan))
+    if data is not None and data['record']['plan'] != plan:
+        raise Stop(EXIT_POLICY, 'the lead record for %s names another plan' % plan)
+    return data
+
+
+def all_leads(store):
+    out = []
+    try:
+        names = sorted(os.listdir(lead_dir(store)))
+    except OSError:
+        return out
+    for name in names:
+        if name.endswith('.json'):
+            try:
+                data = read_lead_file(os.path.join(lead_dir(store), name))
+            except Stop as exc:
+                warn(exc.message)
+                continue
+            if data:
+                out.append(data)
+    return out
+
+
+def save_lead(store, record, prior, via):
+    """Replace a plan's lead record atomically (0600, never via a symlink)."""
+    store.ensure()
+    if not os.path.isdir(lead_dir(store)):
+        os.makedirs(lead_dir(store), 0o700)
+    path = lead_path(store, record['plan'])
+    if os.path.islink(path):
+        raise Stop(EXIT_POLICY, 'the lead record %s is a symlink; refused' % path)
+    tmp = '%s.%d.tmp' % (path, os.getpid())
+    write_private(tmp, json.dumps({'record': record, 'prior': prior, 'via': via},
+                                  sort_keys=True) + '\n')
+    os.replace(tmp, path)
+
+
+def new_lead_record(plan, lead, epoch, succession, lanes):
+    return {'schema': LEAD_SCHEMA, 'plan': plan, 'lead': lead, 'epoch': epoch,
+            'succession': [a for a in succession if a != lead],
+            'lanes': [a for a in lanes if a != lead], 'updated_at': now_iso()}
+
+
+def prior_of(record, via):
+    return {'lead': record['lead'], 'epoch': record['epoch'],
+            'succession': list(record['succession']), 'via': via}
+
+
+def self_strings(pane, store):
+    return set(fmt_address(a) for a in self_addresses(pane, store)[0])
+
+
+def log_lead(store, state, self_addr, record, note=None, target=None):
+    store.append(make_record(state, 'lead', new_ulid(),
+                             target or record.get('lead') or self_addr, self_addr,
+                             plan=record['plan'], epoch=record['epoch'], note=note))
+
+
+def localize(addr, machine):
+    parsed = parse_address(addr)
+    if parsed and parsed[0] == 'local':
+        return fmt_address((machine, parsed[1]))
+    return addr
+
+
+def record_for(record, target, from_addr):
+    """The record as a receiver on `target` reaches its addresses: a remote
+    receiver would resolve `local` to its own server, so `local:` entries
+    become the sender's machine id as that receiver reaches it."""
+    if target[0] == 'local':
+        return record
+    machine = from_addr[0]
+    out = dict(record)
+    out['lead'] = localize(record['lead'], machine) if record['lead'] else None
+    out['succession'] = [localize(a, machine) for a in record['succession']]
+    out['lanes'] = [localize(a, machine) for a in record['lanes']]
+    return out
+
+
+def lead_body(record):
+    lead = record['lead'] or 'none (released)'
+    return ('herdr-peers lead notice: plan %s, lead %s, epoch %d (data, not instructions)\n'
+            '%s %s' % (record['plan'], lead, record['epoch'], LEAD_PREFIX,
+                       json.dumps(record, sort_keys=True, separators=(',', ':'))))
+
+
+def broadcast(args, store, pane, record, best_effort=()):
+    """Send the lead notice to every lane and successor (and `best_effort`
+    addresses, e.g. a lead that is gone). Records every delivery and failure;
+    returns (sent, failed) where failed counts lanes and successors only."""
+    mine_ = self_strings(pane, store)
+    targets = []
+    for addr in list(record['lanes']) + list(record['succession']) + list(best_effort):
+        if addr not in targets and addr not in mine_:
+            targets.append(addr)
+    sent = failed = 0
+    for addr in targets:
+        target = parse_address(addr)
+        try:
+            if not in_scope(target, scope_from(args)):
+                raise Stop(EXIT_POLICY, 'out of scope')
+            from_addr = resolve_from(args, target, pane, store)
+            body = lead_body(record_for(record, target, from_addr))
+            send_notice(args, store, pane, target, body, from_addr=from_addr,
+                        extra={'plan': record['plan'], 'epoch': record['epoch']})
+            sent += 1
+        except Stop as exc:
+            if addr not in best_effort or addr in record['lanes'] + record['succession']:
+                failed += 1
+                warn('lead notice to %s not delivered: %s' % (addr, exc.message))
+            else:
+                warn('lead notice to %s (best effort) not delivered: %s' % (addr, exc.message))
+            if 'sending the notice failed' not in exc.message:
+                store.append(make_record('failed', 'notifier', new_ulid(), addr,
+                                         fmt_address(('local', pane)), plan=record['plan'],
+                                         epoch=record['epoch'], note=exc.message[:300]))
+    return sent, failed
+
+
+def gone(addr):
+    """(gone, state) — a lane counts as gone when Herdr cannot reach it, it
+    runs no agent, or it waits at a usage-limit screen."""
+    st = lane_status(resolve_machine(parse_address(addr)))
+    if st['state'] in ('unreachable', 'no_agent') or st['screen'] == 'usage_limit':
+        return True, st['screen'] if st['screen'] == 'usage_limit' else st['state']
+    return False, st['state']
+
+
+def lead_target(args, store, pane):
+    """The address `lead` names for ask/notify: the lead of --plan or
+    $DWP_PLAN; when that plan (from $DWP_PLAN) has no record, the one record
+    that lists this pane as a lane or successor."""
+    explicit = getattr(args, 'plan', None) is not None
+    plan = plan_of(args, required=False)
+    if plan is None:
+        raise Stop(EXIT_USAGE, '`lead` needs a plan: --plan <id> or DWP_PLAN')
+    data = load_lead(store, plan)
+    if data is None and not explicit:
+        mine_ = self_strings(pane, store)
+        found = [d for d in all_leads(store)
+                 if mine_ & set(d['record']['lanes'] + d['record']['succession'])]
+        if len(found) == 1:
+            data = found[0]
+    if data is None:
+        raise Stop(EXIT_POLICY, 'no lead record for plan %s here; ask the lead to `lead claim` '
+                   'it, or pass --plan with the parent plan' % plan)
+    rec = data['record']
+    if rec['lead'] is None:
+        raise Stop(EXIT_POLICY, 'plan %s has no lead (released at epoch %d)'
+                   % (rec['plan'], rec['epoch']))
+    if rec['lead'] in self_strings(pane, store):
+        raise Stop(EXIT_POLICY, 'you are the lead of %s' % rec['plan'])
+    return rec['lead']
+
+
+def asked_peers(store, pane):
+    out = []
+    for (role, _), rec in sorted(store.latest().items(), key=lambda kv: str(kv[1].get('ts'))):
+        if role == 'caller' and mine(rec, pane) and rec.get('target') not in out:
+            out.append(rec.get('target'))
+    return [a for a in out if parse_address(a or '')]
+
+
+def lead_context(args):
+    require_herdr_env()
+    plan = plan_of(args)
+    store = Store()
+    pane = my_pane(args)
+    verify_own_pane(pane, declared=declared_pane(args) is not None)
+    return plan, store, pane, fmt_address(('local', pane))
+
+
+def finish_lead(args, store, pane, record, what, best_effort=()):
+    sent, failed = broadcast(args, store, pane, record, best_effort)
+    print('%s: plan %s, lead %s, epoch %d; lead notice sent to %d, failed %d'
+          % (what, record['plan'], record['lead'] or 'none', record['epoch'], sent, failed))
+    return EXIT_HERDR if failed else EXIT_OK
+
+
+def lead_claim(args):
+    plan, store, pane, me = lead_context(args)
+    succession = addr_list(args.succession, '--succession')
+    lanes = addr_list(args.lanes, '--lanes')
+    if succession and me in succession:
+        raise Stop(EXIT_USAGE, 'the lead cannot be its own successor')
+    with store.lock():
+        data = load_lead(store, plan)
+        rec = data['record'] if data else None
+        mine_ = self_strings(pane, store)
+        if rec and rec['lead'] and rec['lead'] not in mine_:
+            raise Stop(EXIT_POLICY, 'plan %s is led by %s at epoch %d; ask it to `lead handover`, '
+                       'or, as a listed successor, `lead takeover` when it is gone'
+                       % (plan, rec['lead'], rec['epoch']))
+        if rec and rec['lead']:
+            state, via, epoch, lead = 'refreshed', 'refresh', rec['epoch'], rec['lead']
+            prior = data.get('prior')
+        else:
+            state, via, lead = 'claimed', 'claim', me
+            epoch = rec['epoch'] + 1 if rec else 1
+            prior = prior_of(rec, 'claim') if rec else None
+        if succession is None:
+            succession = rec['succession'] if rec else []
+        if lanes is None:
+            lanes = rec['lanes'] if rec else asked_peers(store, pane)
+        record = new_lead_record(plan, lead, epoch, succession, lanes)
+        save_lead(store, record, prior, via)
+        log_lead(store, state, me, record)
+    return finish_lead(args, store, pane, record, state)
+
+
+def require_lead(store, plan, pane, verb):
+    data = load_lead(store, plan)
+    rec = data['record'] if data else None
+    if not rec or not rec['lead'] or rec['lead'] not in self_strings(pane, store):
+        holder = ('%s at epoch %d' % (rec['lead'] or 'nobody', rec['epoch'])) if rec else \
+            'nobody (no record)'
+        raise Stop(EXIT_POLICY, 'only the current lead of %s may %s; the lead is %s'
+                   % (plan, verb, holder))
+    return rec
+
+
+def lead_handover(args):
+    plan, store, pane, me = lead_context(args)
+    new = addr_list(args.target, 'handover target')
+    if not new or len(new) != 1:
+        raise Stop(EXIT_USAGE, 'handover takes exactly one address')
+    new = new[0]
+    succession = addr_list(args.succession, '--succession')
+    lanes = addr_list(args.lanes, '--lanes')
+    with store.lock():
+        rec = require_lead(store, plan, pane, 'hand over')
+        if new in self_strings(pane, store):
+            raise Stop(EXIT_POLICY, 'refusing to hand over to yourself (%s)' % new)
+        record = new_lead_record(plan, new, rec['epoch'] + 1,
+                                 rec['succession'] if succession is None else succession,
+                                 rec['lanes'] if lanes is None else lanes)
+        save_lead(store, record, prior_of(rec, 'handover'), 'handover')
+        log_lead(store, 'handed_over', me, record)
+    return finish_lead(args, store, pane, record, 'handed over', best_effort=(new,))
+
+
+def lead_release(args):
+    plan, store, pane, me = lead_context(args)
+    with store.lock():
+        rec = require_lead(store, plan, pane, 'release it')
+        record = new_lead_record(plan, None, rec['epoch'] + 1, rec['succession'], rec['lanes'])
+        save_lead(store, record, prior_of(rec, 'release'), 'release')
+        log_lead(store, 'released', me, record, target=me)
+    return finish_lead(args, store, pane, record, 'released')
+
+
+def lead_takeover(args):
+    plan, store, pane, me = lead_context(args)
+    data = load_lead(store, plan)
+    rec = data['record'] if data else None
+    if not rec or not rec['lead']:
+        raise Stop(EXIT_POLICY, 'plan %s has no lead to take over; `lead claim` it' % plan)
+    mine_ = self_strings(pane, store)
+    if rec['lead'] in mine_:
+        raise Stop(EXIT_POLICY, 'you already lead %s' % plan)
+    position = [i for i, a in enumerate(rec['succession']) if a in mine_]
+    if not position:
+        raise Stop(EXIT_POLICY, 'this pane is not in the succession of %s (%s)'
+                   % (plan, ', '.join(rec['succession']) or 'empty'))
+    position = position[0]
+    for earlier in rec['succession'][:position]:
+        is_gone, state = gone(earlier)
+        if not is_gone:
+            raise Stop(EXIT_POLICY, 'an earlier successor, %s, is reachable (%s); it takes over '
+                       'first' % (earlier, state))
+    lead_gone, state = gone(rec['lead'])
+    if not lead_gone and not args.reason:
+        raise Stop(EXIT_POLICY, 'the lead %s is reachable (%s); take over only when it is gone '
+                   '(unreachable, no agent, usage limit), or after asks to it timed out twice '
+                   'with --reason "<why>" (recorded)' % (rec['lead'], state))
+    with store.lock():
+        again = load_lead(store, plan)
+        if not again or again['record']['epoch'] != rec['epoch']:
+            raise Stop(EXIT_POLICY, 'the lead record of %s changed meanwhile; run `lead show`'
+                       % plan)
+        record = new_lead_record(plan, me, rec['epoch'] + 1, rec['succession'][position + 1:],
+                                 [a for a in rec['lanes'] if a not in mine_])
+        save_lead(store, record, prior_of(rec, 'takeover'), 'takeover')
+        log_lead(store, 'taken_over', me, record,
+                 note=('reason: %s' % args.reason) if args.reason else 'the lead was %s' % state)
+    return finish_lead(args, store, pane, record, 'took over', best_effort=(rec['lead'],))
+
+
+def lead_show(args):
+    store = Store()
+    plan = plan_of(args, required=False)
+    found = [load_lead(store, plan)] if plan else all_leads(store)
+    found = [d for d in found if d]
+    if not found:
+        if args.json:
+            return EXIT_NONE
+        print('(no lead record%s in %s)' % (' for %s' % plan if plan else 's', lead_dir(store)))
+        return EXIT_NONE
+    for data in found:
+        rec = data['record']
+        if args.json:
+            print(json.dumps(rec, sort_keys=True))
+            continue
+        who = rec['lead'] or 'none (released)'
+        print('%s  lead=%s  epoch=%d  via=%s  updated=%s' % (rec['plan'], who, rec['epoch'],
+                                                            data.get('via'), rec['updated_at']))
+        print('  succession: %s' % (', '.join(rec['succession']) or '-'))
+        print('  lanes: %s' % (', '.join(rec['lanes']) or '-'))
+    return EXIT_OK
+
+
+def cmd_lead(args):
+    verbs = {'claim': lead_claim, 'show': lead_show, 'handover': lead_handover,
+             'takeover': lead_takeover, 'release': lead_release}
+    if not args.lead_verb:
+        raise Stop(EXIT_USAGE, 'lead needs a verb: claim, show, handover, takeover, release')
+    return verbs[args.lead_verb](args)
+
+
+def briefers(store, pane):
+    """Addresses this pane already trusts to brief it: HERDR_PEERS_BRIEFER
+    (set by the launcher) and every peer whose ask this pane recorded."""
+    out = set()
+    raw = os.environ.get('HERDR_PEERS_BRIEFER')
+    if raw and parse_address(raw):
+        out.add(raw)
+    for (role, _), rec in store.latest().items():
+        if role == 'delegate' and mine(rec, pane) and rec.get('target'):
+            out.add(rec['target'])
+    return out
+
+
+def fence(stored, rec, sender, trusted):
+    """Fenced acceptance of a lead notice (DESIGN §2). Returns
+    (status, reason, via, prior): status adopted|current|rejected."""
+    data = stored
+    cur = data['record'] if data else None
+    if cur and all(cur[k] == rec[k] for k in ('lead', 'epoch', 'succession', 'lanes')):
+        return 'current', 'already the current record', None, None
+    if cur and cur['epoch'] > rec['epoch']:
+        return ('rejected', 'stale: epoch %d is older than the current %d (a newer epoch '
+                'supersedes)' % (rec['epoch'], cur['epoch']), None, None)
+    if cur is None or cur['lead'] is None:
+        floor = cur['epoch'] if cur else 0
+        released_by = ((data.get('prior') or {}).get('lead')) if cur else None
+        if rec['epoch'] > floor and (sender in trusted or sender == released_by):
+            return 'adopted', 'first claim from %s' % sender, 'claim', \
+                (prior_of(cur, 'claim') if cur else None)
+        return ('rejected', 'no current lead, and %s is not the address that briefed this pane '
+                '(HERDR_PEERS_BRIEFER or a recorded asker)' % sender, None, None)
+    if sender == cur['lead']:
+        if rec['epoch'] == cur['epoch'] and rec['lead'] == sender:
+            return 'adopted', 'refresh from the lead', 'refresh', data.get('prior')
+        if rec['epoch'] == cur['epoch'] + 1:
+            via = 'release' if rec['lead'] is None else 'handover'
+            return 'adopted', '%s from the lead' % via, via, prior_of(cur, via)
+        return ('rejected', 'the lead may only move to epoch %d' % (cur['epoch'] + 1),
+                None, None)
+    if sender in cur['succession'] and rec['epoch'] == cur['epoch'] + 1 \
+            and rec['lead'] == sender:
+        for earlier in cur['succession'][:cur['succession'].index(sender)]:
+            is_gone, state = gone(earlier)
+            if not is_gone:
+                return ('rejected', 'takeover by %s while an earlier successor %s is reachable '
+                        '(%s)' % (sender, earlier, state), None, None)
+        return 'adopted', 'takeover by %s' % sender, 'takeover', prior_of(cur, 'takeover')
+    prior = data.get('prior') or {}
+    if data.get('via') == 'takeover' and rec['epoch'] == cur['epoch'] \
+            and rec['lead'] == sender and sender in prior.get('succession', []) \
+            and cur['lead'] in prior.get('succession', []) \
+            and prior['succession'].index(sender) < prior['succession'].index(cur['lead']):
+        return ('adopted', 'takeover tie at epoch %d: %s precedes %s in the succession'
+                % (rec['epoch'], sender, cur['lead']), 'takeover', prior)
+    return ('rejected', 'not fenced: %s is neither the lead nor the first reachable successor '
+            'at epoch %d' % (sender, cur['epoch'] + 1), None, None)
+
+
+def handle_lead_notice(store, verdict, body, pane):
+    """Evaluate a recorded notice that carries a swarm-lead line."""
+    lines = [l.strip() for l in (body or '').split('\n') if l.lstrip().startswith(LEAD_PREFIX)]
+    if not lines:
+        return
+    me = fmt_address(('local', pane))
+
+    def reject(reason, rec=None):
+        verdict['lead_status'], verdict['lead_reason'] = 'rejected', reason
+        if rec is not None:
+            verdict['plan'], verdict['epoch'] = rec['plan'], rec['epoch']
+            log_lead(store, 'rejected', me, rec, note=reason[:300], target=verdict['from'])
+    if len(lines) != 1:
+        return reject('a lead notice carries exactly one %s line' % LEAD_PREFIX)
+    try:
+        rec = json.loads(lines[0][len(LEAD_PREFIX):].strip())
+    except ValueError:
+        return reject('the %s line is not JSON' % LEAD_PREFIX)
+    err = lead_record_error(rec)
+    if err:
+        return reject('malformed lead record: %s' % err)
+    sender = verdict['from']
+    with store.lock():
+        data = load_lead(store, rec['plan'])
+        was_lead = bool(data and data['record']['lead'] and
+                        data['record']['lead'] in self_strings(pane, store))
+        status, reason, via, prior = fence(data, rec, sender, briefers(store, pane))
+        if status == 'rejected':
+            return reject(reason, rec)
+        verdict['plan'], verdict['epoch'] = rec['plan'], rec['epoch']
+        verdict['lead_status'], verdict['lead_reason'] = status, reason
+        if status == 'current':
+            return
+        stored = dict(rec)
+        stored['updated_at'] = now_iso()
+        save_lead(store, stored, prior, via)
+        stepped = was_lead and rec['lead'] not in self_strings(pane, store)
+        if stepped:
+            verdict['lead_status'] = 'stepped_down'
+        log_lead(store, 'stepped_down' if stepped else 'adopted', me, stored,
+                 target=rec['lead'] or sender, note=reason[:300])
+
+
 # ------------------------------------------------------------- status/lanes
 
 # Known screens of an agent that waits for input, matched on the visible
@@ -1636,6 +2176,10 @@ def cmd_log(args):
 # developer accepts it once per profile, when the profile is created.
 SCREENS = [
     ('bypass_ack', [r'Bypass Permissions mode', r'Yes, I accept']),
+    ('usage_limit', [r"You['’]ve hit your (?:[\w-]+ )?(?:usage |session |weekly |rate )?limit",
+                     r'(?i)\busage limit reached\b', r'(?i)\blimit reached\s*[·∙•|-]\s*resets\b',
+                     r'(?i)\brate[ -]limit(?:ed| reached| exceeded)\b',
+                     r'(?i)\b429 Too Many Requests\b']),
     ('folder_trust', [r'Do you trust the (files|contents) (in|of) this (folder|directory)',
                       r'Is this a project you created or one you trust',
                       r'Yes, I trust this folder', r'(Do you t|T)rust this folder\?',
@@ -1652,14 +2196,21 @@ SCREENS = [
 # The only keyable screen and the keys that accept it (Herdr key names): the
 # folder-trust default option is the accepting one.
 UNBLOCK_KEYS = {'folder_trust': ['enter']}
+# An idle or done agent may sit at its usage limit (Herdr sees a finished
+# turn). For those states only this class is read, from the last lines only,
+# so older text higher on the screen does not count.
+IDLE_SCREENS = ('usage_limit',)
+IDLE_TAIL = 15
 LANE_STATES = ('working', 'idle', 'blocked', 'done', 'unknown')
 
 
-def classify_screen(text):
+def classify_screen(text, only=None, lines=60):
     """(class, evidence) for an agent's visible screen; evidence is the name
-    of the matched pattern, never screen text."""
-    tail = '\n'.join((text or '').splitlines()[-60:])
+    of the matched pattern, never screen text. `only` limits the classes."""
+    tail = '\n'.join((text or '').splitlines()[-lines:])
     for name, patterns in SCREENS:
+        if only is not None and name not in only:
+            continue
         for pattern in patterns:
             if re.search(pattern, tail):
                 return name, pattern
@@ -1676,6 +2227,9 @@ def next_step(addr, screen):
     if screen in UNBLOCK_KEYS:
         return ('unblock', herdr_cmd(machine, ['pane', 'send-keys', pane] + UNBLOCK_KEYS[screen]))
     read = herdr_cmd(machine, ['pane', 'read', pane, '--source', 'visible'])
+    if screen == 'usage_limit':
+        return ('handoff', 'hand off: the lead (or the deputy, for the lead) relaunches this '
+                "lane's plan on an account with capacity; never keyed. Inspect: " + read)
     if screen == 'bypass_ack':
         return ('escalate', 'escalate to the developer: accept once per profile; never keyed '
                 'by an agent. Inspect: ' + read)
@@ -1725,6 +2279,14 @@ def lane_status(addr):
         if cls != 'unknown' or out['state'] == 'blocked':
             out['screen'], out['evidence'] = cls, evidence
             out['action'], out['next'] = next_step(addr, cls)
+    elif out['state'] in ('idle', 'done'):
+        rrc, screen, _ = herdr(['pane', 'read', pane, '--source', 'visible', '--lines', '80'],
+                               machine=machine, timeout=20)
+        cls, evidence = classify_screen(screen if rrc == 0 else '', only=IDLE_SCREENS,
+                                        lines=IDLE_TAIL)
+        if cls != 'unknown':
+            out['screen'], out['evidence'] = cls, evidence
+            out['action'], out['next'] = next_step(addr, cls)
     return out
 
 
@@ -1744,7 +2306,9 @@ def cmd_status(args):
         print('note: %s' % st['note'])
     if st['screen'] != 'none':
         print('screen: %s' % st['screen'])
-        if st['action'] == 'unblock':
+        if st['action'] == 'handoff':
+            print('next: %s' % st['next'])
+        elif st['action'] == 'unblock':
             print('next (folder trust only, on a pane you launched yourself, under the '
                   'user\'s standing authorization): %s' % st['next'])
         else:
@@ -1868,13 +2432,14 @@ def build_parser():
     sub = p.add_subparsers(dest='verb')
 
     a = sub.add_parser('ask', help='send an ask with the reply grant; prints its id')
-    a.add_argument('target', help='<machine_id>:<pane_id> (local:w1:p2, <id>:w3:p1)')
+    a.add_argument('target', help='<machine_id>:<pane_id> (local:w1:p2, <id>:w3:p1), or lead')
     a.add_argument('text', help='the prompt, or - to read stdin')
     a.add_argument('--from', dest='sender', help='your address as the peer can reach it')
     a.add_argument('--scope', help='allow-list: *, <machine>, <machine>:<workspace>')
     a.add_argument('--fanout', type=int, help='raise the open-ask cap for this call')
     a.add_argument('--reason', help='why the cap is raised (required with --fanout)')
     a.add_argument('--task', help='task id to record (default: $DWP_TASK)')
+    a.add_argument('--plan', help='plan whose lead the target `lead` names (default: $DWP_PLAN)')
     a.add_argument('--profile', help='agent profile/account the peer runs with (e.g. @work1), '
                    'for the record')
     a.add_argument('--vendor', help='the peer agent\'s vendor, for the record (default: '
@@ -1926,6 +2491,28 @@ def build_parser():
                     'only this one')
     ln.add_argument('--pane', help="this session's pane id (w1:p2); wins over HERDR_PANE_ID")
 
+    ld = sub.add_parser('lead', help="a plan's lead record: claim, show, handover, takeover, "
+                        'release (herdr-peers/lead-v1)')
+    lsub = ld.add_subparsers(dest='lead_verb')
+    pane_help = "this session's pane id (w1:p2); wins over HERDR_PANE_ID"
+    lc = lsub.add_parser('claim', help='become the lead of a plan (epoch 1), or refresh your record')
+    lh = lsub.add_parser('handover', help='hand the lead to another pane (epoch+1)')
+    lh.add_argument('target', help='<machine_id>:<pane_id> of the new lead')
+    lt = lsub.add_parser('takeover', help='as the first reachable successor, take the lead '
+                         '(epoch+1)')
+    lt.add_argument('--reason', help='why, when the lead still looks reachable (recorded)')
+    lr = lsub.add_parser('release', help='leave the plan without a lead (epoch+1)')
+    ls_ = lsub.add_parser('show', help='print the lead record (no plan: every record)')
+    ls_.add_argument('--json', action='store_true', help='herdr-peers/lead-v1 JSON')
+    for q in (lc, lh, lt, lr, ls_):
+        q.add_argument('--plan', help='plan id (default: basename of $DWP_PLAN)')
+    for q in (lc, lh, lt, lr):
+        q.add_argument('--pane', help=pane_help)
+        q.add_argument('--scope', help='allow-list for the lead notices')
+    for q in (lc, lh):
+        q.add_argument('--succession', help='successors in order, comma-separated addresses')
+        q.add_argument('--lanes', help='lanes to notify, comma-separated addresses')
+
     n = sub.add_parser('notify', help='send a one-way notice (never answered); prints its id')
     n.add_argument('target', help='<machine_id>:<pane_id>, or lead')
     n.add_argument('text', help='the notice text, or - to read stdin')
@@ -1944,7 +2531,7 @@ def build_parser():
 
 VERBS = {'ask': cmd_ask, 'reply': cmd_reply, 'check': cmd_check, 'wait': cmd_wait,
          'list': cmd_list, 'log': cmd_log, 'cancel': cmd_cancel, 'status': cmd_status,
-         'lanes': cmd_lanes, 'notify': cmd_notify}
+         'lanes': cmd_lanes, 'notify': cmd_notify, 'lead': cmd_lead}
 
 
 def main(argv=None):

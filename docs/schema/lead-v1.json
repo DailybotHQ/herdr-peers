@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "herdr-peers/lead-v1",
+  "title": "herdr-peers lead record (lead-v1)",
+  "description": "What `herdr-peers lead show --json` prints and what a lead notice carries on its `swarm-lead:` line: who leads one plan, at which epoch, who succeeds it and which lanes it notifies. Stored per plan in the helper's machine-scoped state (0600). Only the holder of the highest epoch acts as lead; receivers accept a new record only through the fencing rules (protocol.md §12). Producers may add keys only in a new schema version: receivers reject unknown keys. Never carries prompt text, secrets or paths.",
+  "type": "object",
+  "required": ["schema", "plan", "lead", "epoch", "succession", "lanes", "updated_at"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "herdr-peers/lead-v1" },
+    "plan": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+              "description": "The plan id (--plan, else the basename of $DWP_PLAN)." },
+    "lead": { "type": ["string", "null"],
+              "pattern": "^(local|[A-Za-z0-9._-]{1,64}):[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}$",
+              "description": "The lead's address as the holder of this record reaches it; null after `lead release`." },
+    "epoch": { "type": "integer",
+               "description": "1 for a first claim; +1 on every handover, takeover, release and claim after a release (1..1000000)." },
+    "succession": { "type": "array",
+                    "items": { "type": "string",
+                               "pattern": "^(local|[A-Za-z0-9._-]{1,64}):[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}$" },
+                    "description": "Successors in order (at most 32, no duplicates, never the lead). The first reachable one takes over when the lead is gone." },
+    "lanes": { "type": "array",
+               "items": { "type": "string",
+                          "pattern": "^(local|[A-Za-z0-9._-]{1,64}):[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}$" },
+               "description": "Lanes that receive every lead notice (at most 32, no duplicates, never the lead)." },
+    "updated_at": { "type": "string",
+                    "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                    "description": "UTC time this holder last wrote the record." }
+  }
+}
