@@ -87,7 +87,7 @@ protocol message, and the record), does the work, and replies once:
 herdr-peers reply local:w1:p1 01J… "bash tests/run.sh protocol"
 ```
 
-The reply arrives with `reply-to=<id> depth=1` and "This is a reply. Do not
+The reply arrives with `reply-to=<id> from=<asked-peer> depth=1` and "This is a reply. Do not
 answer it." — so the conversation stops. `herdr-peers log --open` shows what
 is still outstanding.
 

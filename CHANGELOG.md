@@ -17,7 +17,8 @@ the protocol number).
 
 ## [0.2.3] - 2026-10-12
 
-Protocol stays **1**; the `herdr-peers/lanes-v1` schema is unchanged.
+Protocol stays **1**; the `herdr-peers/lanes-v1` schema remains compatible and
+adds the terminal `unroutable` state.
 
 ### Fixed
 
@@ -25,6 +26,10 @@ Protocol stays **1**; the `herdr-peers/lanes-v1` schema is unchanged.
   instead of the checkout. Records carry `server_id`, shared explicit logs are
   filtered to the current server by default (`log --all-machines` shows all),
   and legacy checkout self caches migrate only after a terminal-id match.
+- Replies carry the asked peer's address, so `wait` rejects caller-pane
+  captures and accepts only replies from the peer that was asked.
+- Failed reply delivery is recorded as `unroutable`; when both sides can see
+  the record, the caller's ask closes with that reason instead of timing out.
 
 ## [0.2.2] - 2026-10-11
 

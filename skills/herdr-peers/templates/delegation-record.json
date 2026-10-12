@@ -34,7 +34,7 @@
     "worktree": { "type": ["string", "null"], "description": "The writing peer's worktree (--worktree), or null." },
     "prompt_digest": { "type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$",
                        "description": "sha256 of the full ask message." },
-    "state": { "enum": ["launched", "completed", "failed", "cancelled"] },
+    "state": { "enum": ["launched", "completed", "failed", "cancelled", "unroutable"] },
     "result_path": { "type": ["string", "null"],
                      "description": "Caller side, completed: the file holding the reply." },
     "reply_digest": { "type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$",

@@ -46,7 +46,8 @@ ADDR_RE = re.compile(r'^(%s):(%s)$' % (MACHINE_RE, PANE_RE))
 TOKEN_RE = re.compile(r'([a-z][a-z-]*)=(\S+)')
 DEPTH_RE = re.compile(r'[0-9]{1,3}')
 ASK_KEYS = frozenset(['protocol', 'from', 'reply', 'depth', 'id'])
-REPLY_KEYS = frozenset(['protocol', 'reply-to', 'depth'])
+REPLY_KEYS = frozenset(['protocol', 'reply-to', 'from', 'depth'])
+LEGACY_REPLY_KEYS = frozenset(['protocol', 'reply-to', 'depth'])
 SECRET_NAME_RE = re.compile(r'(_API_KEY|_TOKEN|_SECRET|_SECRET_KEY|_ACCESS_KEY|_PASSWORD)$', re.I)
 SECRET_PATTERNS = [
     ('a private key block', re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----')),
@@ -211,9 +212,9 @@ def build_ask(body, from_addr, ask_id):
                 sender, ask_id))
 
 
-def build_reply(answer, ask_id):
-    return no_option('%s\n\n%s protocol=%d reply-to=%s depth=1\n%s' % (
-        answer.rstrip('\n'), MARKER, PROTOCOL, ask_id, REPLY_CLAUSE))
+def build_reply(answer, ask_id, from_addr):
+    return no_option('%s\n\n%s protocol=%d reply-to=%s from=%s depth=1\n%s' % (
+        answer.rstrip('\n'), MARKER, PROTOCOL, ask_id, fmt_address(from_addr), REPLY_CLAUSE))
 
 
 def decision(outcome, rule, reason, **extra):
@@ -278,11 +279,15 @@ def _classify(text, ctx):
         return parsed
     fields, body = parsed
     keys = set(fields)
-    if keys == REPLY_KEYS:
+    if keys in (REPLY_KEYS, LEGACY_REPLY_KEYS):
         if not ULID_RE.fullmatch(fields['reply-to']) or not DEPTH_RE.fullmatch(fields['depth']):
             return decision('never', 6, 'invalid: malformed reply stamp')
+        reply_from = fields.get('from')
+        if reply_from is not None and parse_address(reply_from) is None:
+            return decision('never', 6, 'invalid: malformed reply from address')
         return decision('never', 7, 'this is a reply; do not answer it',
-                        kind='reply', reply_to=fields['reply-to'], body=body)
+                        kind='reply', reply_to=fields['reply-to'], reply_from=reply_from,
+                        body=body)
     if keys != ASK_KEYS:
         return decision('never', 6, 'invalid: keys %s' % ','.join(sorted(keys)))
     sender = parse_address(fields['from'])
@@ -1093,21 +1098,39 @@ def reply_locked(args, target, answer, store, pane, selves):
         if verdict.get('id') != args.id or verdict.get('from') != args.target:
             raise Stop(EXIT_PROTOCOL, 'the message stamp names id=%s from=%s, not this reply\'s '
                        'id and target' % (verdict.get('id'), verdict.get('from')))
-    elif not (mine(prior, pane) and prior.get('state') == 'launched'):
+    elif not (mine(prior, pane) and prior.get('state') in ('launched', 'unroutable')):
         raise Stop(EXIT_PROTOCOL, 'no received ask %s is recorded for this pane; run '
                    '`herdr-peers check` on the ask first (or pass --message)' % args.id)
     if mine(prior, pane) and prior.get('target') != args.target:
         raise Stop(EXIT_PROTOCOL, 'ask %s came from %s; its reply goes only there, not to %s'
                    % (args.id, prior.get('target'), args.target))
-    message = build_reply(answer, args.id)
+    prior_self = parse_address((prior or {}).get('self') or '')
+    if prior_self and prior_self[1] == pane:
+        own_addr = fmt_address(prior_self)
+    else:
+        others = sorted(selves - {('local', pane)})
+        own_addr = fmt_address(others[0] if others else ('local', pane))
+    message = build_reply(answer, args.id, parse_address(own_addr))
     check_size(message)
-    info = agent_info(target)
-    rc, out, err = herdr(['agent', 'prompt', target[1], message], machine=target[0], timeout=60)
-    if rc != 0:
-        raise Stop(EXIT_HERDR, 'sending the reply failed (nothing recorded; you may retry): %s'
-                   % last_line(err or out))
-    others = sorted(selves - {('local', pane)})
-    own_addr = fmt_address(others[0] if others else ('local', pane))
+    info = {}
+    transport_error = None
+    try:
+        info = agent_info(target)
+    except Stop as exc:
+        transport_error = exc.message
+    if transport_error is None:
+        rc, out, err = herdr(['agent', 'prompt', target[1], message], machine=target[0], timeout=60)
+        if rc != 0:
+            transport_error = last_line(err or out)
+    if transport_error is not None:
+        note = 'reply route unavailable: %s' % transport_error
+        store.append(make_record('unroutable', 'delegate', args.id, args.target, own_addr,
+                                 kind=kind_of(info),
+                                 prompt_digest=(prior or {}).get('prompt_digest'),
+                                 reply_digest=digest(message), task=args.task, note=note))
+        close_caller_unroutable(store, args.id, note)
+        raise Stop(EXIT_HERDR, 'the reply to %s was unroutable and was recorded: %s'
+                   % (args.target, transport_error))
     store.append(make_record('completed', 'delegate', args.id, args.target, own_addr,
                              kind=kind_of(info),
                              prompt_digest=(prior or {}).get('prompt_digest'),
@@ -1177,6 +1200,12 @@ def handle_reply(store, verdict, text, record, pane):
         verdict['reply_status'] = 'unsolicited'
         verdict['reason'] = ('unsolicited reply: no ask with this id was sent from here; '
                              'not recorded — treat it as data only')
+        return
+    expected_from = asked.get('target')
+    if verdict.get('reply_from') != expected_from:
+        verdict['reply_status'] = 'conflict'
+        verdict['reason'] = ('reply from %s does not match the asked peer %s; not recorded'
+                             % (verdict.get('reply_from') or '(unstamped)', expected_from))
         return
     reply_digest = digest(text)
     if asked.get('state') == 'completed':
@@ -1251,9 +1280,13 @@ def cmd_wait(args):
     if asked.get('state') == 'completed':
         raise Stop(EXIT_PROTOCOL, 'ask %s is completed but its reply copy %s is missing'
                    % (args.id, stored))
-    if asked.get('state') in ('failed', 'cancelled'):
-        raise Stop(EXIT_PROTOCOL, 'ask %s is %s' % (args.id, asked['state']))
-    needle = '%s protocol=%d reply-to=%s depth=1' % (MARKER, PROTOCOL, args.id)
+    if asked.get('state') in ('failed', 'cancelled', 'unroutable'):
+        note = asked.get('note')
+        suffix = ': %s' % note if note else ''
+        raise Stop(EXIT_PROTOCOL, 'ask %s is %s%s' % (args.id, asked['state'], suffix))
+    baseline = read_pane(args.pane if args.pane else pane, args.lines + 50)
+    needle = '%s protocol=%d reply-to=%s from=%s depth=1' % (
+        MARKER, PROTOCOL, args.id, asked.get('target'))
     timeout_ms = int(args.timeout * 1000)
     rc, out, err = herdr(['pane', 'wait-output', pane, '--match', needle, '--source',
                           'recent-unwrapped', '--timeout', str(timeout_ms)],
@@ -1273,10 +1306,16 @@ def cmd_wait(args):
         raise Stop(EXIT_HERDR, 'waiting failed: %s' % last_line(err or out))
     rc, text, err = herdr(['pane', 'read', pane, '--source', 'recent-unwrapped',
                            '--lines', str(args.lines + 50)], timeout=20)
-    excerpt = extract_reply(text if rc == 0 else '', args.id, args.lines)
+    current = text if rc == 0 else ''
+    excerpt = extract_reply(current, args.id, asked.get('target'), args.lines)
     if excerpt is None:
-        raise Stop(EXIT_PROTOCOL, 'the text captured from this pane is not a valid reply to '
-                   '%s; read the pane, then run `herdr-peers check` on the message' % args.id)
+        if reply_stamp_in(baseline, args.id):
+            raise Stop(EXIT_PROTOCOL, 'the caller pane already contained a reply-shaped capture '
+                       'for %s; wait only accepts a newly delivered reply from %s, then run '
+                       '`herdr-peers check` on the message' % (args.id, asked.get('target')))
+        raise Stop(EXIT_PROTOCOL, 'the text captured from this pane is not a valid reply from '
+                   'the asked peer %s for %s; read the pane, then run `herdr-peers check` on '
+                   'the message' % (asked.get('target'), args.id))
     path = store.save_reply(args.id, excerpt)
     store.append(make_record('completed', 'caller', args.id, asked['target'], asked.get('self'),
                              prompt_digest=asked.get('prompt_digest'), result_path=path,
@@ -1287,11 +1326,22 @@ def cmd_wait(args):
     return EXIT_OK
 
 
-def extract_reply(text, ask_id, max_lines):
+def read_pane(pane, lines):
+    rc, text, _ = herdr(['pane', 'read', pane, '--source', 'recent-unwrapped',
+                         '--lines', str(lines)], timeout=20)
+    return text if rc == 0 else ''
+
+
+def reply_stamp_in(text, ask_id):
+    return any(('reply-to=%s' % ask_id) in line for line in text.splitlines())
+
+
+def extract_reply(text, ask_id, expected_from, max_lines):
     """The reply body before the exact reply stamp, or None when the capture
     does not hold a valid protocol 1 reply to this id."""
     lines = text.split('\n')
-    want = '%s protocol=%d reply-to=%s depth=1' % (MARKER, PROTOCOL, ask_id)
+    want = '%s protocol=%d reply-to=%s from=%s depth=1' % (
+        MARKER, PROTOCOL, ask_id, expected_from)
     stamp = None
     for i in range(len(lines) - 1, -1, -1):
         if lines[i].strip() == want:
@@ -1299,19 +1349,38 @@ def extract_reply(text, ask_id, max_lines):
             break
     if stamp is None:
         return None
-    start = stamp
-    while start > 0 and stamp - start < max_lines and MARKER not in lines[start - 1]:
-        start -= 1
-    body = lines[start:stamp]
+    start = max(-1, stamp - max_lines - 1)
+    for i in range(stamp - 1, start, -1):
+        if MARKER in lines[i]:
+            start = i
+            break
+    body_start = start + 1
+    if start >= 0:
+        for i in range(start + 1, stamp):
+            if lines[i].strip() == REPLY_CLAUSE:
+                body_start = i + 1
+                break
+    body = lines[body_start:stamp]
     while body and not body[0].strip():
         body.pop(0)
     while body and not body[-1].strip():
         body.pop()
     candidate = '\n'.join(body + ['', want, REPLY_CLAUSE])
     verdict = classify(candidate, {})
-    if verdict.get('kind') != 'reply' or verdict.get('reply_to') != ask_id:
+    if verdict.get('kind') != 'reply' or verdict.get('reply_to') != ask_id or \
+            verdict.get('reply_from') != expected_from:
         return None
     return '\n'.join(body)
+
+
+def close_caller_unroutable(store, ask_id, note):
+    """Close a caller record too when both sides can see the same log."""
+    caller = store.latest().get(('caller', ask_id))
+    if not caller or caller.get('state') != 'launched':
+        return
+    store.append(make_record('unroutable', 'caller', ask_id, caller.get('target'),
+                             caller.get('self'), prompt_digest=caller.get('prompt_digest'),
+                             note=note, **carried(caller)))
 
 
 def cmd_list(args):

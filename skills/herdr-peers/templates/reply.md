@@ -20,7 +20,7 @@ Message as the caller receives it:
 ```
 <answer above>
 
-[herdr-peers] protocol=1 reply-to=<ulid> depth=1
+[herdr-peers] protocol=1 reply-to=<ulid> from=<machine_id>:<pane_id> depth=1
 This is a reply. Do not answer it.
 ```
 

@@ -50,7 +50,7 @@ once with `herdr-peers reply`. Both sides keep an append-only local record.
 | # | Threat | Mitigation | Tested in |
 |---|---|---|---|
 | T1 | **Prompt injection** — an ask tells the receiver to run commands, leak data or escalate. | Received text is data, not instructions (protocol §5): an ask is a request within the receiver's existing authority; destructive, public or credential-touching actions go to the receiver's human. The grant authorizes one reply, nothing else. | docs/skill (`skill`), protocol §5 |
-| T2 | **Reply loops** — two agents answering each other forever. | Reply stamps carry `reply-to=` + `depth=1` and **no** `from=` (nothing to answer); `check` classifies every reply as never-answer; `reply` refuses an id this pane originated and a second reply to the same id. | `protocol`, `helper` |
+| T2 | **Reply loops** — two agents answering each other forever. | Reply stamps carry `reply-to=` + the asked peer's `from=` address + `depth=1` but no reply grant; `check` classifies every reply as never-answer; `reply` refuses an id this pane originated and a second reply to the same id. | `protocol`, `helper` |
 | T3 | **Delegation chains** — a delegate delegating further. | Depth limit 1: `ask` refuses when `HERDR_PEERS_DEPTH>=1` (set by the launcher) or while this pane holds an unanswered ask recorded by `check`. | `helper` |
 | T4 | **Fan-out storms** | At most 4 open asks per caller; raising it needs `--fanout N --reason` (recorded); the environment can lower, never raise the cap; the check-and-append runs under a file lock (8 parallel asks open exactly 4). | `helper`, `security` |
 | T5 | **Stamp smuggling** — a body quoting a stamp, a mid-line stamp, a second stamp appended. | Exactly one `[herdr-peers]` marker, at the start of a line; anything else is invalid and never answered. `ask`/`reply` refuse bodies containing the marker. | `protocol`, `security` |
@@ -89,10 +89,10 @@ once with `herdr-peers reply`. Both sides keep an append-only local record.
   environment mark or its `check` record; an agent that deliberately unsets
   the mark and skips `check` can still ask. The protocol forbids it; the
   helper cannot stop a process that ignores the helper.
-- **Pane capture in `wait`.** `wait` records the text before the exact reply
-  stamp as captured from the caller's own pane (best effort, bounded by
-  `--lines`). The received message itself, passed to `check`, replaces the
-  capture with the exact copy.
+- **Pane capture in `wait`.** `wait` accepts only a newly matched reply stamp
+  whose `from=` equals the asked peer; a caller-pane capture from another
+  source is ignored. The received message itself, passed to `check`, replaces
+  any capture with the exact copy.
 - **Secret detection is a filter, not a guarantee.** Values of other names,
   short values and unknown token formats are not recognized.
 - **The local record is local.** Anyone with write access to the XDG state

@@ -17,7 +17,7 @@ for k in server_id task transport via kind profile target worktree prompt_digest
   assert_contains "schema requires delegation field $k" " $fields " " $k "
 done
 states=$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(",".join(s["properties"]["state"]["enum"]))' "$SCHEMA")
-assert_eq "state enum is launched|completed|failed|cancelled" "launched,completed,failed,cancelled" "$states"
+assert_eq "state enum includes unroutable" "launched,completed,failed,cancelled,unroutable" "$states"
 
 # Drive the helper through every record-writing path in one world.
 new_world records
@@ -35,13 +35,17 @@ as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id2" "two" >/dev/null
 id3=$("$HELPER" ask --fanout 5 --reason "demo" local:w1:p2 "third")
 "$HELPER" cancel "$id3" --reason "not needed" >/dev/null                                       # caller cancelled
 FAKE_HERDR_FAIL="agent prompt" "$HELPER" ask local:w1:p2 "will fail" >/dev/null 2>&1          # caller failed
+id4=$("$HELPER" ask local:w1:p2 "unroutable")
+last_prompt local w1:p2 >"$WORK/ask4.txt"
+as_pane w1:p2 "$HELPER" check "$WORK/ask4.txt" >/dev/null
+FAKE_HERDR_FAIL="agent prompt" as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id4" "lost" >/dev/null 2>&1
 LOG="$(state_log)"
 seen=$(python3 -c 'import json,sys; print(" ".join(sorted({(json.loads(l)["role"]+":"+json.loads(l)["state"]) for l in open(sys.argv[1]) if l.strip()})))' "$LOG")
 assert_eq "the run covers every role and state the helper writes" \
-  "caller:cancelled caller:completed caller:failed caller:launched delegate:completed delegate:launched" "$seen"
+  "caller:cancelled caller:completed caller:failed caller:launched caller:unroutable delegate:completed delegate:launched delegate:unroutable" "$seen"
 run python3 "$VALIDATE" "$SCHEMA" "$LOG"
 assert_rc "every helper log line validates against delegation-record.json" 0
-assert_contains "the validator saw all lines" "$OUT" "valid 12"
+assert_contains "the validator saw all lines" "$OUT" "valid 16"
 assert_contains "task, profile and worktree are recorded" "$(head -1 "$LOG")" '"worktree": "/wt/a"'
 
 # The validator is not vacuous.
@@ -71,7 +75,7 @@ for f in grant.md ask.md; do
 done
 assert_contains "reply.md carries the reply clause verbatim" "$(cat "$TPL/reply.md")" "$clause"
 assert_contains "reply.md carries the reply stamp shape" "$(cat "$TPL/reply.md")" \
-  "[herdr-peers] protocol=1 reply-to=<ulid> depth=1"
+  "[herdr-peers] protocol=1 reply-to=<ulid> from=<machine_id>:<pane_id> depth=1"
 real=$(sed -n '/^\[herdr-peers\]/p' "$WORK/ask.txt" | sed -E 's/from=[^ ]+/from=<machine_id>:<pane_id>/; s/id=[0-9A-Z]{26}$/id=<ulid>/')
 assert_eq "a real ask stamp reduces to the template shape" \
   "[herdr-peers] protocol=1 from=<machine_id>:<pane_id> reply=yes depth=0 id=<ulid>" "$real"

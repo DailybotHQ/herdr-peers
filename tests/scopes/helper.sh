@@ -117,9 +117,8 @@ run as_pane w1:p2 "$HELPER" reply --message "$WORK/ask.txt" local:w1:p1 "$id" "Y
 assert_rc "the delegate replies once" 0
 reply=$(pane_text local w1:p1)
 assert_contains "the reply reaches the caller pane" "$reply" "Yes, it is additive only."
-assert_contains "the reply stamp is exact" "$reply" "[herdr-peers] protocol=1 reply-to=$id depth=1"
+assert_contains "the reply stamp is exact" "$reply" "[herdr-peers] protocol=1 reply-to=$id from=local:w1:p2 depth=1"
 assert_contains "the reply carries the reply clause" "$reply" "This is a reply. Do not answer it."
-assert_not_contains "the reply stamp offers no from= address" "$reply" "reply-to=$id depth=1 from="
 run as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id" "Second answer"
 assert_rc "a second reply to the same id is refused (exit 3)" 3
 run as_pane w1:p2 "$HELPER" check --json "$WORK/ask.txt"
@@ -287,7 +286,13 @@ last_prompt local w1:p2 >"$WORK/ask.txt"
 as_pane w1:p2 "$HELPER" check "$WORK/ask.txt" >/dev/null
 run as_pane w1:p2 env FAKE_HERDR_FAIL="agent prompt" "$HELPER" reply local:w1:p1 "$id" "answer"
 assert_rc "a failed reply send exits 1" 1
-assert_contains "it says nothing was recorded and a retry is allowed" "$ERR" "nothing recorded; you may retry"
+assert_contains "it records the reply as unroutable" "$ERR" "unroutable and was recorded"
+run "$HELPER" log --id "$id" --json
+assert_contains "the replier's log carries unroutable" "$OUT" '"role": "delegate"'
+assert_contains "the caller's visible log closes unroutable" "$OUT" '"state": "unroutable"'
+run "$HELPER" wait "$id" --timeout 0.1
+assert_rc "wait surfaces an unroutable ask" 3
+assert_contains "wait names the unroutable outcome" "$ERR" "ask $id is unroutable"
 run as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id" "answer"
 assert_rc "the retry succeeds" 0
 
@@ -300,7 +305,7 @@ assert_rc "wait on a failed ask exits 3" 3
 
 id_c=$("$HELPER" ask local:w1:p2 "to be cancelled")
 "$HELPER" cancel "$id_c" >/dev/null
-printf 'late\n\n[herdr-peers] protocol=1 reply-to=%s depth=1\nThis is a reply. Do not answer it.\n' "$id_c" >"$WORK/late.txt"
+printf 'late\n\n[herdr-peers] protocol=1 reply-to=%s from=local:w1:p2 depth=1\nThis is a reply. Do not answer it.\n' "$id_c" >"$WORK/late.txt"
 run "$HELPER" check --json "$WORK/late.txt"
 assert_contains "a reply to a cancelled ask is late and not recorded" "$OUT" '"reply_status": "late"'
 
