@@ -5,7 +5,9 @@ P=PLAN_901_round_two
 run "$HELPER" lead claim --plan "$P" --lanes local:w1:p2 --succession local:w2:p1
 L=$("$HELPER" lead show --plan "$P" --json)
 assert_eq "r2: outside git records an explicit null repository" '0 True null' "$RC $(python3 -c 'import json,sys; print("repo_root" in json.loads(sys.argv[1]))' "$L") $(jget "$L" repo_root)"
-assert_contains "r2: lead notices carry the repository field" "$(last_prompt local w1:p2)" '"repo_root":null'
+assert_not_contains "r2: lead notices never broadcast local repository roots" "$(last_prompt local w1:p2)" '"repo_root"'
+run python3 -c 'import json,sys; text=sys.argv[1]; line=next(l for l in text.splitlines() if l.startswith("swarm-lead: ")); rec=json.loads(line.split(": ",1)[1]); expected={"schema","plan","lead","epoch","succession","lanes","updated_at"}; stored=json.load(open(sys.argv[2]))["record"]; sys.exit(0 if set(rec)==expected and set(stored)==expected else 1)' "$(last_prompt local w1:p2)" "$(find "$(state_dir)/leads" -type f -name '*.json' | head -1)"
+assert_rc "r2: a strict v0.3.1 helper accepts broadcast and stored record keys" 0
 run "$HELPER" lead show --pane w1:p2 --plan "$P" --json
 assert_eq "r2: show accepts a valid explicit pane without changing the record" "0 local:w1:p1" "$RC $(jget "$OUT" lead)"
 run "$HELPER" lead show --pane w9:p9 --plan "$P" --json
@@ -41,6 +43,12 @@ cd "$WORK/repo-b" || exit 2
 run "$HELPER" lead claim --plan "$P"
 assert_eq "r2: another repository cannot refresh an active record" '4' "$RC"
 assert_contains "r2: collision refusal recommends a qualified plan id" "$ERR" '--plan <repo>/<id>'
+assert_eq "r2: holder collision diagnostics include both local roots" 'yes' "$(python3 -c 'import sys; print("yes" if sys.argv[1] in sys.argv[3] and sys.argv[2] in sys.argv[3] else "no")' "$root_a" "$(pwd -P)" "$ERR")"
+run env FAKE_ROOT_API_TOKEN="$(pwd -P)" "$HELPER" lead claim --plan "$P"
+assert_eq "r2: secret-shaped caller roots are redacted in local diagnostics" '4 yes' "$RC $(python3 -c 'import sys; print("yes" if sys.argv[1] not in sys.argv[2] and "<redacted>" in sys.argv[2] else "no")' "$(pwd -P)" "$ERR")"
+run as_pane w1:p2 "$HELPER" lead claim --plan "$P"
+assert_contains "r2: a foreign holder gets the ownership refusal before the root check" "$RC $ERR" '4 herdr-peers: plan PLAN_901_round_two is led by local:w1:p1'
+
 run as_pane w1:p2 "$HELPER" notify --plan "$P" lead 'cross-repository milestone'
 assert_eq "r2: another repository resolves and delivers to the lead" '0 yes' "$RC $(last_prompt local w1:p1 | python3 -c 'import sys; print("yes" if "cross-repository milestone" in sys.stdin.read() else "no")')"
 run "$HELPER" lead claim --plan "repo-b/$P" --lanes local:w1:p2
@@ -113,13 +121,13 @@ lines=sys.stdin.read().splitlines(); i=next(i for i,l in enumerate(lines) if l.s
   run on_box "$HELPER" check --json "$WORK/invalid-root.txt"
   assert_eq "r2: malformed repository root is rejected ($invalid)" '3 rejected malformed lead record: malformed repo_root' "$RC $(jget "$OUT" lead_status) $(jget "$OUT" lead_reason)"
 done
-new_world round_two_upgrade_notice
-export WORLD_TAG=$RANDOM
+new_world round_two_local_fence
 P=PLAN_901_round_two
-lead_notice aa11:w1:p1 "$(nid)" 1 aa11:w1:p1 '' '' "$P" >"$WORK/legacy.txt"
-on_box env HERDR_PEERS_BRIEFER=aa11:w1:p1 "$HELPER" check "$WORK/legacy.txt" >/dev/null 2>&1
-lead_notice aa11:w1:p1 "$(nid)" 1 aa11:w1:p1 '' '' "$P" | python3 -c 'import json,sys
-lines=sys.stdin.read().splitlines(); i=next(i for i,l in enumerate(lines) if l.startswith("swarm-lead:")); d=json.loads(lines[i].split(": ",1)[1]);d["repo_root"]="/repository";lines[i]="swarm-lead: "+json.dumps(d);print("\n".join(lines))' >"$WORK/refresh.txt"
-run on_box "$HELPER" check --json "$WORK/refresh.txt"
-L=$(on_box "$HELPER" lead show --plan "$P" --json)
-assert_eq "r2: a legacy receiver adopts the repository field on lead refresh" '3 adopted /repository' "$RC $(jget "$OUT" lead_status) $(jget "$L" repo_root)"
+git init -q "$WORK" || exit 2
+"$HELPER" lead claim --plan "$P" --lanes local:w1:p2 >/dev/null 2>&1
+root_local=$(pwd -P)
+last_prompt local w1:p2 | python3 -c 'import json,sys
+lines=sys.stdin.read().splitlines(); i=next(i for i,l in enumerate(lines) if l.startswith("swarm-lead:")); d=json.loads(lines[i].split(": ",1)[1]);d.pop("repo_root",None);lines[i]="swarm-lead: "+json.dumps(d);print("\n".join(lines))' >"$WORK/legacy-wire.txt"
+run as_pane w1:p2 "$HELPER" check --json "$WORK/legacy-wire.txt"
+L=$("$HELPER" lead show --plan "$P" --json)
+assert_eq "r2: fencing ignores local root metadata and keeps local identity" "0 current $root_local" "$RC $(jget "$OUT" lead_status) $(jget "$L" repo_root)"

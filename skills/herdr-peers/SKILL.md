@@ -183,7 +183,8 @@ named here) and `Read`.
   server's records in an overridden log. An old checkout `.herdr-peers/self.json`
   is migrated only when its terminal id matches the current Herdr pane.
   Lead records carry the claiming repository git common root (`repo_root`,
-  null outside git). Active claims from a different root are refused:
+  null outside git), kept local and omitted from lead notices. Fencing
+  never compares it. Active claims from a different root are refused:
   qualify the id with `--plan <repo>/<id>`. Released claims start with empty
   lanes/succession unless explicitly supplied, keeping epochs monotonic.
   Lead records live in the same state directory (`leads/`, `0600`, written

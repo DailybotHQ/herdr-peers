@@ -16,8 +16,10 @@ remain readable. Updated peers accept repository-qualified plan ids.
 ### Fixed
 
 - Record the claiming repository git common root, preserve it through
-  succession and carry it in lead notices. Refuse active claims from a
-  different repository with guidance to use `--plan <repo>/<id>`;
+  local succession; omit it from lead notices and fencing so older strict
+  receivers keep working and remote machines receive no host paths. Refuse
+  the current holder's active claims from a
+  different repository with safe local root diagnostics and guidance to use `--plan <repo>/<id>`;
   cross-repository lane lookups keep working. Claims after release clear
   stale lanes and succession while keeping epochs monotonic.
 - Accept and validate `lead show --pane`, matching `status`.

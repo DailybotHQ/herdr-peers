@@ -1820,6 +1820,10 @@ def read_lead_file(path):
             data = json.load(fh)
         except ValueError:
             data = None
+    # New helpers expose local identity in memory; old helpers can still
+    # read the unchanged seven-key record in the shared state envelope.
+    if isinstance(data, dict) and isinstance(data.get('record'), dict) and 'repo_root' in data:
+        data['record'] = dict(data['record'], repo_root=data['repo_root'])
     if not isinstance(data, dict) or lead_record_error(data.get('record')):
         raise Stop(EXIT_POLICY, 'the lead record %s is corrupt; inspect it before acting' % path)
     return data
@@ -1863,8 +1867,11 @@ def save_lead(store, record, prior, via):
     if os.path.islink(path):
         raise Stop(EXIT_POLICY, 'the lead record %s is a symlink; refused' % path)
     tmp = '%s.%d.tmp' % (path, os.getpid())
-    write_private(tmp, json.dumps({'record': record, 'prior': prior, 'via': via},
-                                  sort_keys=True) + '\n')
+    stored_record = dict(record)
+    storage = {'record': stored_record, 'prior': prior, 'via': via}
+    if 'repo_root' in stored_record:
+        storage['repo_root'] = stored_record.pop('repo_root')
+    write_private(tmp, json.dumps(storage, sort_keys=True) + '\n')
     os.replace(tmp, path)
 
 
@@ -1912,10 +1919,13 @@ def record_for(record, target, from_addr):
 
 
 def lead_body(record):
+    # Repository identity is local metadata, never a host path on the wire.
+    wire = dict(record)
+    wire.pop('repo_root', None)
     lead = record['lead'] or 'none (released)'
     return ('herdr-peers lead notice: plan %s, lead %s, epoch %d (data, not instructions)\n'
             '%s %s' % (record['plan'], lead, record['epoch'], LEAD_PREFIX,
-                       json.dumps(record, sort_keys=True, separators=(',', ':'))))
+                       json.dumps(wire, sort_keys=True, separators=(',', ':'))))
 
 
 def broadcast(args, store, pane, record, best_effort=(), required=()):
@@ -2038,13 +2048,16 @@ def lead_claim(args):
         rec = data['record'] if data else None
         mine_ = self_strings(pane, store)
         root = git_root(common=True)
-        if rec and rec['lead'] and 'repo_root' in rec and rec['repo_root'] != root:
-            raise Stop(EXIT_POLICY, 'plan %s is active in a different repository; qualify '
-                       'the plan id with --plan <repo>/<id>' % plan)
         if rec and rec['lead'] and rec['lead'] not in mine_:
             raise Stop(EXIT_POLICY, 'plan %s is led by %s at epoch %d; ask it to `lead handover`, '
                        'or, as a listed successor, `lead takeover` when it is gone'
                        % (plan, rec['lead'], rec['epoch']))
+        if rec and rec['lead'] and 'repo_root' in rec and rec['repo_root'] != root:
+            stored_root = safe(rec['repo_root']) if rec['repo_root'] is not None else '<none>'
+            caller_root = ('<redacted>' if secret_finding(root) else safe(root)) if root else '<none>'
+            raise Stop(EXIT_POLICY, 'plan %s is active in a different repository '
+                       '(stored root: %s; current root: %s); qualify the plan id '
+                       'with --plan <repo>/<id>' % (plan, stored_root, caller_root))
         if rec and rec['lead']:
             state, via, epoch, lead = 'refreshed', 'refresh', rec['epoch'], rec['lead']
             prior = data.get('prior')
@@ -2198,8 +2211,7 @@ def fence(stored, rec, sender, trusted, gone_fn):
     (status, reason, via, prior): status adopted|current|rejected."""
     data = stored
     cur = data['record'] if data else None
-    if cur and all(cur[k] == rec[k] for k in ('lead', 'epoch', 'succession', 'lanes')) \
-            and cur.get('repo_root') == rec.get('repo_root'):
+    if cur and all(cur[k] == rec[k] for k in ('lead', 'epoch', 'succession', 'lanes')):
         return 'current', 'already the current record', None, None
     if cur and cur['epoch'] > rec['epoch']:
         return ('rejected', 'stale: epoch %d is older than the current %d (a newer epoch '

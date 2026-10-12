@@ -299,7 +299,8 @@ filename prefix is the expected decision (`answer-`, `notice-`, `never-`,
 A **lead** is the peer that holds a plan's lead record. A plan has at most one
 lead; several plans MAY have different leads in one workspace. The record
 (`herdr-peers/lead-v1`, `docs/schema/lead-v1.json` in the repository) is
-`{schema, plan, lead, epoch, succession[], lanes[], repo_root, updated_at}`; `lead` is
+`{schema, plan, lead, epoch, succession[], lanes[], updated_at}` on the
+wire, with optional local `repo_root` metadata in stored records; `lead` is
 `null` after a release. Each peer keeps its copy in the helper's machine-scoped
 state, so panes on one Herdr server share it. Only the holder of the
 **highest epoch** acts as lead.
@@ -320,11 +321,20 @@ it as gone.
 
 `repo_root` is the claiming repository's canonical git common root (shared
 by linked worktrees), or `null` outside git. It is optional on legacy
-records; other unknown keys are refused. New claims capture it and lead
-notices carry it unchanged, including across machines. Handover, takeover
-and release preserve it. An active `claim` whose recorded root differs
-from the caller's is refused (exit 4), even for the same pane: qualify the
-plan id (`--plan <repo>/<id>`). A legacy active record without this field
+records; other unknown keys are refused. New claims capture it locally;
+lead notices omit it so strict older
+receivers accept the unchanged wire record and host paths never reach
+remote machines. The state file keeps it in the local envelope outside the seven-key
+record; new helper reads reconstruct the optional field for `lead show`.
+This keeps same-server older helpers able to read the shared record.
+Fencing never compares it. Local handover, takeover and
+release preserve it. An active `claim` first checks the holder: another
+pane is refused as
+foreign to the lead. The holder is then refused (exit 4) when its recorded
+root differs from the caller's, with safe local diagnostics naming both
+roots and the remedy `--plan <repo>/<id>`. Secret-shaped caller roots are
+redacted. Subfolders share the same common root and remain valid. A legacy
+active record without this field
 keeps the holder checks; its holder's refresh captures the root.
 
 Plan ids accept safe slash-separated segments such as `repo/PLAN_001_work`
