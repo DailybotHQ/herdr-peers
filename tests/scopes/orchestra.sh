@@ -180,7 +180,9 @@ other=$!
 echo "$other" >"$FAKE_HERDR_DIR/local/panes/w1_p1.pids"
 run "$HELPER" ask local:w1:p2 "pane belongs to someone else"
 assert_rc "an ask from another session's pane id is refused (exit 6)" 6
-assert_contains "the refusal says the id names another session" "$ERR" "another session"
+# with or without a terminal (CI runners have none), the refusal names the id;
+# the terminal-attached wording is pinned by the scripted process table below
+assert_contains "the refusal names the untrusted id" "$ERR" "HERDR_PANE_ID=w1:p1"
 run as_pane w1:p2 "$HELPER" reply local:w1:p1 01ARZ3NDEKTSV4RRFFQ69G5FAV "x"
 assert_rc "reply verifies its own pane too" 3
 kill "$other" 2>/dev/null; wait "$other" 2>/dev/null

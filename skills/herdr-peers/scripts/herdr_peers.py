@@ -540,11 +540,11 @@ def verify_own_pane(pane, declared=False):
                    'pane this agent runs in (the lead\'s launch brief names it)' % pane)
     if detached(table, chain):
         raise Stop(EXIT_ENV, 'HERDR_PANE_ID=%s cannot be trusted here: this process has no '
-                   'terminal, so it runs from a background agent server (Codex runs tool '
-                   'commands from its per-profile app-server daemon), and that server\'s '
-                   'HERDR_PANE_ID names the pane that first started it, not yours. Pass your '
-                   'own pane with --pane <pane_id> (for example --pane w1:p2; the lead\'s '
-                   'launch brief names it)' % pane)
+                   'terminal and its pane is not an ancestor. That is typical of an agent that '
+                   'runs commands from a background agent server (Codex runs tool commands from '
+                   'its per-profile app-server daemon, whose HERDR_PANE_ID names the pane that '
+                   'first started it). Pass your own pane with --pane <pane_id> (for example '
+                   '--pane w1:p2; the lead\'s launch brief names it)' % pane)
     raise Stop(EXIT_ENV, 'HERDR_PANE_ID=%s names another session\'s pane (its processes are '
                'not this process\'s ancestors); the id is stale. Restart the agent from its '
                'own pane, export the right HERDR_PANE_ID, or pass --pane <pane_id>, before '
