@@ -26,7 +26,7 @@ import subprocess
 import sys
 import time
 
-VERSION = '0.2.1'
+VERSION = '0.2.2'
 PROTOCOL = 1
 MARKER = '[herdr-peers]'
 DEFAULT_MAX_BYTES = 16384
@@ -92,6 +92,29 @@ def parse_address(text):
 
 def fmt_address(addr):
     return '%s:%s' % addr
+
+
+MIN_ID_PREFIX = 4
+
+
+def resolve_machine(addr):
+    """Expand a saved-machine id prefix (at least MIN_ID_PREFIX characters,
+    e.g. the 12 characters an older `list` printed) to the full id of the one
+    enabled machine it starts; an exact id or `local` is returned unchanged.
+    An ambiguous prefix is a usage error naming the candidates."""
+    machine, pane = addr
+    if machine == 'local':
+        return addr
+    ids = [m['id'] for m in enabled_machines()]
+    if machine in ids:
+        return addr
+    matches = sorted(i for i in ids if i.startswith(machine))
+    if len(machine) >= MIN_ID_PREFIX and len(matches) == 1:
+        return (matches[0], pane)
+    if len(matches) > 1:
+        raise Stop(EXIT_USAGE, 'machine id %s is ambiguous: it starts %s; use more characters '
+                   'or the full id from `herdr-peers list`' % (machine, ', '.join(matches)))
+    return addr
 
 
 def env_int(name, default):
@@ -360,7 +383,22 @@ def require_herdr_env():
                    'herdr-peers only works from a Herdr-managed pane')
 
 
-def my_pane():
+def declared_pane(args):
+    """The pane given with --pane, validated; None when not given."""
+    pane = getattr(args, 'pane', None)
+    if pane is None:
+        return None
+    if not re.fullmatch(PANE_RE, pane):
+        raise Stop(EXIT_USAGE, '--pane must be a pane id such as w1:p2 (no machine prefix)')
+    return pane
+
+
+def my_pane(args=None):
+    """This session's pane: --pane when given (it wins over the inherited
+    HERDR_PANE_ID), else HERDR_PANE_ID, else Herdr's current pane."""
+    pane = declared_pane(args)
+    if pane:
+        return pane
     pane = os.environ.get('HERDR_PANE_ID')
     if pane and re.fullmatch(PANE_RE, pane):
         return pane
@@ -371,23 +409,48 @@ def my_pane():
     return pane
 
 
-def ancestor_pids():
-    """This process and its ancestors, from one `ps` listing; empty if ps fails."""
+# Names that say nothing about which agent owns a pane: shells, init systems
+# and generic runners. They never count as a shared agent program.
+NOT_AN_AGENT = frozenset((
+    'sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'tcsh', 'csh', 'login', 'env',
+    'sudo', 'timeout', 'nohup', 'launchd', 'init', 'systemd', 'tini',
+    'python', 'python3', 'node', 'tmux', 'screen', 'herdr', 'herdr-peers', 'ps'))
+
+
+def process_table():
+    """{pid: (ppid, tty, program)} from one `ps` listing; empty if ps fails.
+    `program` is the basename of the executable, without a login-shell dash."""
     try:
-        proc = subprocess.run(['ps', '-A', '-o', 'pid=,ppid='], stdout=subprocess.PIPE,
-                              stderr=subprocess.DEVNULL, timeout=10)
+        proc = subprocess.run(['ps', '-A', '-o', 'pid=,ppid=,tty=,comm='],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
-        return set(), set()
-    parent = {}
+        return {}
+    table = {}
     for line in proc.stdout.decode('utf-8', 'replace').splitlines():
-        parts = line.split()
-        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-            parent[int(parts[0])] = int(parts[1])
-    chain, pid = set(), os.getpid()
+        parts = line.split(None, 3)
+        if len(parts) == 4 and parts[0].isdigit() and parts[1].isdigit():
+            program = os.path.basename(parts[3].strip()).lstrip('-')
+            table[int(parts[0])] = (int(parts[1]), parts[2], program)
+    return table
+
+
+def ancestor_chain(table, pid=None):
+    """This process and its ancestors, nearest first."""
+    chain, pid = [], os.getpid() if pid is None else pid
     while pid and pid not in chain:
-        chain.add(pid)
-        pid = parent.get(pid)
-    return chain, set(parent)
+        chain.append(pid)
+        pid = (table.get(pid) or (None,))[0]
+    return chain
+
+
+def has_terminal(tty):
+    return bool(tty) and tty not in ('?', '??', '-')
+
+
+def ancestor_pids():
+    """This process and its ancestors, and every visible pid; empty if ps fails."""
+    table = process_table()
+    return set(ancestor_chain(table)), set(table)
 
 
 def pane_pids(pane):
@@ -409,12 +472,53 @@ def pane_pids(pane):
     return pids
 
 
-def verify_own_pane(pane):
-    """Refuse to send from a stale HERDR_PANE_ID: the pane must exist on the
-    local server and, when its foreground pids are visible from here, one of
-    them must be an ancestor of this process. A pane whose pids are not in
-    this process table (another PID namespace, e.g. a container) is accepted
-    on existence alone."""
+def pane_programs(pane):
+    """The program names Herdr reports for a pane's foreground processes."""
+    rc, out, _ = herdr(['pane', 'process-info', '--pane', pane], timeout=8)
+    if rc != 0:
+        return set()
+    try:
+        procs = json.loads(out)['result']['process_info'].get('foreground_processes') or []
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return set()
+    names = set()
+    for proc in procs:
+        if isinstance(proc, dict) and isinstance(proc.get('name'), str):
+            names.add(os.path.basename(proc['name']).lstrip('-'))
+    return names
+
+
+def detached(table, chain):
+    """True when no process in this chain has a controlling terminal: the
+    caller runs from a background server (Codex runs its tool commands from a
+    per-profile app-server daemon), not from a pane."""
+    known = [pid for pid in chain if pid in table]
+    return bool(known) and not any(has_terminal(table[pid][1]) for pid in known)
+
+
+def owns_pane(pane_pids_, pane_names, table, chain, declared):
+    """Whether this process may speak for the pane, judged from the process
+    table. True: one of the pane's foreground pids is an ancestor (an agent
+    that runs its tools as children — Claude Code, most CLIs). For a pane
+    declared with --pane only, also true when the caller is detached from
+    every terminal and the pane's foreground runs the same agent program as
+    the caller's ancestry (Codex). An inherited HERDR_PANE_ID never gets that
+    second path: a background server's environment names the pane that
+    started the server, which may be another live session of the same agent."""
+    if pane_pids_ & set(chain):
+        return True
+    if not declared or not detached(table, chain):
+        return False
+    mine = {table[pid][2] for pid in chain if pid in table} - NOT_AN_AGENT
+    return bool(mine & (pane_names - NOT_AN_AGENT))
+
+
+def verify_own_pane(pane, declared=False):
+    """Refuse to send from a stale pane id: the pane must exist on the local
+    server and, when its foreground pids are visible from here, this process
+    must be its own (owns_pane). A pane whose pids are not in this process
+    table (another PID namespace, e.g. a container) is accepted on existence
+    alone. `declared` is True for a pane given with --pane."""
     rc, out, err = herdr(['pane', 'get', pane], timeout=8)
     if rc != 0:
         raise Stop(EXIT_ENV, 'this pane\'s id %s (HERDR_PANE_ID) does not exist on the local '
@@ -424,15 +528,27 @@ def verify_own_pane(pane):
     pids = pane_pids(pane)
     if not pids:
         return
-    chain, visible = ancestor_pids()
-    if not chain or not (pids & visible):
+    table = process_table()
+    chain = ancestor_chain(table)
+    if not table or not (pids & set(table)):
         return  # not comparable from this process table
-    if pids & chain:
+    if owns_pane(pids, pane_programs(pane), table, chain, declared):
         return
+    if declared:
+        raise Stop(EXIT_ENV, '--pane %s is not this session\'s pane: its processes are not this '
+                   'process\'s ancestors and it does not run this process\'s agent. Pass the '
+                   'pane this agent runs in (the lead\'s launch brief names it)' % pane)
+    if detached(table, chain):
+        raise Stop(EXIT_ENV, 'HERDR_PANE_ID=%s cannot be trusted here: this process has no '
+                   'terminal and its pane is not an ancestor. That is typical of an agent that '
+                   'runs commands from a background agent server (Codex runs tool commands from '
+                   'its per-profile app-server daemon, whose HERDR_PANE_ID names the pane that '
+                   'first started it). Pass your own pane with --pane <pane_id> (for example '
+                   '--pane w1:p2; the lead\'s launch brief names it)' % pane)
     raise Stop(EXIT_ENV, 'HERDR_PANE_ID=%s names another session\'s pane (its processes are '
-               'not this process\'s ancestors); the id is stale. Restart the agent from its own '
-               'pane, or export the right HERDR_PANE_ID, before sending: a reply to the wrong '
-               'address cannot route' % pane)
+               'not this process\'s ancestors); the id is stale. Restart the agent from its '
+               'own pane, export the right HERDR_PANE_ID, or pass --pane <pane_id>, before '
+               'sending: a reply to the wrong address cannot route' % pane)
 
 
 def my_terminal_id():
@@ -749,11 +865,13 @@ def cmd_ask(args):
     if target is None:
         raise Stop(EXIT_USAGE, 'target must be <machine_id>:<pane_id> (e.g. local:w1:p2); '
                    'use the machine id, not a label with spaces')
+    target = resolve_machine(target)
+    args.target = fmt_address(target)  # records and messages carry the full id
     body = read_text_arg(args.text)
     check_outgoing(body, 'the prompt')
     store = Store()
-    pane = my_pane()
-    verify_own_pane(pane)
+    pane = my_pane(args)
+    verify_own_pane(pane, declared=declared_pane(args) is not None)
     if not in_scope(target, scope_from(args)):
         raise Stop(EXIT_POLICY, 'out of scope: %s is not in the allow-list' % args.target)
 
@@ -850,8 +968,8 @@ def cmd_reply(args):
     answer = read_text_arg(args.answer)
     check_outgoing(answer, 'the answer')
     store = Store()
-    pane = my_pane()
-    verify_own_pane(pane)
+    pane = my_pane(args)
+    verify_own_pane(pane, declared=declared_pane(args) is not None)
     if not in_scope(target, scope_from(args)):
         raise Stop(EXIT_POLICY, 'out of scope: %s is not in the allow-list' % args.target)
     selves, _ = self_addresses(pane, store)
@@ -914,7 +1032,8 @@ def cmd_check(args):
     text = read_text_arg(args.file) if args.file == '-' else (
         read_file(args.file) if args.file else sys.stdin.read())
     store = Store()
-    pane = os.environ.get('HERDR_PANE_ID') or ''
+    declared = declared_pane(args)
+    pane = declared or os.environ.get('HERDR_PANE_ID') or ''
     selves = self_addresses(pane, store)[0] if pane else set()
     verdict = classify(text, {'self': selves, 'scope': scope_from(args),
                               'answered': answered_ids(store)})
@@ -939,6 +1058,8 @@ def cmd_check(args):
         handle_reply(store, verdict, text, record, pane)
 
     body = verdict.pop('body', None)
+    if declared:
+        verdict['pane'] = declared
     if args.json:
         print(json.dumps(verdict, sort_keys=True))
     else:
@@ -1010,8 +1131,9 @@ def same_text(a, b):
 
 def human_verdict(v):
     if v['decision'] == 'answer':
+        pane = ' --pane %s' % v['pane'] if v.get('pane') else ''
         return ('ANSWER (rule 13): a valid ask from %s. Reply exactly once:\n'
-                '  herdr-peers reply %s %s "<answer>"' % (v['from'], v['from'], v['id']))
+                '  herdr-peers reply%s %s %s "<answer>"' % (v['from'], pane, v['from'], v['id']))
     if v['decision'] == 'none':
         return 'NONE (rule 1): not a herdr-peers message; handle it as ordinary input.'
     return 'NEVER ANSWER (rule %d): %s' % (v['rule'], v['reason'])
@@ -1023,7 +1145,7 @@ def cmd_wait(args):
         raise Stop(EXIT_USAGE, 'id must be the id printed by `herdr-peers ask`')
     store = Store()
     asked = store.latest().get(('caller', args.id))
-    pane = my_pane()
+    pane = my_pane(args)
     if not mine(asked, pane):
         raise Stop(EXIT_USAGE, 'no ask with id %s from this pane in %s' % (args.id, store.path))
     stored = store.reply_path(args.id)
@@ -1157,16 +1279,17 @@ def cmd_list(args):
         print(json.dumps({'self': '%s:%s' % ('local', my_pane_id), 'self_machine': self_id,
                           'rows': rows}, sort_keys=True))
         return EXIT_OK
-    print('%-3s %-14s %-12s %-9s %-10s %-11s %s' % ('#', 'MACHINE', 'ID', 'AGENT', 'PANE',
-                                                  'STATE', 'TITLE'))
+    width = max([len(safe(r['machine'])) for r in rows] + [len('ID')])
+    print('%-3s %-14s %-*s %-9s %-10s %-11s %s' % ('#', 'MACHINE', width, 'ID', 'AGENT', 'PANE',
+                                                 'STATE', 'TITLE'))
     you = None
     for row in rows:
         title = safe(row.get('title'))
         if len(title) > 36:
             title = title[:35] + '…'
         title = title or safe(row.get('note'))  # a diagnosis is never truncated
-        print('%-3s %-14s %-12s %-9s %-10s %-11s %s%s' % (
-            row.get('n', '-'), safe(row['label'])[:14], safe(row['machine'])[:12],
+        print('%-3s %-14s %-*s %-9s %-10s %-11s %s%s' % (
+            row.get('n', '-'), safe(row['label'])[:14], width, safe(row['machine']),
             safe(row.get('agent')) or '-', safe(row.get('pane')) or '-',
             safe(row.get('state')) or '-', title,
             '  <- you' if row.get('you') else ''))
@@ -1313,7 +1436,7 @@ def cmd_status(args):
     addr = parse_address(args.target)
     if addr is None:
         raise Stop(EXIT_USAGE, 'target must be <machine_id>:<pane_id> (e.g. local:w1:p2)')
-    st = lane_status(addr)
+    st = lane_status(resolve_machine(addr))
     if args.json:
         print(json.dumps(st, sort_keys=True))
         return EXIT_OK if st['state'] != 'unreachable' else EXIT_HERDR
@@ -1352,9 +1475,7 @@ def cmd_lanes(args):
     """One row per peer this pane has asked: open asks, the last ask, and the
     peer's live state (lanes-v1, docs/schema/lanes-v1.json)."""
     store = Store()
-    pane = os.environ.get('HERDR_PANE_ID') or ''
-    if not re.fullmatch(PANE_RE, pane):
-        pane = my_pane()
+    pane = my_pane(args)
     per_peer = {}
     for (role, _), rec in store.latest().items():
         if role != 'caller' or not (args.all or mine(rec, pane)):
@@ -1414,7 +1535,7 @@ def cmd_lanes(args):
 
 def cmd_cancel(args):
     store = Store()
-    pane = my_pane()
+    pane = my_pane(args)
     with store.lock():
         return cancel_locked(args, store, pane)
 
@@ -1463,6 +1584,7 @@ def build_parser():
     a.add_argument('--vendor', help='the peer agent\'s vendor, for the record (default: '
                    'derived from its agent kind)')
     a.add_argument('--worktree', help="the writing peer's worktree, for the record")
+    a.add_argument('--pane', help="this session's pane id (w1:p2); wins over HERDR_PANE_ID - needed by agents that run tools from a background server, e.g. Codex")
 
     r = sub.add_parser('reply', help='answer an ask exactly once')
     r.add_argument('target', help='the from= address of the ask')
@@ -1471,17 +1593,20 @@ def build_parser():
     r.add_argument('--message', help='the received ask (file or -), verified before replying')
     r.add_argument('--scope')
     r.add_argument('--task')
+    r.add_argument('--pane', help="this session's pane id (w1:p2); wins over HERDR_PANE_ID - needed by agents that run tools from a background server, e.g. Codex")
 
     c = sub.add_parser('check', help='classify a received message (stdin or FILE)')
     c.add_argument('file', nargs='?', help='file holding the message, or - for stdin')
     c.add_argument('--json', action='store_true')
     c.add_argument('--no-record', action='store_true', help='decide only, write nothing')
     c.add_argument('--scope')
+    c.add_argument('--pane', help="this session's pane id (w1:p2); wins over HERDR_PANE_ID")
 
     w = sub.add_parser('wait', help='block until the reply to an ask arrives in this pane')
     w.add_argument('id')
     w.add_argument('--timeout', type=float, default=DEFAULT_WAIT_S, help='seconds (default 600)')
     w.add_argument('--lines', type=int, default=80, help='max reply lines to capture')
+    w.add_argument('--pane', help="this session's pane id (w1:p2); wins over HERDR_PANE_ID - needed by agents that run tools from a background server, e.g. Codex")
 
     li = sub.add_parser('list', help='live table of peers on every enabled machine')
     li.add_argument('--json', action='store_true')
@@ -1502,10 +1627,12 @@ def build_parser():
     ln.add_argument('--json', action='store_true', help='herdr-peers/lanes-v1 JSON')
     ln.add_argument('--all', action='store_true', help='every pane sharing this log, not '
                     'only this one')
+    ln.add_argument('--pane', help="this session's pane id (w1:p2); wins over HERDR_PANE_ID")
 
     x = sub.add_parser('cancel', help='close an open ask (yours, or one you decline)')
     x.add_argument('id')
     x.add_argument('--reason')
+    x.add_argument('--pane', help="this session's pane id (w1:p2); wins over HERDR_PANE_ID - needed by agents that run tools from a background server, e.g. Codex")
     return p
 
 

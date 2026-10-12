@@ -180,7 +180,9 @@ other=$!
 echo "$other" >"$FAKE_HERDR_DIR/local/panes/w1_p1.pids"
 run "$HELPER" ask local:w1:p2 "pane belongs to someone else"
 assert_rc "an ask from another session's pane id is refused (exit 6)" 6
-assert_contains "the refusal says the id names another session" "$ERR" "another session"
+# with or without a terminal (CI runners have none), the refusal names the id;
+# the terminal-attached wording is pinned by the scripted process table below
+assert_contains "the refusal names the untrusted id" "$ERR" "HERDR_PANE_ID=w1:p1"
 run as_pane w1:p2 "$HELPER" reply local:w1:p1 01ARZ3NDEKTSV4RRFFQ69G5FAV "x"
 assert_rc "reply verifies its own pane too" 3
 kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
@@ -190,3 +192,78 @@ assert_rc "an ask whose pane runs an ancestor process is sent" 0
 echo "999999" >"$FAKE_HERDR_DIR/local/panes/w1_p1.pids"
 run "$HELPER" ask local:w2:p1 "pids not visible here (another PID namespace)"
 assert_rc "pids invisible from this process table are not a refusal" 0
+
+# --- pane ownership against a scripted process table (fake ps) -------------------
+# The fake `ps` prints the helper itself ($PPID of ps) under FAKE_PS_PARENT, then
+# the rows of FAKE_PS_TABLE ("pid ppid tty comm"). Two caller shapes:
+#   Claude-style: the helper is a child of the agent in its pane (a terminal).
+#   Codex-style:  the helper runs under the agent's background app-server daemon
+#                 (no terminal anywhere); that daemon's HERDR_PANE_ID names the
+#                 pane that first started it, so the inherited id is not trusted.
+FAKE_PS_DIR="$SANDBOX/fake-ps"
+mkdir -p "$FAKE_PS_DIR"
+cat >"$FAKE_PS_DIR/ps" <<'PS'
+#!/bin/sh
+printf '%s %s %s %s\n' "$PPID" "${FAKE_PS_PARENT:-1}" "${FAKE_PS_TTY:-??}" python3
+cat "$FAKE_PS_TABLE"
+PS
+chmod +x "$FAKE_PS_DIR/ps"
+with_ps() { (PATH="$FAKE_PS_DIR:$PATH"; export PATH FAKE_PS_TABLE FAKE_PS_PARENT FAKE_PS_TTY; "$@"); }
+
+new_world ownership
+FAKE_PS_TABLE="$WORLD/ps.table"
+cat >"$FAKE_PS_TABLE" <<'TABLE'
+1 0 ?? launchd
+400 1 ?? /opt/agents/codex/bin/codex
+500 400 ?? /opt/agents/codex/bin/codex-code-mode-host
+590 1 ttys044 -zsh
+600 590 ttys044 /usr/local/bin/codex
+690 1 ttys045 -zsh
+700 690 ttys045 /usr/local/bin/claude
+790 1 ttys046 -zsh
+800 790 ttys046 /usr/local/bin/claude
+TABLE
+echo "600 codex" >"$FAKE_HERDR_DIR/local/panes/w1_p1.pids"
+echo "700 claude" >"$FAKE_HERDR_DIR/local/panes/w2_p1.pids"
+
+# Claude-style: the pane's agent is an ancestor — accepted with the inherited id.
+FAKE_PS_PARENT=700 FAKE_PS_TTY=ttys045
+run with_ps as_pane w2:p1 "$HELPER" ask local:w1:p2 "claude-style caller"
+assert_rc "a Claude-style caller (child of its pane's agent) is accepted" 0
+assert_contains "the ask is stamped from its own pane" "$(last_prompt local w1:p2)" "from=local:w2:p1"
+
+# Codex-style with the daemon's inherited id: refused, and told to pass --pane.
+FAKE_PS_PARENT=500 FAKE_PS_TTY='??'
+run with_ps "$HELPER" ask local:w1:p2 "codex-style, inherited id"
+assert_rc "a detached caller's inherited HERDR_PANE_ID is not trusted (exit 6)" 6
+assert_contains "the refusal names the background server" "$ERR" "background agent server"
+assert_contains "the refusal says how to fix it" "$ERR" "--pane"
+
+# Codex-style declaring its own pane: the pane runs the same agent program.
+run with_ps "$HELPER" ask --pane w1:p1 local:w1:p2 "codex-style, declared pane"
+assert_rc "a Codex-style caller declaring its pane (same agent, no terminal) is accepted" 0
+assert_contains "the ask is stamped from the declared pane" "$(last_prompt local w1:p2)" "from=local:w1:p1"
+
+# Codex-style declaring a pane that runs another agent: refused.
+run with_ps "$HELPER" ask --pane w2:p1 local:w1:p2 "codex-style, someone else's pane"
+assert_rc "a declared pane running another agent is refused (exit 6)" 6
+assert_contains "the refusal names the declared pane" "$ERR" "--pane w2:p1 is not this session's pane"
+
+# Stale id from another session: a terminal-attached caller outside the pane.
+FAKE_PS_PARENT=800 FAKE_PS_TTY=ttys046
+run with_ps "$HELPER" ask local:w1:p2 "stale id from another session"
+assert_rc "a terminal-attached caller with another session's id is refused (exit 6)" 6
+assert_contains "the refusal says the id names another session" "$ERR" "another session"
+run with_ps "$HELPER" ask --pane w1:p1 local:w1:p2 "declared, but this caller has a terminal"
+assert_rc "--pane never bypasses ancestry for a terminal-attached caller (exit 6)" 6
+
+# A malformed --pane is a usage error; reply, check, wait, lanes and cancel take it.
+run "$HELPER" ask --pane local:w1:p1 local:w1:p2 "machine prefix"
+assert_rc "--pane with a machine prefix is a usage error (exit 2)" 2
+for verb in reply check wait lanes cancel; do
+  run "$HELPER" "$verb" --help
+  assert_contains "$verb accepts --pane" "$OUT" "--pane"
+done
+# The receiving Codex lane (w1:p2) checks the ask with its own declared pane.
+run "$HELPER" check --no-record --pane w1:p2 "$FAKE_HERDR_DIR/local/panes/w1_p2.last"
+assert_contains "check prints the reply command with --pane" "$OUT" "herdr-peers reply --pane w1:p2 local:w1:p1"

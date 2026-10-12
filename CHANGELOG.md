@@ -8,11 +8,38 @@ the protocol number).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-11
+
+Protocol stays **1**; the `herdr-peers/lanes-v1` schema is unchanged.
+
+### Fixed
+
+- Codex lanes could not `ask` or `reply` (exit 6, "names another session's
+  pane"). Codex runs its tool commands from a per-profile app-server daemon:
+  the commands have no terminal and are not descendants of the pane, and
+  they inherit the daemon's `HERDR_PANE_ID` — the pane that first started
+  that daemon — so every Codex lane on a profile after the first carried a
+  wrong id. The stale-id guard was right to refuse it; the lane had no way
+  to name its own pane. New `--pane <pane_id>` on `ask`, `reply`, `check`,
+  `wait`, `lanes` and `cancel` declares this session's pane and wins over
+  `HERDR_PANE_ID`. A declared pane is accepted when one of its foreground
+  processes is an ancestor, or — for a caller with no terminal anywhere in
+  its ancestry — when it runs the same agent program as that ancestry; a
+  pane running another agent, and any terminal-attached caller outside the
+  pane, are still refused. The inherited id never gets the same-program
+  path. The refusal for a detached caller names the cause and the fix.
+- `herdr-peers list` printed machine ids cut to 12 characters, which `ask`
+  could not route. `list` now prints the full id, and `ask` and `status`
+  accept any unique prefix of at least 4 characters (an ambiguous prefix is
+  a usage error naming the candidates); records carry the full id.
+
 ### Changed
 
 - Development harness: the vendored `deepworkplan` skill is 7.6.0 and the
   `ai-diff-reviewer` skill 3.3.9, upgraded through the pack's all-addons
-  onboarding; the shipped skill and helper are unchanged.
+  onboarding. Tests: a fake `ps` scripts Claude-style (child), Codex-style
+  (detached, same program) and stale-id callers; the fake `herdr` reports
+  process names; long machine ids cover the prefix resolution.
 
 ## [0.2.1] - 2026-10-11
 
@@ -138,7 +165,8 @@ First release. Interface version: **protocol 1** (`metadata.protocol: 1` in
   `harness lint protocol helper skill templates security live`; CI on Ubuntu
   and macOS.
 
-[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/DailybotHQ/herdr-peers/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/DailybotHQ/herdr-peers/releases/tag/v0.1.0

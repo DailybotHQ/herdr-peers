@@ -15,7 +15,11 @@ Every launch follows the same three steps:
 2. **Start the agent** in that pane — `herdr agent start <name> --kind <kind>
    --pane <id>`. Use the kind the human asked for.
 3. **Send the first ask** — the first message a fresh peer receives is its
-   task: `herdr-peers ask local:<id> "<self-contained brief>"`.
+   task: `herdr-peers ask local:<id> "<self-contained brief>"`. Name the
+   peer's own pane in the brief and tell it to pass `--pane <id>` on every
+   `herdr-peers` call: a Codex peer cannot learn its pane from
+   `HERDR_PANE_ID` (its commands run from a background server that carries
+   the id of whichever pane started it).
 
 Record what you created; close the pane only when you are done with it, and
 only because you created it.
