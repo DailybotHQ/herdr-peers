@@ -451,3 +451,6 @@ assert_contains "drill: target-scoped handover failure still delivers to the oth
   "$(last_prompt local w1:p2)" '"epoch":2'
 assert_contains "drill: failed new-lead delivery remains in the notifier log" \
   "$(grep '"notifier"' "$(state_log)" | grep 'local:w2:p1')" '"failed"'
+
+# shellcheck source=/dev/null
+. "$ROOT/tests/scopes/round_two.sh"

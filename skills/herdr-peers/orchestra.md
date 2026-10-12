@@ -207,10 +207,18 @@ closed panes before the next broadcast.
 | Symptom | Cause and fix |
 | --- | --- |
 | `ask` / `reply` exit 6: *HERDR_PANE_ID … stale* or *names another session's pane* | The agent inherited a pane id that no longer names its pane (panes are renumbered when moved, restored or re-created, or the agent was started from another pane). A reply to that `from=` would not route (`agent_not_found`). Restart the agent from its own pane, or export the right `HERDR_PANE_ID` (`herdr-peers list` marks your row), then ask again. The check compares the pane's foreground processes with this process's ancestors; where those pids are not visible (another PID namespace) it accepts an existing pane. |
-| exit 6: *cannot be trusted here: this process has no terminal* (Codex lanes) | Codex runs tool commands from a per-profile app-server daemon (no terminal), and that daemon's `HERDR_PANE_ID` names the pane that first started it — so every Codex lane on the same profile after the first inherits the wrong id. Pass the lane's own pane: `herdr-peers ask --pane <pane_id> …` (also on `reply`, `check`, `wait`, `status`, `lanes`, `cancel` and lead mutations). The lead names that pane in the lane's brief. A declared pane is accepted when it runs the same agent program as the caller's ancestry; one running another agent is refused. |
+| exit 6: *cannot be trusted here: this process has no terminal* (Codex lanes) | Codex runs tool commands from a per-profile app-server daemon (no terminal), and that daemon's `HERDR_PANE_ID` names the pane that first started it — so every Codex lane on the same profile after the first inherits the wrong id. Pass the lane's own pane: `herdr-peers ask --pane <pane_id> …` (also on `reply`, `check`, `wait`, `status`, `lanes`, `cancel` and all lead verbs, including `show`). The lead names that pane in the lane's brief. A declared pane is accepted when it runs the same agent program as the caller's ancestry; one running another agent is refused. |
 | `ask` exit 4: *blocked* | The lane waits at a screen: `herdr-peers status <addr>`. |
 | `ask` exit 4: *no reply route* | Set `HERDR_PEERS_SELF` or `--from` (§4). |
 | A lane shows `no_agent` with `folder_trust` | The CLI stopped at its first screen before Herdr detected it; see §2. |
 | `lanes` shows `unreachable` | The machine or pane is gone; `herdr-peers list` shows what is live. |
 | `ask lead` / `notify lead` exit 4: *no lead record* | This pane has no record for that plan: pass `--plan <parent plan>`, or check that the lead's notice was accepted (`herdr-peers lead show`; a first claim needs `HERDR_PEERS_BRIEFER`). |
 | `check` prints `LEAD NOTICE … rejected` | The notice was not fenced (wrong sender, epoch jump, stale, earlier successor reachable). It is recorded and ignored; `lead show` has the record you follow. |
+
+## 9. Waiting for incoming asks
+
+Never poll for asks in a tool loop. When the lane has finished its work
+and is waiting for an incoming ask, end the turn and let the ask arrive
+as the next input. A long-running tool loop can leave queued input
+unhandled. Check each incoming message with `herdr-peers check` before
+using it, then answer only a recorded ask with its reply grant.

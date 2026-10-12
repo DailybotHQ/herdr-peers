@@ -8,6 +8,23 @@ the protocol number).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-12
+
+Protocol stays **1**. `lead-v1` gains optional `repo_root`; legacy records
+remain readable. Updated peers accept repository-qualified plan ids.
+
+### Fixed
+
+- Record the claiming repository git common root, preserve it through
+  succession and carry it in lead notices. Refuse active claims from a
+  different repository with guidance to use `--plan <repo>/<id>`;
+  cross-repository lane lookups keep working. Claims after release clear
+  stale lanes and succession while keeping epochs monotonic.
+- Accept and validate `lead show --pane`, matching `status`.
+- Resolve `DWP_PLAN` ids under the caller's git checkout `.dwp/plans/`,
+  mirroring delegation records without spurious missing-directory warnings.
+- Tell idle lanes to end their turn for incoming asks instead of polling.
+
 ## [0.3.1] - 2026-10-12
 
 Protocol stays **1**; wire formats and schemas are unchanged.
@@ -271,7 +288,8 @@ First release. Interface version: **protocol 1** (`metadata.protocol: 1` in
   `harness lint protocol helper skill templates security live`; CI on Ubuntu
   and macOS.
 
-[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.3...v0.3.0
 [0.2.3]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.2...v0.2.3

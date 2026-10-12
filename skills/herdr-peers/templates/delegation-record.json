@@ -47,7 +47,7 @@
                 "description": "How a reply was recorded: from the received message (check) or captured from the pane (wait)." },
     "reason": { "type": "string", "description": "Why the fan-out cap was raised for this ask." },
     "note": { "type": "string", "description": "Free text: a cancel reason, a transport failure line, or why a lead notice was rejected." },
-    "plan": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    "plan": { "type": "string", "pattern": "^(?=.{1,128}$)[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$",
               "description": "Lead records and lead notices: the plan whose lead record is concerned." },
     "epoch": { "type": "integer", "description": "Lead records: the epoch after the change (or the rejected notice's epoch)." },
     "capacity": { "type": "object", "additionalProperties": false,

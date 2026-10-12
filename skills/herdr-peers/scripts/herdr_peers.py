@@ -26,7 +26,7 @@ import subprocess
 import sys
 import time
 
-VERSION = '0.3.1'
+VERSION = '0.3.2'
 PROTOCOL = 1
 MARKER = '[herdr-peers]'
 DEFAULT_MAX_BYTES = 16384
@@ -118,6 +118,36 @@ def resolve_machine(addr):
         raise Stop(EXIT_USAGE, 'machine id %s is ambiguous: it starts %s; use more characters '
                    'or the full id from `herdr-peers list`' % (machine, ', '.join(matches)))
     return addr
+
+
+def git_root(common=False):
+    """Checkout root, or the shared repository root for leadership identity."""
+    try:
+        result = subprocess.run(['git', 'rev-parse', '--git-common-dir' if common else
+                                 '--show-toplevel'], stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode:
+        return None
+    path = os.path.realpath(result.stdout.strip())
+    # In normal and linked worktrees the common dir is <repository>/.git.
+    # For a bare repository it is the repository itself.
+    return os.path.dirname(path) if common and os.path.basename(path) == '.git' else path
+
+
+def plan_directory(raw):
+    """An existing directory, else a safe plan id in this checkout's .dwp."""
+    if os.path.isdir(raw):
+        return raw
+    if not PLAN_RE.fullmatch(raw):
+        return None
+    root = git_root()
+    if root:
+        candidate = os.path.join(root, '.dwp', 'plans', raw)
+        if os.path.isdir(candidate):
+            return candidate
+    return None
 
 
 def env_int(name, default):
@@ -866,8 +896,9 @@ class Store(object):
         append_line(self.path, line)
         plan = os.environ.get('DWP_PLAN')
         if plan:
-            if os.path.isdir(plan):
-                target = os.path.join(plan, 'analysis_results')
+            directory = plan_directory(plan)
+            if directory:
+                target = os.path.join(directory, 'analysis_results')
                 if not os.path.isdir(target):
                     os.makedirs(target, 0o700)
                 append_line(os.path.join(target, 'delegations.ndjson'), line)
@@ -1664,7 +1695,7 @@ def cmd_log(args):
 
 LEAD_SCHEMA = 'herdr-peers/lead-v1'
 LEAD_KEYS = frozenset(['schema', 'plan', 'lead', 'epoch', 'succession', 'lanes', 'updated_at'])
-PLAN_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}')
+PLAN_RE = re.compile(r'(?=.{1,128}$)[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*')
 TS_RE = re.compile(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z')
 MAX_EPOCH = 1000000
 MAX_LIST = 32
@@ -1695,16 +1726,18 @@ def max_nesting(text):
 
 
 def plan_of(args, required=True):
-    """The plan id: --plan, else the basename of $DWP_PLAN."""
+    """The plan id: --plan, else a DWP_PLAN id or directory basename."""
     raw = getattr(args, 'plan', None)
     if raw is None and os.environ.get('DWP_PLAN'):
-        raw = os.path.basename(os.path.normpath(os.environ['DWP_PLAN']))
+        env_plan = os.environ['DWP_PLAN']
+        raw = env_plan if PLAN_RE.fullmatch(env_plan) and not os.path.isdir(env_plan) else \
+            os.path.basename(os.path.normpath(env_plan))
     if raw is None:
         if required:
             raise Stop(EXIT_USAGE, 'name the plan: --plan <id> (or set DWP_PLAN)')
         return None
     if not PLAN_RE.fullmatch(raw):
-        raise Stop(EXIT_USAGE, 'invalid plan id %r (letters, digits, . _ -; at most 128)'
+        raise Stop(EXIT_USAGE, 'invalid plan id %r (safe segments of letters, digits, . _ -, optionally repo/id; at most 128)'
                    % safe(raw)[:40])
     return raw
 
@@ -1734,8 +1767,13 @@ def addr_list(raw, what):
 def lead_record_error(rec):
     """Why a lead-v1 record is malformed, or None. Strict: received records
     come from other panes and are data until proven well-formed."""
-    if not isinstance(rec, dict) or set(rec) != LEAD_KEYS:
-        return 'keys must be exactly %s' % ', '.join(sorted(LEAD_KEYS))
+    if not isinstance(rec, dict) or not LEAD_KEYS <= set(rec) or set(rec) - LEAD_KEYS - {'repo_root'}:
+        return 'keys must be %s with optional repo_root' % ', '.join(sorted(LEAD_KEYS))
+    root = rec.get('repo_root')
+    if root is not None and (not isinstance(root, str) or not os.path.isabs(root)
+                             or len(root) > 4096 or has_bad_control(root)
+                             or secret_finding(root)):
+        return 'malformed repo_root'
     if rec['schema'] != LEAD_SCHEMA:
         return 'schema must be %s' % LEAD_SCHEMA
     if not isinstance(rec['plan'], str) or not PLAN_RE.fullmatch(rec['plan']):
@@ -1830,8 +1868,9 @@ def save_lead(store, record, prior, via):
     os.replace(tmp, path)
 
 
-def new_lead_record(plan, lead, epoch, succession, lanes):
+def new_lead_record(plan, lead, epoch, succession, lanes, repo_root=None):
     return {'schema': LEAD_SCHEMA, 'plan': plan, 'lead': lead, 'epoch': epoch,
+            'repo_root': repo_root,
             'succession': [a for a in succession if a != lead],
             'lanes': [a for a in lanes if a != lead], 'updated_at': now_iso()}
 
@@ -1998,6 +2037,10 @@ def lead_claim(args):
         data = load_lead(store, plan)
         rec = data['record'] if data else None
         mine_ = self_strings(pane, store)
+        root = git_root(common=True)
+        if rec and rec['lead'] and 'repo_root' in rec and rec['repo_root'] != root:
+            raise Stop(EXIT_POLICY, 'plan %s is active in a different repository; qualify '
+                       'the plan id with --plan <repo>/<id>' % plan)
         if rec and rec['lead'] and rec['lead'] not in mine_:
             raise Stop(EXIT_POLICY, 'plan %s is led by %s at epoch %d; ask it to `lead handover`, '
                        'or, as a listed successor, `lead takeover` when it is gone'
@@ -2010,10 +2053,10 @@ def lead_claim(args):
             epoch = rec['epoch'] + 1 if rec else 1
             prior = prior_of(rec, 'claim') if rec else None
         if succession is None:
-            succession = rec['succession'] if rec else []
+            succession = rec['succession'] if rec and rec['lead'] else []
         if lanes is None:
-            lanes = rec['lanes'] if rec else asked_peers(store, pane)
-        record = new_lead_record(plan, lead, epoch, succession, lanes)
+            lanes = rec['lanes'] if rec and rec['lead'] else ([] if rec else asked_peers(store, pane))
+        record = new_lead_record(plan, lead, epoch, succession, lanes, root)
         save_lead(store, record, prior, via)
         log_lead(store, state, me, record)
     return finish_lead(args, store, pane, record, state)
@@ -2044,7 +2087,7 @@ def lead_handover(args):
             raise Stop(EXIT_POLICY, 'refusing to hand over to yourself (%s)' % new)
         record = new_lead_record(plan, new, rec['epoch'] + 1,
                                  rec['succession'] if succession is None else succession,
-                                 rec['lanes'] if lanes is None else lanes)
+                                 rec['lanes'] if lanes is None else lanes, rec.get('repo_root'))
         save_lead(store, record, prior_of(rec, 'handover'), 'handover')
         log_lead(store, 'handed_over', me, record)
     return finish_lead(args, store, pane, record, 'handed over',
@@ -2055,7 +2098,8 @@ def lead_release(args):
     plan, store, pane, me = lead_context(args)
     with store.lock():
         rec = require_lead(store, plan, pane, 'release it')
-        record = new_lead_record(plan, None, rec['epoch'] + 1, rec['succession'], rec['lanes'])
+        record = new_lead_record(plan, None, rec['epoch'] + 1, rec['succession'], rec['lanes'],
+                                 rec.get('repo_root'))
         save_lead(store, record, prior_of(rec, 'release'), 'release')
         log_lead(store, 'released', me, record, target=me)
     return finish_lead(args, store, pane, record, 'released')
@@ -2095,7 +2139,7 @@ def lead_takeover(args):
             raise Stop(EXIT_POLICY, 'the lead record of %s changed meanwhile; run `lead show`'
                        % plan)
         record = new_lead_record(plan, me, rec['epoch'] + 1, rec['succession'][position + 1:],
-                                 [a for a in rec['lanes'] if a not in mine_])
+                                 [a for a in rec['lanes'] if a not in mine_], rec.get('repo_root'))
         save_lead(store, record, prior_of(rec, 'takeover'), 'takeover')
         log_lead(store, 'taken_over', me, record,
                  note=('reason: %s' % args.reason) if args.reason else 'the lead was %s' % state)
@@ -2103,6 +2147,9 @@ def lead_takeover(args):
 
 
 def lead_show(args):
+    pane = declared_pane(args)
+    if pane is not None:
+        verify_own_pane(pane, declared=True)
     store = Store()
     plan = plan_of(args, required=False)
     found = [load_lead(store, plan)] if plan else all_leads(store)
@@ -2151,7 +2198,8 @@ def fence(stored, rec, sender, trusted, gone_fn):
     (status, reason, via, prior): status adopted|current|rejected."""
     data = stored
     cur = data['record'] if data else None
-    if cur and all(cur[k] == rec[k] for k in ('lead', 'epoch', 'succession', 'lanes')):
+    if cur and all(cur[k] == rec[k] for k in ('lead', 'epoch', 'succession', 'lanes')) \
+            and cur.get('repo_root') == rec.get('repo_root'):
         return 'current', 'already the current record', None, None
     if cur and cur['epoch'] > rec['epoch']:
         return ('rejected', 'stale: epoch %d is older than the current %d (a newer epoch '
@@ -2649,9 +2697,10 @@ def build_parser():
     lt.add_argument('--reason', help='why, when the lead still looks reachable (recorded)')
     lr = lsub.add_parser('release', help='leave the plan without a lead (epoch+1)')
     ls_ = lsub.add_parser('show', help='print the lead record (no plan: every record)')
+    ls_.add_argument('--pane', help=pane_help)
     ls_.add_argument('--json', action='store_true', help='herdr-peers/lead-v1 JSON')
     for q in (lc, lh, lt, lr, ls_):
-        q.add_argument('--plan', help='plan id (default: basename of $DWP_PLAN)')
+        q.add_argument('--plan', help='plan id or repo/id (default: $DWP_PLAN id or directory basename)')
     for q in (lc, lh, lt, lr):
         q.add_argument('--pane', help=pane_help)
         q.add_argument('--scope', help='allow-list for the lead notices')
