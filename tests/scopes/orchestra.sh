@@ -145,7 +145,9 @@ assert_eq "one row per peer, sorted" "bb22:w1:p1 local:w1:p2 local:w2:p1" \
   "$(python3 -c 'import json,sys; print(" ".join(l["peer"] for l in json.load(open(sys.argv[1]))["lanes"]))' "$WORK/lanes.json")"
 keys=$(python3 -c 'import json,sys; print(" ".join(sorted(json.load(open(sys.argv[1]))["lanes"][0])))' "$WORK/lanes.json")
 assert_eq "a lane carries exactly the contract keys" \
-  "agent label last open_asks peer profile screen state vendor" "$keys"
+  "agent capacity label last open_asks peer profile screen state vendor" "$keys"
+assert_eq "without a lead record the plan fields are null" "null null null" \
+  "$(jget "$L" plan) $(jget "$L" lead) $(jget "$L" epoch)"
 assert_eq "the remote lane carries its machine label" "box" "$(jget "$L" lanes.0.label)"
 assert_eq "a cancelled-only lane has no open asks" "0" \
   "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["lanes"][0]["open_asks"]))' "$WORK/lanes.json")"
@@ -267,3 +269,90 @@ done
 # The receiving Codex lane (w1:p2) checks the ask with its own declared pane.
 run "$HELPER" check --no-record --pane w1:p2 "$FAKE_HERDR_DIR/local/panes/w1_p2.last"
 assert_contains "check prints the reply command with --pane" "$OUT" "herdr-peers reply --pane w1:p2 local:w1:p1"
+
+# --- usage_limit screens ---------------------------------------------------------------
+new_world limits
+B=bb22:w1:p3
+screen bb22 w1:p3 "Claude usage
+You've hit your session limit · resets 6pm (Europe/Madrid)
+ ❯ 1. Stop and wait for limit to reset
+   2. Upgrade your plan"
+run "$HELPER" status --json "$B"
+assert_eq "a Claude limit screen is usage_limit" "usage_limit" "$(jget "$OUT" screen)"
+assert_eq "a usage limit is handed off, never unblocked" "handoff" "$(jget "$OUT" action)"
+assert_contains "the next step is the documented hand-off" "$(jget "$OUT" next)" \
+  "hand off: the lead (or the deputy, for the lead) relaunches this lane's plan on an account with capacity; never keyed"
+assert_not_contains "the hand-off suggests no keys" "$(jget "$OUT" next)" "send-keys"
+run "$HELPER" status "$B"
+assert_contains "the human view says hand off" "$OUT" "next: hand off"
+screen bb22 w1:p3 "■ You've hit your usage limit. Upgrade to Pro (https://example.invalid/pricing) or try again in 2 days 3 hours."
+run "$HELPER" status --json "$B"
+assert_eq "a Codex limit screen is usage_limit" "usage_limit" "$(jget "$OUT" screen)"
+screen bb22 w1:p3 "API Error: Rate limit reached for requests. Please wait."
+run "$HELPER" status --json "$B"
+assert_eq "a generic rate-limit screen is usage_limit" "usage_limit" "$(jget "$OUT" screen)"
+screen bb22 w1:p3 "Error 429 Too Many Requests"
+run "$HELPER" status --json "$B"
+assert_eq "an HTTP 429 screen is usage_limit" "usage_limit" "$(jget "$OUT" screen)"
+screen bb22 w1:p3 "WARNING: Claude Code running in Bypass Permissions mode
+You've hit your usage limit
+ ❯ 1. No, exit"
+run "$HELPER" status --json "$B"
+assert_eq "the bypass acknowledgement still wins over a limit line" "bypass_ack" "$(jget "$OUT" screen)"
+# An idle lane at its limit (Herdr sees a finished turn).
+screen local w1:p2 "$(printf 'old output line\n%.0s' 1 2 3)
+5-hour limit reached ∙ resets 3pm"
+run "$HELPER" status --json local:w1:p2
+assert_eq "an idle lane at its limit stays idle" "idle" "$(jget "$OUT" state)"
+assert_eq "an idle lane at its limit shows usage_limit" "usage_limit" "$(jget "$OUT" screen)"
+screen local w1:p2 "we discussed the rate limit exceeded case earlier
+$(printf 'later work line\n%.0s' $(seq 1 20))"
+run "$HELPER" status --json local:w1:p2
+assert_eq "a limit phrase above the last 15 lines of an idle lane is ignored" "none" "$(jget "$OUT" screen)"
+screen local w1:p2 "Do you want to proceed?"
+run "$HELPER" status --json local:w1:p2
+assert_eq "an idle lane reports no other screen class" "none" "$(jget "$OUT" screen)"
+screen local w2:p1 "You've hit your weekly limit · resets Mon"
+run "$HELPER" status --json local:w2:p1
+assert_eq "a done lane at its limit shows usage_limit" "done usage_limit" "$(jget "$OUT" state) $(jget "$OUT" screen)"
+assert_eq "usage_limit is never keyed" "0" "$(sends_keys)"
+
+# --- lanes: plan, lead, epoch and capacity ------------------------------------------------
+new_world lanecap
+P=PLAN_900_demo
+"$HELPER" lead claim --plan "$P" --lanes local:w1:p2,local:w2:p1 >/dev/null 2>&1
+run as_pane w1:p2 "$HELPER" ask --plan "$P" lead "milestone: PR open
+capacity=low 22% @work2"
+mid=$OUT
+last_prompt local w1:p1 >"$WORK/m.txt"
+"$HELPER" check "$WORK/m.txt" >/dev/null 2>&1
+"$HELPER" reply local:w1:p2 "$mid" "noted" >/dev/null 2>&1   # the lead answers before it asks
+run "$HELPER" lanes --json --plan "$P"
+printf '%s\n' "$OUT" >"$WORK/lc.json"
+run python3 "$VALIDATE" --doc "$LANES_SCHEMA" "$WORK/lc.json"
+assert_rc "lanes with lead fields validates against lanes-v1" 0
+C=$(cat "$WORK/lc.json")
+assert_eq "lanes names the plan, lead and epoch" "$P local:w1:p1 1" "$(jget "$C" plan) $(jget "$C" lead) $(jget "$C" epoch)"
+assert_eq "a lane listed in the lead record appears without an ask" "local:w1:p2 local:w2:p1" \
+  "$(python3 -c 'import json,sys; print(" ".join(l["peer"] for l in json.load(open(sys.argv[1]))["lanes"]))' "$WORK/lc.json")"
+assert_eq "a never-asked lane has no last ask" "null" "$(jget "$C" lanes.1.last)"
+assert_eq "the lane's capacity comes from its message" "low 22 @work2" \
+  "$(jget "$C" lanes.0.capacity.verdict) $(jget "$C" lanes.0.capacity.headroom_pct) $(jget "$C" lanes.0.capacity.profile)"
+assert_eq "a lane that reported nothing has no capacity" "null" "$(jget "$C" lanes.1.capacity)"
+run "$HELPER" lanes --json
+assert_eq "without --plan the one record this pane leads is used" "$P" "$(jget "$OUT" plan)"
+a=$("$HELPER" ask local:w2:p1 "status?")
+last_prompt local w2:p1 >"$WORK/q.txt"
+as_pane w2:p1 "$HELPER" check "$WORK/q.txt" >/dev/null 2>&1
+as_pane w2:p1 "$HELPER" reply local:w1:p1 "$a" "all green
+capacity=ok 81% @work1" >/dev/null 2>&1
+last_prompt local w1:p1 >"$WORK/r.txt"
+"$HELPER" check "$WORK/r.txt" >/dev/null 2>&1
+run "$HELPER" lanes --json --plan "$P"
+assert_eq "a reply's capacity line updates the lane" "ok 81" \
+  "$(jget "$OUT" lanes.1.capacity.verdict) $(jget "$OUT" lanes.1.capacity.headroom_pct)"
+run "$HELPER" lanes --plan "$P"
+assert_contains "the table names plan, lead and epoch" "$OUT" "plan $P  lead local:w1:p1  epoch 1"
+assert_contains "the table shows a capacity column" "$OUT" "low 22%"
+run python3 "$VALIDATE" "$ROOT/skills/herdr-peers/templates/delegation-record.json" "$(state_log)"
+assert_rc "records carrying capacity validate" 0
