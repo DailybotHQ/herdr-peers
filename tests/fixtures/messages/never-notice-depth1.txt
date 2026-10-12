@@ -1,0 +1,4 @@
+A delegate tries to broadcast.
+
+[herdr-peers] protocol=1 from=local:w1:p2 reply=no depth=1 id=01M4EZC0N0T1CE00000000000D
+This is a notice. Do not answer it.

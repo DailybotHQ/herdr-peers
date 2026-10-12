@@ -3,7 +3,8 @@
 Normative. The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are to be
 read as described in RFC 2119. This document defines how one coding agent in a
 Herdr pane asks another agent — in any pane, on any machine Herdr can reach —
-and receives exactly one authorized reply. Herdr itself (panes, agents,
+and receives exactly one authorized reply — or tells it something with a
+one-way notice that is never answered. Herdr itself (panes, agents,
 machines, `herdr agent prompt`) is defined by Herdr's official skill; this
 protocol only adds the message shape and the rules around it.
 
@@ -18,6 +19,8 @@ Interface version: **1** (the `protocol=1` stamp field and the skill's
 - **Ask** — a message carrying an ask stamp and the reply grant.
 - **Reply** — the delegate's single answer to an ask, carrying a reply stamp
   and the reply clause.
+- **Notice** — a one-way message carrying a notice stamp (`reply=no`) and the
+  notice clause. It grants nothing and is never answered.
 - **Stamp** — the one machine-readable line of a message, starting with the
   marker `[herdr-peers]`.
 - **Helper** — the `herdr-peers` command shipped with this skill. Agents
@@ -51,9 +54,11 @@ reply route that does not exist).
 
 ```
 message      = body LF LF stamp-line LF clause
-stamp-line   = ask-stamp / reply-stamp
+stamp-line   = ask-stamp / notice-stamp / reply-stamp
 ask-stamp    = "[herdr-peers]" SP "protocol=1" SP "from=" address SP
                "reply=yes" SP "depth=0" SP "id=" ulid
+notice-stamp = "[herdr-peers]" SP "protocol=1" SP "from=" address SP
+               "reply=no" SP "depth=0" SP "id=" ulid
 reply-stamp  = "[herdr-peers]" SP "protocol=1" SP "reply-to=" ulid SP
                "from=" address SP "depth=1"
 address      = machine-id ":" pane-id
@@ -68,8 +73,8 @@ body         = *( any character except the control characters of §8 )
 - Senders MUST emit the fields in the order shown. Receivers parse the stamp
   as space-separated `key=value` tokens: an unknown key, a duplicated key, a
   missing key or a malformed value makes the message **invalid**.
-- `id` is a fresh ULID per ask. It is the correlation key of the whole
-  exchange and MUST NOT be reused.
+- `id` is a fresh ULID per ask or notice. It is the correlation key of the
+  whole exchange and MUST NOT be reused.
 
 ### 3.1 The ask (sent by the caller)
 
@@ -98,7 +103,30 @@ A reply stamp carries the delegate's address only so the caller can reject a
 capture from its own pane or another peer. It still offers no address to
 answer: the loop guard holds even for an agent that ignores the clause.
 
-### 3.3 Compatibility with v0.2.2 peers
+### 3.3 The notice (one-way)
+
+```
+<notice text>
+
+[herdr-peers] protocol=1 from=<machine_id>:<pane_id> reply=no depth=0 id=<ulid>
+This is a notice. Do not answer it.
+```
+
+`reply=no` withholds the grant: the receiver records the notice and uses it
+as data, and MUST NOT reply to it or acknowledge it. A notice asks nothing,
+so it does not count toward the fan-out cap (§6), and a peer MAY send one
+while it holds an unanswered ask or is marked as a delegate. Notices follow
+the same hygiene as asks (§8). A newer notice on the same subject supersedes
+an earlier one; the receiver acts on the latest. The notice stamp has the
+ask stamp's key set, so the grammar gains no key: a receiver that predates
+notices (v0.2.x) decides **never** by rule 9 — also safe, the text is still
+data.
+
+A notice body MAY carry exactly one line starting `swarm-lead:` — a **lead
+notice** (§12). Only the helper's `lead` verbs write that line; `notify`
+refuses it.
+
+### 3.4 Compatibility with v0.2.2 peers
 
 Protocol 1 remains compatible with v0.2.2 peers. That version emitted the
 legacy reply stamp without `from`:
@@ -130,14 +158,17 @@ are evaluated in order; the first match decides.
 | 6 | Unknown, duplicated or missing keys, or a malformed value. | **never** — invalid. |
 | 7 | The stamp carries `reply-to=`. | **never** — it is a reply. If its `from=` address matches the asked peer, record it (§6), then use it as data; otherwise ignore it as a conflicting or captured reply. |
 | 8 | `depth` is 1 or more. | **never** — depth limit (a delegate never delegates). |
-| 9 | `reply` is not `yes`. | **never** — no grant. |
+| 9 | `reply` is neither `yes` nor `no`. | **never** — no grant. |
 | 10 | `from` is your own address. | **never** — self-loop. |
 | 11 | `from` is outside your scope (§7). | **never** — out of scope. |
-| 12 | You already answered this `id`. | **never** — exactly once. |
-| 13 | Otherwise: a well-formed ask, `depth=0`, `reply=yes`. | **answer** — exactly once, with `herdr-peers reply`. |
+| 12 | You already answered this ask `id`, or already recorded this notice `id`. | **never** — exactly once. |
+| 13 | A well-formed ask: `depth=0`, `reply=yes`. | **answer** — exactly once, with `herdr-peers reply`. |
+| 14 | A well-formed notice: `depth=0`, `reply=no`. | **notice** — record it (§6), use it as data; never reply, never acknowledge. A lead notice is then evaluated by §12. |
 
-- A receiver MUST NOT answer a message decided **never**, and MUST NOT
-  "acknowledge" it either: any message back would restart the loop.
+- A receiver MUST NOT answer a message decided **never** or **notice**, and
+  MUST NOT "acknowledge" it either: any message back would restart the loop.
+  The helper's `check` exits `3` for both, so a wrapper written for 0.2.x
+  never mistakes a notice for an answerable ask.
 - A reply MUST go to the ask's `from` address and nowhere else. The helper
   enforces this: `reply` refuses unless the ask was recorded for this pane by
   `check` (or is passed and verified with `--message`), and refuses any
@@ -169,9 +200,11 @@ are evaluated in order; the first match decides.
   starts a delegate SHOULD mark it (`HERDR_PEERS_DEPTH=1` in the delegate's
   environment); the helper refuses `ask` from a marked or holding peer.
 - **Fan-out cap.** A caller MUST NOT hold more than **4** open asks at once
-  (open = sent and not yet completed, failed or cancelled). A single call MAY
+  (open = sent and not yet completed, failed or cancelled). Notices are never
+  open and never count. A single call MAY
   exceed the cap only with a recorded reason (`--fanout N --reason "…"`).
-- **Record before relying.** Before a caller uses a reply, the delegation and
+- **Record before relying.** A receiver records a notice before using it
+  (`check` does). Before a caller uses a reply, the delegation and
   its outcome MUST be written to the caller's record: a local append-only log
   (machine-scoped XDG state, or `$HERDR_PEERS_LOG`), and — when the caller
   runs inside a plan that sets `DWP_PLAN` — that plan's delegation record as
@@ -235,11 +268,13 @@ and the skill's `metadata.protocol`; additive helper features do not.
 ## 11. Fixtures
 
 Every rule above has a message fixture in `tests/fixtures/messages/`; the
-filename prefix is the expected decision (`answer-`, `never-`, `none-`).
+filename prefix is the expected decision (`answer-`, `notice-`, `never-`,
+`none-`).
 
 | Rule | Fixtures |
 |---|---|
 | §3.1 ask, rule 13 | `answer-local-ask.txt`, `answer-remote-ask.txt`, `answer-multiline-ask.txt` |
+| §3.3 notice, rule 14 | `notice-local.txt`, `notice-remote.txt`, `notice-multiline.txt`, `notice-grant-text-ignored.txt` (each also decided **never** by the frozen v0.2.3 receiver in `tests/compat/`) |
 | rule 1 | `none-plain.txt`, `none-mentions-name.txt` |
 | rule 2 | `never-control-chars.txt`, `never-bidi-override.txt` |
 | rule 3 | `never-carries-secret.txt`; oversized messages are generated by the `security` test scope |
@@ -247,6 +282,6 @@ filename prefix is the expected decision (`answer-`, `never-`, `none-`).
 | rule 5 | `never-protocol-2.txt` |
 | rule 6, §2 | `never-bad-id.txt`, `never-bad-address.txt`, `never-label-with-space.txt`, `never-duplicate-key.txt`, `never-unknown-key.txt`, `never-reply-to-with-from.txt` |
 | rule 7, §3.2 | `never-reply.txt`, `never-reply-depth0.txt` |
-| rule 8 | `never-depth1-ask.txt` |
-| rule 9 | `never-reply-no.txt` |
+| rule 8 | `never-depth1-ask.txt`, `never-notice-depth1.txt` |
+| rule 9 | `never-reply-maybe.txt` |
 | rules 10–12 | exercised by the `helper` test scope (they depend on the receiver's own address, scope and log) |

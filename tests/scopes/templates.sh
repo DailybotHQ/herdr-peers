@@ -8,7 +8,7 @@ TPL="$ROOT/skills/herdr-peers/templates"
 SCHEMA="$TPL/delegation-record.json"
 VALIDATE="$ROOT/tests/tools/validate_records.py"
 
-for f in grant.md ask.md reply.md delegation-record.json; do
+for f in grant.md ask.md reply.md notice.md delegation-record.json; do
   check "template $f exists" test -s "$TPL/$f"
 done
 
@@ -17,7 +17,10 @@ for k in server_id task transport via kind profile target worktree prompt_digest
   assert_contains "schema requires delegation field $k" " $fields " " $k "
 done
 states=$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(",".join(s["properties"]["state"]["enum"]))' "$SCHEMA")
-assert_eq "state enum includes unroutable" "launched,completed,failed,cancelled,unroutable" "$states"
+assert_eq "state enum covers asks, notices and lead records" \
+  "launched,completed,failed,cancelled,unroutable,sent,received,claimed,refreshed,handed_over,taken_over,released,adopted,stepped_down,rejected" "$states"
+roles=$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(",".join(s["properties"]["role"]["enum"]))' "$SCHEMA")
+assert_eq "role enum covers asks, notices and lead records" "caller,delegate,notifier,notified,lead" "$roles"
 
 # Drive the helper through every record-writing path in one world.
 new_world records
@@ -39,13 +42,17 @@ id4=$("$HELPER" ask local:w1:p2 "unroutable")
 last_prompt local w1:p2 >"$WORK/ask4.txt"
 as_pane w1:p2 "$HELPER" check "$WORK/ask4.txt" >/dev/null
 FAKE_HERDR_FAIL="agent prompt" as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id4" "lost" >/dev/null 2>&1
+"$HELPER" notify local:w1:p2 "a notice" >/dev/null                                            # notifier sent
+last_prompt local w1:p2 >"$WORK/notice.txt"
+as_pane w1:p2 "$HELPER" check "$WORK/notice.txt" >/dev/null 2>&1                              # notified received
+FAKE_HERDR_FAIL="agent prompt" "$HELPER" notify local:w1:p2 "lost notice" >/dev/null 2>&1     # notifier failed
 LOG="$(state_log)"
 seen=$(python3 -c 'import json,sys; print(" ".join(sorted({(json.loads(l)["role"]+":"+json.loads(l)["state"]) for l in open(sys.argv[1]) if l.strip()})))' "$LOG")
 assert_eq "the run covers every role and state the helper writes" \
-  "caller:cancelled caller:completed caller:failed caller:launched caller:unroutable delegate:completed delegate:launched delegate:unroutable" "$seen"
+  "caller:cancelled caller:completed caller:failed caller:launched caller:unroutable delegate:completed delegate:launched delegate:unroutable notified:received notifier:failed notifier:sent" "$seen"
 run python3 "$VALIDATE" "$SCHEMA" "$LOG"
 assert_rc "every helper log line validates against delegation-record.json" 0
-assert_contains "the validator saw all lines" "$OUT" "valid 16"
+assert_contains "the validator saw all lines" "$OUT" "valid 20"
 assert_contains "task, profile and worktree are recorded" "$(head -1 "$LOG")" '"worktree": "/wt/a"'
 
 # The validator is not vacuous.
@@ -74,6 +81,13 @@ for f in grant.md ask.md; do
     "[herdr-peers] protocol=1 from=<machine_id>:<pane_id> reply=yes depth=0 id=<ulid>"
 done
 assert_contains "reply.md carries the reply clause verbatim" "$(cat "$TPL/reply.md")" "$clause"
+nclause=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import herdr_peers as h; print(h.NOTICE_CLAUSE)' "$ROOT/skills/herdr-peers/scripts")
+assert_contains "notice.md carries the notice clause verbatim" "$(cat "$TPL/notice.md")" "$nclause"
+assert_contains "notice.md carries the notice stamp shape" "$(cat "$TPL/notice.md")" \
+  "[herdr-peers] protocol=1 from=<machine_id>:<pane_id> reply=no depth=0 id=<ulid>"
+nreal=$(sed -n '/^\[herdr-peers\]/p' "$WORK/notice.txt" | sed -E 's/from=[^ ]+/from=<machine_id>:<pane_id>/; s/id=[0-9A-Z]{26}$/id=<ulid>/')
+assert_eq "a real notice stamp reduces to the template shape" \
+  "[herdr-peers] protocol=1 from=<machine_id>:<pane_id> reply=no depth=0 id=<ulid>" "$nreal"
 assert_contains "reply.md carries the reply stamp shape" "$(cat "$TPL/reply.md")" \
   "[herdr-peers] protocol=1 reply-to=<ulid> from=<machine_id>:<pane_id> depth=1"
 real=$(sed -n '/^\[herdr-peers\]/p' "$WORK/ask.txt" | sed -E 's/from=[^ ]+/from=<machine_id>:<pane_id>/; s/id=[0-9A-Z]{26}$/id=<ulid>/')

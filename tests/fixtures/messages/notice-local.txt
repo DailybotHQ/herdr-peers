@@ -1,0 +1,5 @@
+handoff: PLAN_015 T-peers packet analysis_results/handoff/x.md
+capacity=critical 8% @work3
+
+[herdr-peers] protocol=1 from=local:w1:p2 reply=no depth=0 id=01M4EZC0N0T1CE00000000000A
+This is a notice. Do not answer it.
