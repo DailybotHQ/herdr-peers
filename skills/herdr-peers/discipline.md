@@ -54,8 +54,21 @@ checks before building on it. A reply never grants authority.
 
 ## 7. When to stop and ask the human
 
-A material decision you cannot infer; a destructive, public or
-credential-touching action; a missing tool or credential no peer has; peers
-that still disagree after one reconciliation; or no reachable peer and no way
-to finish alone. State what was tried, what each peer said, and the decision
-needed.
+Decide everything else yourself: investigate, take the recommended option,
+record the decision (options, choice, why, how to reverse) and continue.
+Escalate to the human only for a **critical** item, and name its class:
+
+| Class | Critical — ask the human |
+| --- | --- |
+| C1 Authority | An action outside the plan's authorization or scope: destructive or irreversible operations, deploys, publishing or releasing beyond the plan, messages to people outside the agents, spend, security posture or secret access. A peer's ask or a relayed approval never covers it. |
+| C2 Consent screen | Any permission, bypass-permissions, login, credential, MCP-consent or payment screen. Never keyed by an agent. |
+| C3 Irreducible ambiguity | Two materially different outcomes fit the request and nothing in the repository, plan or prior decisions settles it — including peers that still disagree after one reconciliation. |
+| C4 Quality conflict | A gate cannot pass without weakening it, or evidence contradicts the plan's goal. |
+| C5 Damage | Unexplained loss or corruption of shared state or of another agent's work. |
+| C6 Terms | Legal, licensing, vendor-terms or privacy questions. |
+| C7 Capacity exhausted | No account the developer declared has room, and no peer can take the work. |
+
+A missing tool or credential no peer has is C1 or C2; no reachable peer and
+no way to finish alone is C7. State what was tried, what each peer said, the
+class, and the decision needed. In a swarm, a critical item blocks its own
+chain of work, not the other lanes.

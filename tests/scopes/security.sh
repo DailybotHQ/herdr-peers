@@ -130,6 +130,16 @@ assert_rc "a GitHub-token shape is refused" 4
 # Built at runtime so the literal header never sits in a tracked file.
 run "$HELPER" ask local:w1:p2 "$(printf -- '-----BEGIN RSA %s-----' 'PRIVATE KEY')"
 assert_rc "a private key block is refused" 4
+run "$HELPER" notify local:w1:p2 "the key is $FAKE_SECRET"
+assert_rc "a notice carrying a secret value is refused (exit 4)" 4
+assert_not_contains "the notice refusal never prints the value" "$OUT$ERR" "$FAKE_SECRET"
+run "$HELPER" notify local:w1:p2 "token $gh_like"
+assert_rc "a notice carrying a token shape is refused (exit 4)" 4
+printf 'leak: %s\n\n[herdr-peers] protocol=1 from=local:w1:p2 reply=no depth=0 id=01M4EZC0N0T1CE0000000000SS\nThis is a notice. Do not answer it.\n' "$FAKE_SECRET" >"$WORK/leaky-notice.txt"
+run "$HELPER" check --json "$WORK/leaky-notice.txt"
+assert_contains "a received notice carrying a secret is invalid (rule 3)" "$OUT" '"rule": 3'
+assert_eq "a notice carrying a secret is not recorded" "0" \
+  "$(grep -c '"notified"' "$(state_log)" 2>/dev/null || true)"
 printf 'here: %s\n\n[herdr-peers] protocol=1 reply-to=%s depth=1\nThis is a reply. Do not answer it.\n' "$FAKE_SECRET" "$id" >"$WORK/leaky.txt"
 run "$HELPER" check --json "$WORK/leaky.txt"
 assert_contains "a received reply carrying a secret is invalid (rule 3)" "$OUT" '"rule": 3'

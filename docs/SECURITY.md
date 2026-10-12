@@ -18,7 +18,10 @@ channels and response targets are in the [security policy](../SECURITY.md).
 An agent in a Herdr pane runs `herdr-peers ask`, which sends text into
 another agent's pane with `herdr agent prompt` (locally, or through
 `herdr --machine <id>` to a saved SSH machine). The other agent may answer
-once with `herdr-peers reply`. Both sides keep an append-only local record.
+once with `herdr-peers reply`. `herdr-peers notify` sends a one-way notice
+that is never answered. `herdr-peers lead …` keeps a per-plan lead record
+(who leads, at which epoch, who succeeds it) and broadcasts changes as lead
+notices. Both sides keep an append-only local record.
 
 ### Assets
 
@@ -27,7 +30,9 @@ once with `herdr-peers reply`. Both sides keep an append-only local record.
 2. **The caller's decisions** — a reply feeds the caller's next actions.
 3. **Secrets** in either environment (`*_API_KEY`, `*_TOKEN`, keys, passwords).
 4. **The human's terminal and panes** — focus, layout, other agents' work.
-5. **The record** — the delegation log and stored replies.
+5. **The record** — the delegation log, stored replies and lead records.
+6. **Leadership** — which agent acts as a plan's lead (merges, tags and
+   releases are performed only by the current-epoch lead).
 
 ### Trust boundaries and adversaries
 
@@ -67,7 +72,10 @@ once with `herdr-peers reply`. Both sides keep an append-only local record.
 | T16 | **Malformed or hostile JSON from Herdr** | Every field is type-checked; malformed machines/agents are dropped; nothing crashes into a traceback. | `security` |
 | T17 | **Panes and layout** — closing or moving others' work. | Discipline: close only panes you created; layout changes are recorded intent; launched peers get default permissions, never a bypass flag. | `skill` (marketplace rules) |
 | T18 | **Stale sender address** — an agent inherits a `HERDR_PANE_ID` that names a gone pane or another session's pane, so its `from=` routes replies nowhere or into someone else's pane. | `ask` and `reply` verify their own pane first: it must exist on the local server and, when Herdr's `pane process-info` pids are visible in this process table, one of them must be an ancestor of the helper; otherwise exit 6 and nothing is sent or recorded. Pids from another PID namespace (a container) cannot be compared: the pane's existence is the check there. An agent that runs its tools from a background server (Codex: no terminal anywhere in the caller's ancestry) is never trusted on the inherited id, which names the server's first pane; it declares its pane with `--pane`, accepted only when that pane runs the same agent program and refused when it runs another. A terminal-attached caller always needs the ancestry match, with or without `--pane`. | `orchestra` |
-| T19 | **Screen reading** — `status`/`lanes` read a waiting lane's visible screen, which may show secrets or hostile text, and could be tempted to answer it. | Read-only: they print a class and the name of the matched pattern, never screen text, and never send keys (`argv.log` proves no `send-keys`). Only folder trust may be keyed through — by the lead, on a pane it launched itself, under the user's standing authorization (the only screen with keys in `UNBLOCK_KEYS`). Claude's bypass-permissions acknowledgement is never keyed by an agent: the developer accepts it once per profile. Login, permission and unknown screens escalate. | `orchestra` |
+| T20 | **Forged or replayed lead notice** — a peer claims leadership, jumps the epoch, takes over out of turn, or replays an old notice. | A receiver stores a record only through the fencing rules (protocol §12): first claim only from the briefer (`HERDR_PEERS_BRIEFER` or a recorded asker), handover only from the stored lead at epoch+1, takeover only by a listed successor at epoch+1 when every earlier successor is gone (the receiver checks), ties to the earlier position; a stale epoch, a duplicate notice id (rule 12) and anything else are rejected and recorded. Received records are validated strictly (exact keys, address and plan patterns, epoch range, list sizes) after a size (8 KiB) and nesting (2 levels) pre-check, so a hostile line cannot crash the parser; the helper also validates every record before writing it. Reachability is read before the state lock is taken; the decision is re-made under the lock from the reloaded record. A former lead on the same server (whose shared record the successor already rewrote) is still told to step down. `notify` refuses a hand-written `swarm-lead:` line. A former lead that adopts a newer epoch steps down and its lead verbs are refused. | `lead`, `helper` |
+| T21 | **Notice abuse** — notices skip the fan-out cap and may be sent while holding an ask. | A notice grants nothing and is never answered, so it cannot start a loop or a chain; it has the ask's hygiene (size, control characters, marker, secrets, scope, self, blocked peer). Receivers record each id once (rule 12). | `helper`, `security`, `protocol` |
+| T22 | **Lead-record file tricks** | Lead records live in the machine-scoped state (`leads/`, directory `0700`, files `0600`), are written atomically (temp file + rename) and never read or written through a symlink; a corrupt record stops every lead verb instead of being guessed at. Records hold plan ids and addresses only. | `lead` |
+| T19 | **Screen reading** — `status`/`lanes` read a waiting lane's visible screen, which may show secrets or hostile text, and could be tempted to answer it. | Read-only: they print a class and the name of the matched pattern, never screen text, and never send keys (`argv.log` proves no `send-keys`). Only folder trust may be keyed through — by the lead, on a pane it launched itself, under the user's standing authorization (the only screen with keys in `UNBLOCK_KEYS`). Claude's bypass-permissions acknowledgement is never keyed by an agent: the developer accepts it once per profile. A usage-limit screen (`usage_limit`: the CLI's own banner anchored at the start of a line, also read from the last 15 lines of an idle lane) is handed off — the lead relaunches the lane's plan on an account with capacity — and never keyed. Because a peer can deliver text that looks like a banner into an idle pane, an idle-pane match never counts as "gone" for a receiver's fencing and needs a recorded `--reason` for a takeover. Login, permission and unknown screens escalate. | `orchestra` |
 
 ## Residual risk (accepted)
 
@@ -95,6 +103,14 @@ once with `herdr-peers reply`. Both sides keep an append-only local record.
   any capture with the exact copy.
 - **Secret detection is a filter, not a guarantee.** Values of other names,
   short values and unknown token formats are not recognized.
+- **Fencing is not authentication.** The lead fencing rules decide which
+  record a cooperating peer follows; they rest on the same `from=` claim as
+  every message. A process that can type into a pane can impersonate a lead
+  it can reach, within the receiver's scope — set `HERDR_PEERS_SCOPE` and
+  `HERDR_PEERS_BRIEFER` on lanes that should follow only one lead. Panes on
+  one Herdr server share one state directory, so a local process can rewrite
+  a lead record directly; a lead record grants no authority either way —
+  lanes act only within their plan's authorization.
 - **The local record is local.** Anyone with write access to the XDG state
   directory (or an explicit log path) can edit it; it is an audit aid, not
   tamper-proof evidence.

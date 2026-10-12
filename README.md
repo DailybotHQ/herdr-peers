@@ -24,8 +24,11 @@ peers one agent may keep busy, and where the record of "I asked, it answered"
 lives. herdr-peers is that layer — a small protocol (stamp + reply grant +
 loop guard, depth limit 1, fan-out cap 4) and a helper so agents never
 hand-build it. Since v0.2.0 it is also the lead's control plane: it shows
-every lane's live state, says why a lane is stuck, and lists open and recent
-asks per lane. It builds on Herdr's official skill and never re-teaches
+every lane's live state, says why a lane is stuck (including a lane at its
+usage limit), and lists open and recent asks and reported capacity per lane.
+Since v0.3.0 agents can send one-way **notices** that are never answered, and
+a plan has a **lead record** — epochs, an ordered succession, fenced handover
+and takeover — so the swarm outlives one account's limit. It builds on Herdr's official skill and never re-teaches
 Herdr's CLI.
 
 ## Install
@@ -34,7 +37,7 @@ The skill (the helper ships inside it, at
 `~/.agents/skills/herdr-peers/scripts/herdr-peers` for a global install):
 
 ```bash
-npx --yes skills add DailybotHQ/herdr-peers@v0.2.3 --skill herdr-peers -g -y
+npx --yes skills add DailybotHQ/herdr-peers@v0.3.0 --skill herdr-peers -g -y
 ```
 
 Herdr's official skill, which this one depends on — pinned, or use the
@@ -48,11 +51,11 @@ Every machine whose agents should answer needs the skill too. From a
 checkout of the tag instead, verified against the release's `SHA256SUMS`:
 
 ```bash
-git clone --branch v0.2.3 https://github.com/DailybotHQ/herdr-peers
+git clone --branch v0.3.0 https://github.com/DailybotHQ/herdr-peers
 cd herdr-peers
-curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v0.2.3/SHA256SUMS
+curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v0.3.0/SHA256SUMS
 shasum -a 256 -c SHA256SUMS      # every shipped file: OK
-bin/herdr-peers --version        # herdr-peers 0.2.3 (protocol 1)
+bin/herdr-peers --version        # herdr-peers 0.3.0 (protocol 1)
 ```
 
 Requirements: Herdr ≥ 0.9.1, `bash`, `python3` ≥ 3.9 (standard library
@@ -108,10 +111,17 @@ $ herdr-peers ask --profile @work1 --task T-3 local:w1:p2 "Review the parser cha
 $ herdr-peers ask --pane w2:p4 local:w1:p1 "Done: the parser change"   # from a Codex lane
 01M4P7SA2T4Q9DMWQ0KX5P1V8N
 
+$ herdr-peers lead claim --plan PLAN_015 --succession local:w3:p1 --lanes local:w1:p2,bb22:w1:p1
+claimed: plan PLAN_015, lead local:w1:p1, epoch 1; lead notice sent to 3, failed 0
+
 $ herdr-peers lanes
-PEER                 AGENT    VENDOR     PROFILE    STATE       SCREEN        OPEN LAST
-bb22:w1:p1           claude   anthropic  @work2     idle        none          1    launched 2026-10-11T19:41:45Z 01M4P7RJXFATTHM33JWT1VSHR0
-local:w1:p2          codex    openai     @work1     idle        none          1    launched 2026-10-11T19:41:45Z 01M4P7RJHS7YV6JK8V64EFKQC6
+plan PLAN_015  lead local:w1:p1  epoch 1
+PEER                 AGENT    VENDOR     PROFILE    STATE       SCREEN        OPEN CAPACITY       LAST
+bb22:w1:p1           claude   anthropic  @work2     idle        usage_limit   1    critical 8%    launched 2026-10-11T19:41:45Z 01M4P7RJXFATTHM33JWT1VSHR0
+local:w1:p2          codex    openai     @work1     idle        none          1    ok 64%         launched 2026-10-11T19:41:45Z 01M4P7RJHS7YV6JK8V64EFKQC6
+
+$ herdr-peers notify lead "handoff: PLAN_015 T-peers packet analysis_results/handoff/x.md"   # from a lane
+01M4P7T0B4V6Y0Q8N2K3R7C9AD
 
 $ herdr-peers status bb22:w1:p3
 bb22:w1:p3  blocked  agent=codex
@@ -123,12 +133,14 @@ next (folder trust only, on a pane you launched yourself, under the user's stand
 | Verb | Purpose |
 | --- | --- |
 | `list [--json]` | Live table of agents on every enabled machine; marks your row. |
-| `ask <machine>:<pane> "<prompt>"` | Send an ask with the reply grant; prints its id. Options: `--task`, `--profile` (the peer's account, e.g. `@work1`), `--vendor` (default: from the agent kind), `--worktree`, `--scope`, `--from`, `--fanout N --reason R`. |
+| `ask <machine>:<pane> "<prompt>"` | Send an ask with the reply grant; prints its id. The target `lead` names the current lead of `--plan` (default `$DWP_PLAN`). Options: `--task`, `--profile` (the peer's account, e.g. `@work1`), `--vendor` (default: from the agent kind), `--worktree`, `--scope`, `--from`, `--fanout N --reason R`. |
+| `notify <machine>:<pane> "<text>"` | A one-way notice (`reply=no`): recorded by the receiver, never answered, no fan-out slot, allowed while holding an ask. |
 | `wait <id>` | Block until the reply arrives in your pane; record it. |
-| `check [FILE]` | Classify a received message and record it. |
+| `check [FILE]` | Classify a received message (answer, notice, never, none) and record it; a lead notice is accepted only through the fencing rules. |
 | `reply <machine>:<pane> <id> "<answer>"` | Answer an ask exactly once. |
-| `status <machine>:<pane> [--json]` | A lane's state (`working`, `idle`, `blocked`, `done`, `unknown`, `no_agent`, `unreachable`) and the class of a waiting screen — `folder_trust`, `bypass_ack` (Claude's bypass acknowledgement), `login`, `permission`, `unknown` — with the documented next step. Read-only: never sends keys, never prints screen text. |
-| `lanes [--json] [--all]` | One row per peer you asked: agent, vendor, profile, live state, screen class, open asks, last ask. `--json` is the frozen contract [`herdr-peers/lanes-v1`](docs/schema/lanes-v1.json); consumers ignore unknown keys. |
+| `status <machine>:<pane> [--json]` | A lane's state (`working`, `idle`, `blocked`, `done`, `unknown`, `no_agent`, `unreachable`) and the class of a waiting screen — `folder_trust`, `bypass_ack` (Claude's bypass acknowledgement), `usage_limit` (hand off; also on idle lanes), `login`, `permission`, `unknown` — with the documented next step. Read-only: never sends keys, never prints screen text. |
+| `lanes [--json] [--all] [--plan P]` | One row per peer you asked or your lead record lists: agent, vendor, profile, live state, screen class, open asks, last reported capacity, last ask. `--json` is the contract [`herdr-peers/lanes-v1`](docs/schema/lanes-v1.json) (0.3.0 adds `plan`, `lead`, `epoch`, `capacity`); consumers ignore unknown keys. |
+| `lead claim\|show\|handover\|takeover\|release` | A plan's lead record [`herdr-peers/lead-v1`](docs/schema/lead-v1.json): who leads, the epoch, the ordered succession, the lanes notified on every change. Only the highest epoch leads; a stale lead steps down. |
 | `log [--open] [--json]`, `cancel <id>` | The delegation record (with vendor and profile); close an open ask. |
 
 Folder trust is the only screen an agent may key through: by the lead, on a
@@ -145,13 +157,13 @@ containers, troubleshooting — is in
 
 Optional environment: `HERDR_PEERS_SCOPE`, `HERDR_PEERS_SELF`,
 `HERDR_PEERS_DEPTH`, `HERDR_PEERS_FANOUT` (lower only), `HERDR_PEERS_MAX_BYTES`,
-`HERDR_PEERS_LOG`, `HERDR_PEERS_PYTHON`, `DWP_PLAN`/`DWP_TASK` — see the table
+`HERDR_PEERS_LOG`, `HERDR_PEERS_PYTHON`, `HERDR_PEERS_BRIEFER`, `DWP_PLAN`/`DWP_TASK` — see the table
 in [SKILL.md](skills/herdr-peers/SKILL.md#2-the-helper).
 
-Exit codes: `0` ok · `1` Herdr error · `2` usage · `3` protocol refusal
-(never answer) · `4` policy refusal · `5` timeout · `6` not inside Herdr, a
+Exit codes: `0` ok · `1` Herdr error (or an undelivered lead notice) · `2` usage · `3` protocol refusal
+(never answer; also a notice) · `4` policy refusal · `5` timeout · `6` not inside Herdr, a
 missing `herdr` or `python3`, or a stale `HERDR_PANE_ID` · `7` not a
-protocol message.
+protocol message, or no lead record.
 
 ## How it fits with DeepWorkPlan
 
