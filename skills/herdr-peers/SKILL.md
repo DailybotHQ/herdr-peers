@@ -1,11 +1,11 @@
 ---
 name: herdr-peers
 description: "Ask another coding agent in a Herdr pane — on this machine or another one — and get exactly one authorized reply back, with a loop guard, depth limit 1, a fan-out cap and a record of every delegation; send one-way notices; keep a plan's lead with epochs and succession. Use only when the user mentions Herdr, peers, or another agent, pane or machine, or when a plan you are executing delegates a task through Herdr. Do not use merely because parallel work could help. Requires HERDR_ENV=1 and Herdr's official herdr skill."
-version: "0.3.0"
+version: "0.3.1"
 license: MIT
 allowed-tools: Bash, Read
 metadata:
-  version: "0.3.0"
+  version: "0.3.1"
   protocol: 1
 ---
 
@@ -58,19 +58,20 @@ opinion nobody asked for, or to avoid doing the work yourself.
 | `log [--open] [--json] [--all-machines]` | The current server's delegation record (with each ask's vendor and profile); include every server in a shared log with `--all-machines`. |
 | `status <machine>:<pane> [--json]` | A peer lane's state (`working`, `idle`, `blocked`, `done`, `unknown`, `no_agent`, `unreachable`), agent kind, and the class of a waiting screen with its documented next step. Read-only: never sends keys. |
 | `lanes [--json] [--all] [--plan P]` | One row per peer you asked or your lead record lists: agent, vendor, profile, live state, screen class (incl. `usage_limit`), open asks, last reported capacity, last ask. `--json` prints the `herdr-peers/lanes-v1` contract with `plan`, `lead` and `epoch`. |
-| `lead claim --plan P [--succession A,B] [--lanes A,B]` | Become the lead of plan P (epoch 1, or +1 after a release), or refresh your record; sends a lead notice to every lane and successor. |
+| `lead claim --plan P [--succession A,B] [--lanes A,B]` | Become the lead of plan P (epoch 1, or +1 after a release), or refresh your record (`--lanes` replaces the list, empty clears, omitted preserves); sends a lead notice to every lane and successor. |
 | `lead show [--plan P] [--json]` | The plan's lead record (`herdr-peers/lead-v1`: plan, lead, epoch, succession, lanes, updated_at); without a plan, every record. |
 | `lead handover <machine>:<pane> --plan P [--succession …] [--lanes …]` | The current lead hands over (epoch+1) and stops leading. |
 | `lead takeover --plan P [--reason R]` | The first reachable successor takes over a lead that is gone (unreachable, no agent, usage limit) — or, with a recorded `--reason`, one whose asks timed out twice (epoch+1). |
 | `lead release --plan P` | The current lead leaves the plan without a lead (epoch+1). |
 | `cancel <id> [--reason R]` | Closes an open ask (yours, or one you decline). |
 
-`ask`, `notify`, `reply`, `check`, `wait`, `lanes`, `cancel` and the `lead`
+`ask`, `notify`, `reply`, `check`, `wait`, `status`, `lanes`, `cancel` and the `lead`
 verbs that change a record take `--pane <pane_id>`:
 this session's own pane, which wins over the inherited `HERDR_PANE_ID`. A Codex
 lane needs it — Codex runs its commands from a per-profile background server
 whose `HERDR_PANE_ID` names the pane that first started it — so pass the pane
-the lead's brief names (`herdr-peers ask --pane w2:p4 …`). A machine id may be
+the lead's brief names (`herdr-peers ask --pane w2:p4 …`). `status` validates
+an explicit pane but still addresses its positional target. A machine id may be
 shortened to any unique prefix of at least 4 characters.
 
 Environment (all optional):
@@ -79,7 +80,7 @@ Environment (all optional):
 | --- | --- |
 | `HERDR_PEERS_SCOPE` | Allow-list: `*`, `<machine>`, `<machine>:<workspace>`, comma-separated (`--scope` per call). |
 | `HERDR_PEERS_SELF` | This machine's id as saved on remote peers — the `from=` for asks to other machines. Authoritative; without it the helper probes for the saved machine that is this server, which is right only when every host saves this machine under the same id. |
-| `HERDR_PEERS_DEPTH` | `1` marks this pane as a delegate: it may not ask. Set by the launcher. |
+| `HERDR_PEERS_DEPTH` | `1` marks a one-shot delegate: it may not ask. Swarm lanes have no mark; an unanswered ask still blocks their asks. |
 | `HERDR_PEERS_FANOUT` | Lowers the open-ask cap (never above 4; raise per call with `--fanout N --reason`). |
 | `HERDR_PEERS_MAX_BYTES` | Message size limit (default 16384). |
 | `HERDR_PEERS_LOG` | Shared log file override (default is machine-scoped XDG state: `$XDG_STATE_HOME/herdr-peers/<server>/log.ndjson`). Records are filtered to the current server; use `log --all-machines` to inspect a shared override. |
@@ -91,8 +92,12 @@ Exit codes: `0` ok · `1` Herdr error · `2` usage · `3` protocol refusal —
 never answer (also a notice) · `4` policy refusal (scope, self, fan-out, size, control
 characters, secrets, no reply route) · `5` timeout · `6` not inside Herdr, or a stale pane id (pass `--pane`) ·
 `7` not a protocol message, or no lead record. A `lead` verb whose record
-was written but a lead notice was not delivered exits `1`. Never hand-write a
-stamp: always use the helper.
+was written exits `0` even if lane notices fail; failed deliveries are warned
+and recorded. A handover whose new lead was not notified exits `1` despite
+its written record; retry a notice asking the successor to read `lead show`,
+or have that successor hand over back. `check` exits `0` for a `current` lead notice (still never answered),
+`3` for a fenced refusal. Use the classification (`decision` in JSON), not
+exit status, to decide whether a message is answerable. Never hand-write a stamp: always use the helper.
 
 ## 3. Asking a peer
 
@@ -141,7 +146,7 @@ answer it, or `cancel` it to decline.
 The normative text is [protocol.md](protocol.md). In short: one stamp per
 message; a reply carries `reply-to=`, the asked peer's `from=` address and
 `depth=1` and is never answered; a notice carries `reply=no` and is never
-answered either; a delegate never delegates (it may still notify); at most 4 open asks per caller (raise it only with
+answered either; a one-shot delegate never delegates (it may still notify); at most 4 open asks per caller (raise it only with
 `--fanout N --reason "…"`); stay inside the scope when one is set
 (`HERDR_PEERS_SCOPE`); never send secrets — the helper refuses values of
 `*_API_KEY` / `*_TOKEN` variables and known token shapes; only the holder of

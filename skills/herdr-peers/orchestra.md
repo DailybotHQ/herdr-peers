@@ -9,15 +9,23 @@ this page adds the lead's view.
 
 ## 1. The lead's loop
 
-0. **Claim** the plan: `herdr-peers lead claim --plan <id> --succession
-   <deputy>,… --lanes <lane>,…`. The record (`herdr-peers/lead-v1`) names you,
-   epoch 1, your successors in order and the lanes that receive every lead
-   notice (§7). Lanes then address you as `lead`, never by pane.
+0. **Claim before launching** any lane: `herdr-peers lead claim --plan
+   <id> --lanes ''`. Explicit empty lanes avoids enrolling peers from earlier
+   asks or sending a notice into a bare shell. The record
+   (`herdr-peers/lead-v1`) names you at epoch 1, so the first lane message
+   can resolve `lead` with `--plan <id>`, before that lane is registered.
+   Add successors only when their agents are ready.
 1. **Launch** each lane in its own pane on the account it should spend
    (§3), with `HERDR_PEERS_BRIEFER=<your address>` in its environment so it
    accepts your first lead notice, and its pane id in the brief. Record the
    account with the ask: `--profile @work1` (and `--vendor` when the agent
-   kind does not imply it).
+   kind does not imply it). Swarm lanes have no `HERDR_PEERS_DEPTH=1`
+   mark ([launcher.md](launcher.md)); an unanswered ask still blocks their
+   own asks. Once each agent is ready, refresh the full list:
+   `herdr-peers lead claim --plan <id> --lanes <lane>,… --succession
+   <deputy>,…`. `--lanes` replaces the list (omit it to preserve the list,
+   pass `--lanes ''` to clear it); keep ready lanes and drop closed panes.
+   Refresh keeps the epoch and sends the record to ready agents only.
 2. **Delegate** with one self-contained ask per lane:
    `herdr-peers ask --profile @work1 local:w4:p1 "<task, files, acceptance>"`.
    At most 4 open asks (`--fanout N --reason` raises it, recorded).
@@ -184,14 +192,22 @@ when it is fenced (protocol §12):
 A lead that sees a newer epoch prints `STEP DOWN`, stops acting as lead and
 continues as a lane or exits. Lanes on the lead's own Herdr server share its
 record directly; notices carry it to other machines and containers, with
-`local:` addresses rewritten so the receiver can reach them.
+`local:` addresses rewritten so the receiver can reach them. A notice that
+matches the stored record reports `current` and exits 0; a fenced refusal
+exits 3. Neither grants a reply. A successful lead record update exits 0
+even if a listed pane has closed: failed notices are warned and recorded,
+and delivery continues to reachable lanes. On handover, failure to notify
+the designated new lead exits 1 despite the written record: retry a notice
+asking it to read `lead show`, or have it hand over back. A failed notice to
+the old lead on takeover remains a warning. Refresh `--lanes` to remove
+closed panes before the next broadcast.
 
 ## 8. Troubleshooting
 
 | Symptom | Cause and fix |
 | --- | --- |
 | `ask` / `reply` exit 6: *HERDR_PANE_ID … stale* or *names another session's pane* | The agent inherited a pane id that no longer names its pane (panes are renumbered when moved, restored or re-created, or the agent was started from another pane). A reply to that `from=` would not route (`agent_not_found`). Restart the agent from its own pane, or export the right `HERDR_PANE_ID` (`herdr-peers list` marks your row), then ask again. The check compares the pane's foreground processes with this process's ancestors; where those pids are not visible (another PID namespace) it accepts an existing pane. |
-| exit 6: *cannot be trusted here: this process has no terminal* (Codex lanes) | Codex runs tool commands from a per-profile app-server daemon (no terminal), and that daemon's `HERDR_PANE_ID` names the pane that first started it — so every Codex lane on the same profile after the first inherits the wrong id. Pass the lane's own pane: `herdr-peers ask --pane <pane_id> …` (also on `reply`, `check`, `wait`, `lanes`, `cancel`). The lead names that pane in the lane's brief. A declared pane is accepted when it runs the same agent program as the caller's ancestry; one running another agent is refused. |
+| exit 6: *cannot be trusted here: this process has no terminal* (Codex lanes) | Codex runs tool commands from a per-profile app-server daemon (no terminal), and that daemon's `HERDR_PANE_ID` names the pane that first started it — so every Codex lane on the same profile after the first inherits the wrong id. Pass the lane's own pane: `herdr-peers ask --pane <pane_id> …` (also on `reply`, `check`, `wait`, `status`, `lanes`, `cancel` and lead mutations). The lead names that pane in the lane's brief. A declared pane is accepted when it runs the same agent program as the caller's ancestry; one running another agent is refused. |
 | `ask` exit 4: *blocked* | The lane waits at a screen: `herdr-peers status <addr>`. |
 | `ask` exit 4: *no reply route* | Set `HERDR_PEERS_SELF` or `--from` (§4). |
 | A lane shows `no_agent` with `folder_trust` | The CLI stopped at its first screen before Herdr detected it; see §2. |

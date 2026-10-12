@@ -167,8 +167,10 @@ are evaluated in order; the first match decides.
 
 - A receiver MUST NOT answer a message decided **never** or **notice**, and
   MUST NOT "acknowledge" it either: any message back would restart the loop.
-  The helper's `check` exits `3` for both, so a wrapper written for 0.2.x
-  never mistakes a notice for an answerable ask.
+  The helper's `check` exits `3` for both, except a lead notice whose record
+  is already `current` (§12), which exits `0`. Wrappers MUST use the
+  classification (`decision` in JSON), not exit status, to decide whether
+  a message is answerable; a current lead notice still grants no reply.
 - A reply MUST go to the ask's `from` address and nowhere else. The helper
   enforces this: `reply` refuses unless the ask was recorded for this pane by
   `check` (or is passed and verified with `--message`), and refuses any
@@ -197,8 +199,10 @@ are evaluated in order; the first match decides.
 
 - **Depth limit 1.** A caller sends at `depth=0`; its delegate works at depth
   1 and MUST NOT send asks while it holds an unanswered ask. A launcher that
-  starts a delegate SHOULD mark it (`HERDR_PEERS_DEPTH=1` in the delegate's
-  environment); the helper refuses `ask` from a marked or holding peer.
+  starts a one-shot delegate SHOULD mark it (`HERDR_PEERS_DEPTH=1` in the
+  delegate's environment); the helper refuses `ask` from a marked or holding
+  peer. Long-lived swarm lanes are not marked: they MAY ask the lead or a
+  sibling once they no longer hold an unanswered ask.
 - **Fan-out cap.** A caller MUST NOT hold more than **4** open asks at once
   (open = sent and not yet completed, failed or cancelled). Notices are never
   open and never count. A single call MAY
@@ -314,13 +318,27 @@ an **idle** pane is not proof — text another pane delivered can look the same
 — so the issuer needs a recorded reason for it, and a receiver never counts
 it as gone.
 
+A refresh through `lead claim --lanes A,B` replaces `lanes[]`; omitting
+`--lanes` preserves it on refresh, and `--lanes ''` clears it. A lead SHOULD
+claim with empty lanes before launching, then refresh the full list as agents
+become ready or close. This lets the first lane message resolve `lead` without
+sending a notice into a shell before its agent starts.
+
 Every change is written to the delegation log and sent as a **lead notice**
 (§3.3) to every lane and successor — and to the new or old lead on a handover
 or takeover — with the record on one `swarm-lead:` line. For a receiver on
 another machine, `local:` addresses are rewritten to the sender's machine id
 as that receiver reaches it. The lead notice is the single current-state
 broadcast: a newer epoch supersedes every earlier notice, and receivers never
-acknowledge it.
+acknowledge it. A lead mutation MUST return success (`0`) once its record
+change succeeds, even when notices fail to reach closed or unreachable panes.
+The helper MUST warn and record failed deliveries and continue to other targets;
+a failed record change retains its error status. Exception: handover MUST
+return a delivery error (`1`) if the designated new lead was not notified,
+even though its record is written. The issuer retries a notice asking the
+successor to read `lead show`, or has the successor hand over back; the issuer
+cannot act as lead again without a new handover. A failed notice to the old
+lead on takeover remains a warning: the taking-over pane already knows it leads.
 
 A receiver stores a record from a lead notice only when it is **fenced**; the
 first matching rule decides:
@@ -337,6 +355,10 @@ first matching rule decides:
 | F8 | The stored record came by takeover at the same epoch, and the sender sits earlier in the previous `succession[]` than the stored lead and names itself. | adopted (tie to the earlier position) |
 | F9 | Anything else. | rejected |
 
+A notice whose record equals the stored record reports `current` and `check`
+returns `0` (unless this former lead must `STEP DOWN`). It is still a notice,
+never an ask. Fenced rejections return `3`; other notice classifications,
+including adoption and step-down, retain their existing exit statuses.
 Rejections are recorded and otherwise ignored. A peer that was the lead and
 adopts a record naming another peer **steps down**: it stops acting as lead
 (the helper refuses its lead verbs) and continues as a lane or exits. Merges,

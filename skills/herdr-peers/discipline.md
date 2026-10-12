@@ -32,10 +32,11 @@ the same tree.
 
 ## 4. Depth limit 1
 
-A delegate never delegates. While a peer holds an unanswered ask it does not
+A one-shot delegate never delegates. While a peer holds an unanswered ask it does not
 ask anyone else; if the task needs more help, it says so in its reply and the
-caller decides. A pane started as a delegate is marked with
-`HERDR_PEERS_DEPTH=1` ([launcher.md](launcher.md)).
+caller decides. A pane started as a one-shot delegate is marked with
+`HERDR_PEERS_DEPTH=1` ([launcher.md](launcher.md)). A long-lived swarm lane
+has no mark and may ask the lead or siblings once it holds no unanswered ask.
 
 ## 5. Record before relying
 

@@ -369,3 +369,13 @@ assert_contains "the table names plan, lead and epoch" "$OUT" "plan $P  lead loc
 assert_contains "the table shows a capacity column" "$OUT" "low 22%"
 run python3 "$VALIDATE" "$ROOT/skills/herdr-peers/templates/delegation-record.json" "$(state_log)"
 assert_rc "records carrying capacity validate" 0
+
+# --- drill round-one regressions -----------------------------------------------------
+new_world drill_status
+run env HERDR_PANE_ID=w9:p9 "$HELPER" status --pane w1:p1 --json local:w1:p2
+assert_eq "drill: status validates the declared caller and keeps the positional target"   '0 local:w1:p2 idle' "$RC $(jget "$OUT" peer) $(jget "$OUT" state)"
+run "$HELPER" status --pane local:w1:p1 local:w1:p2
+assert_rc "drill: status rejects a malformed declared pane" 2
+run "$HELPER" status --pane w9:p9 local:w1:p2
+assert_rc "drill: status rejects a stale declared pane" 6
+assert_eq "drill: status with a declared pane never sends keys" "0" "$(sends_keys)"
