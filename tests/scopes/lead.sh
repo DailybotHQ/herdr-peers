@@ -360,7 +360,7 @@ assert_rc "the record stays readable" 0
 new_world delivery
 WORLD_TAG=$RANDOM
 run env FAKE_HERDR_FAIL="agent prompt" "$HELPER" lead claim --plan "$P" --lanes local:w1:p2
-assert_rc "a claim whose notices fail exits 1" 1
+assert_rc "a claim whose notices fail still succeeds" 0
 assert_eq "the record was still written" "local:w1:p1" "$(jget "$("$HELPER" lead show --plan "$P" --json)" lead)"
 assert_contains "the failed notice is recorded" "$(grep '"notifier"' "$(state_log)")" '"failed"'
 new_world symlink
@@ -373,3 +373,81 @@ assert_rc "a symlinked lead record is refused (exit 4)" 4
 assert_not_contains "the symlink target was not rewritten" "$(cat "$WORK/elsewhere.json")" "w1:p2"
 run "$HELPER" lead show --plan "$P"
 assert_rc "a symlinked lead record is not read either (exit 4)" 4
+
+# --- drill round-one regressions -----------------------------------------------------
+# Each scenario checks the public result together with its record/delivery effect.
+new_world drill_delivery
+WORLD_TAG=$RANDOM
+P=PLAN_900_demo
+"$HELPER" lead claim --plan "$P" --lanes local:w9:p9,local:w1:p2 --succession local:w2:p1 >/dev/null 2>&1
+for verb in release handover takeover; do
+  new_world "drill_$verb"
+  "$HELPER" lead claim --plan "$P" --lanes local:w9:p9,local:w1:p2 --succession local:w2:p1 >/dev/null 2>&1
+  case "$verb" in
+    release) run "$HELPER" lead release --plan "$P"; expected=null ;;
+    handover) run "$HELPER" lead handover local:w2:p1 --plan "$P"; expected=local:w2:p1 ;;
+    takeover)
+      # The former lead is unreachable; successor w2:p1 is still reachable.
+      python3 - "$FAKE_HERDR_DIR/local/agents.json" <<'PYTEST'
+import json, sys
+p = sys.argv[1]
+a = json.load(open(p))
+json.dump([r for r in a if r['pane_id'] != 'w1:p1'], open(p, 'w'))
+PYTEST
+      run as_pane w2:p1 "$HELPER" lead takeover --plan "$P"; expected=local:w2:p1 ;;
+  esac
+  L=$("$HELPER" lead show --plan "$P" --json)
+  assert_eq "drill: $verb succeeds after updating the record despite a closed lane"     "0 $expected 2" "$RC $(jget "$L" lead) $(jget "$L" epoch)"
+  assert_contains "drill: $verb warns about the closed lane" "$ERR" "lead notice to local:w9:p9 not delivered"
+  assert_contains "drill: $verb still notifies the reachable lane" "$(last_prompt local w1:p2)" '"epoch":2'
+  assert_contains "drill: $verb records the closed lane delivery failure"     "$(grep '"notifier"' "$(state_log)" | grep 'local:w9:p9')" '"failed"'
+done
+
+new_world drill_refresh
+"$HELPER" lead claim --plan "$P" --lanes local:w9:p9,local:w1:p2 >/dev/null 2>&1
+run "$HELPER" lead claim --plan "$P" --lanes local:w1:p2
+L=$("$HELPER" lead show --plan "$P" --json)
+assert_eq "drill: explicit lanes refresh drops a closed pane and keeps the epoch"   '0 1 ["local:w1:p2"]' "$RC $(jget "$L" epoch) $(jget "$L" lanes)"
+run "$HELPER" lead claim --plan "$P"
+L=$("$HELPER" lead show --plan "$P" --json)
+assert_eq "drill: omitting lanes on refresh preserves the list"   '["local:w1:p2"]' "$(jget "$L" lanes)"
+run "$HELPER" lead claim --plan "$P" --lanes ''
+L=$("$HELPER" lead show --plan "$P" --json)
+assert_eq "drill: empty lanes clears the list without changing the epoch"   '0 1 []' "$RC $(jget "$L" epoch) $(jget "$L" lanes)"
+
+new_world drill_bootstrap
+# A prior unrelated ask must not enroll its peer when claiming before launch.
+"$HELPER" ask local:w2:p1 "unrelated earlier work" >/dev/null
+run "$HELPER" lead claim --plan "$P" --lanes ''
+L=$("$HELPER" lead show --plan "$P" --json)
+assert_eq "drill: a prelaunch empty claim creates a lead without enrolling earlier asks"   '0 local:w1:p1 1 []' "$RC $(jget "$L" lead) $(jget "$L" epoch) $(jget "$L" lanes)"
+run as_pane w1:p2 "$HELPER" notify --plan "$P" lead "first lane milestone"
+assert_contains "drill: first lane message resolves the preclaimed lead"   "$RC $(last_prompt local w1:p1)" 'first lane milestone'
+
+new_world drill_current
+"$HELPER" lead claim --plan "$P" --lanes local:w1:p2 >/dev/null 2>&1
+last_prompt local w1:p2 >"$WORK/current.txt"
+run as_pane w1:p2 "$HELPER" check --json "$WORK/current.txt"
+assert_eq "drill: shared current lead notice exits zero and remains a notice"   '0 current notice' "$RC $(jget "$OUT" lead_status) $(jget "$OUT" decision)"
+"$HELPER" lead handover local:w2:p1 --plan "$P" >/dev/null 2>&1
+last_prompt local w2:p1 >"$WORK/handover.txt"
+run as_pane w2:p1 "$HELPER" check "$WORK/handover.txt"
+assert_contains "drill: successor checks the current handover notice successfully"   "$RC $OUT" '0 NOTICE'
+assert_contains "drill: current handover is reported in the human output" "$OUT" 'current — already the current record'
+# An earlier epoch must still fail fencing; a successful current notice grants no reply.
+lead_notice local:w1:p1 "$(nid)" 1 local:w1:p1 '' local:w1:p2 >"$WORK/stale.txt"
+run as_pane w1:p2 "$HELPER" check --json "$WORK/stale.txt"
+assert_eq "drill: a fenced stale notice still exits three"   '3 rejected' "$RC $(jget "$OUT" lead_status)"
+
+new_world drill_required_handover
+"$HELPER" lead claim --plan "$P" --lanes local:w1:p2 --succession local:w2:p1 >/dev/null 2>&1
+run env FAKE_HERDR_FAIL="agent prompt w2:p1" "$HELPER" lead handover local:w2:p1 --plan "$P"
+L=$("$HELPER" lead show --plan "$P" --json)
+assert_eq "drill: failed new-lead delivery reports failure with the handover still recorded" \
+  '1 local:w2:p1 2' "$RC $(jget "$L" lead) $(jget "$L" epoch)"
+assert_contains "drill: failed new-lead delivery tells the issuer how to recover" \
+  "$ERR" 'new lead local:w2:p1 was not notified'
+assert_contains "drill: target-scoped handover failure still delivers to the other lane" \
+  "$(last_prompt local w1:p2)" '"epoch":2'
+assert_contains "drill: failed new-lead delivery remains in the notifier log" \
+  "$(grep '"notifier"' "$(state_log)" | grep 'local:w2:p1')" '"failed"'

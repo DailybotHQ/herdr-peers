@@ -9,17 +9,24 @@ Every launch follows the same three steps:
 
 1. **Create a pane you own** — `herdr pane split` next to yours, with the
    working directory the peer should use (its own worktree when it will
-   write: [discipline.md](discipline.md) §2) and the delegate mark
-   `HERDR_PEERS_DEPTH=1` in its environment. Read the new pane id from the
-   JSON response.
+   write: [discipline.md](discipline.md) §2). For a **one-shot delegate**,
+   set `HERDR_PEERS_DEPTH=1` in its environment: it may reply or notify, but
+   cannot ask. A **swarm lane** launched by a lead has no depth mark (remove
+   an inherited `HERDR_PEERS_DEPTH`); it may ask the lead and sibling lanes.
+   While holding an unanswered ask, either kind still cannot ask (depth 1).
+   Read the new pane id from the JSON response.
 2. **Start the agent** in that pane — `herdr agent start <name> --kind <kind>
    --pane <id>`. Use the kind the human asked for.
-3. **Send the first ask** — the first message a fresh peer receives is its
-   task: `herdr-peers ask local:<id> "<self-contained brief>"`. Name the
+3. **Send the brief** — a one-shot delegate receives its task as an ask:
+   `herdr-peers ask local:<id> "<self-contained brief>"`. Name the
    peer's own pane in the brief and tell it to pass `--pane <id>` on every
    `herdr-peers` call: a Codex peer cannot learn its pane from
    `HERDR_PANE_ID` (its commands run from a background server that carries
-   the id of whichever pane started it).
+   the id of whichever pane started it). For a swarm lane, claim the lead
+   before launching, then refresh its lane list once the agent is ready
+   ([orchestra.md](orchestra.md) §1). Brief long-lived work under the plan's
+   authorization; if you send an ask, the lane replies or declines it before
+   making its own asks.
 
 Record what you created; close the pane only when you are done with it, and
 only because you created it.
@@ -32,6 +39,7 @@ environment for a named profile of a CLI. `ak env <kind> @<profile>` prints
 nothing for the CLI's own home. Pass each line to the pane as one `--env`:
 
 ```bash
+# One-shot delegate; for a swarm lane start with env_args=() and no inherited depth mark.
 env_args=(--env HERDR_PEERS_DEPTH=1)
 while IFS= read -r kv; do
   [ -n "$kv" ] && env_args+=(--env "$kv")

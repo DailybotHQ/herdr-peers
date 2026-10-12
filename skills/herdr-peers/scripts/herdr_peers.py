@@ -26,7 +26,7 @@ import subprocess
 import sys
 import time
 
-VERSION = '0.3.0'
+VERSION = '0.3.1'
 PROTOCOL = 1
 MARKER = '[herdr-peers]'
 DEFAULT_MAX_BYTES = 16384
@@ -1324,6 +1324,8 @@ def cmd_check(args):
         return EXIT_OK
     if verdict['decision'] == 'none':
         return EXIT_NONE
+    if verdict.get('lead_status') == 'current':
+        return EXIT_OK
     return EXIT_PROTOCOL
 
 
@@ -1877,16 +1879,19 @@ def lead_body(record):
                        json.dumps(record, sort_keys=True, separators=(',', ':'))))
 
 
-def broadcast(args, store, pane, record, best_effort=()):
+def broadcast(args, store, pane, record, best_effort=(), required=()):
     """Send the lead notice to every lane and successor (and `best_effort`
     addresses, e.g. a lead that is gone). Records every delivery and failure;
-    returns (sent, failed) where failed counts lanes and successors only."""
+    returns (sent, failed, failed_targets), with the count limited to lanes
+    and successors plus required recipients; the target set includes best-effort recipients."""
     mine_ = self_strings(pane, store)
     targets = []
-    for addr in list(record['lanes']) + list(record['succession']) + list(best_effort):
+    for addr in (list(record['lanes']) + list(record['succession']) +
+                 list(best_effort) + list(required)):
         if addr not in targets and addr not in mine_:
             targets.append(addr)
     sent = failed = 0
+    failed_targets = set()
     for addr in targets:
         target = parse_address(addr)
         try:
@@ -1898,7 +1903,8 @@ def broadcast(args, store, pane, record, best_effort=()):
                         extra={'plan': record['plan'], 'epoch': record['epoch']})
             sent += 1
         except Stop as exc:
-            if addr not in best_effort or addr in record['lanes'] + record['succession']:
+            failed_targets.add(addr)
+            if addr not in best_effort or addr in record['lanes'] + record['succession'] + list(required):
                 failed += 1
                 warn('lead notice to %s not delivered: %s' % (addr, exc.message))
             else:
@@ -1907,7 +1913,7 @@ def broadcast(args, store, pane, record, best_effort=()):
                 store.append(make_record('failed', 'notifier', new_ulid(), addr,
                                          fmt_address(('local', pane)), plan=record['plan'],
                                          epoch=record['epoch'], note=exc.message[:300]))
-    return sent, failed
+    return sent, failed, failed_targets
 
 
 def gone(addr):
@@ -1969,11 +1975,17 @@ def lead_context(args):
     return plan, store, pane, fmt_address(('local', pane))
 
 
-def finish_lead(args, store, pane, record, what, best_effort=()):
-    sent, failed = broadcast(args, store, pane, record, best_effort)
+def finish_lead(args, store, pane, record, what, best_effort=(), required=()):
+    sent, failed, failed_targets = broadcast(args, store, pane, record, best_effort, required)
     print('%s: plan %s, lead %s, epoch %d; lead notice sent to %d, failed %d'
           % (what, record['plan'], record['lead'] or 'none', record['epoch'], sent, failed))
-    return EXIT_HERDR if failed else EXIT_OK
+    if failed_targets.intersection(required):
+        warn('handover recorded, but new lead %s was not notified; retry a notice asking it '
+             'to read `lead show --plan %s`, or have it hand over back'
+             % (record['lead'], record['plan']))
+        return EXIT_HERDR
+    # The record change succeeded; delivery failures are warnings and records.
+    return EXIT_OK
 
 
 def lead_claim(args):
@@ -2035,7 +2047,8 @@ def lead_handover(args):
                                  rec['lanes'] if lanes is None else lanes)
         save_lead(store, record, prior_of(rec, 'handover'), 'handover')
         log_lead(store, 'handed_over', me, record)
-    return finish_lead(args, store, pane, record, 'handed over', best_effort=(new,))
+    return finish_lead(args, store, pane, record, 'handed over',
+                       required=(new,))
 
 
 def lead_release(args):
@@ -2378,6 +2391,9 @@ def lane_status(addr):
 
 
 def cmd_status(args):
+    pane = declared_pane(args)
+    if pane is not None:
+        verify_own_pane(pane, declared=True)
     addr = parse_address(args.target)
     if addr is None:
         raise Stop(EXIT_USAGE, 'target must be <machine_id>:<pane_id> (e.g. local:w1:p2)')
@@ -2611,6 +2627,7 @@ def build_parser():
                         '(read-only; never sends keys)')
     st.add_argument('target', help='<machine_id>:<pane_id>')
     st.add_argument('--json', action='store_true')
+    st.add_argument('--pane', help="this session's pane id (w1:p2); validated, does not change the target")
 
     ln = sub.add_parser('lanes', help='open and recent asks per peer, with live peer state')
     ln.add_argument('--json', action='store_true', help='herdr-peers/lanes-v1 JSON')
@@ -2640,7 +2657,7 @@ def build_parser():
         q.add_argument('--scope', help='allow-list for the lead notices')
     for q in (lc, lh):
         q.add_argument('--succession', help='successors in order, comma-separated addresses')
-        q.add_argument('--lanes', help='lanes to notify, comma-separated addresses')
+        q.add_argument('--lanes', help='replace lanes to notify, comma-separated addresses; empty clears, omitted preserves on refresh')
 
     n = sub.add_parser('notify', help='send a one-way notice (never answered); prints its id')
     n.add_argument('target', help='<machine_id>:<pane_id>, or lead')
