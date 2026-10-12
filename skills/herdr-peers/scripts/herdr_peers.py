@@ -1666,6 +1666,30 @@ PLAN_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}')
 TS_RE = re.compile(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z')
 MAX_EPOCH = 1000000
 MAX_LIST = 32
+LEAD_MAX_BYTES = 8192
+
+
+def max_nesting(text):
+    """The deepest [ / { nesting of a JSON text, ignoring brackets inside
+    strings; cheap and never recursive."""
+    depth = deepest = 0
+    in_str = escaped = False
+    for ch in text:
+        if in_str:
+            if escaped:
+                escaped = False
+            elif ch == '\\':
+                escaped = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch in '[{':
+            depth += 1
+            deepest = max(deepest, depth)
+        elif ch in ']}':
+            depth -= 1
+    return deepest
 
 
 def plan_of(args, required=True):
@@ -1792,6 +1816,9 @@ def save_lead(store, record, prior, via):
     store.ensure()
     if not os.path.isdir(lead_dir(store)):
         os.makedirs(lead_dir(store), 0o700)
+    err = lead_record_error(record)
+    if err:
+        raise Stop(EXIT_POLICY, 'refusing to write an invalid lead record: %s' % err)
     path = lead_path(store, record['plan'])
     if os.path.islink(path):
         raise Stop(EXIT_POLICY, 'the lead record %s is a symlink; refused' % path)
@@ -1884,12 +1911,18 @@ def broadcast(args, store, pane, record, best_effort=()):
 
 
 def gone(addr):
-    """(gone, state) — a lane counts as gone when Herdr cannot reach it, it
-    runs no agent, or it waits at a usage-limit screen."""
+    """(gone, state, weak) — a lane counts as gone when Herdr cannot reach
+    it, it runs no agent, or it waits at a usage-limit screen. `weak` marks
+    a verdict that rests only on a limit banner in an idle or done lane's
+    last lines: text another pane delivered could look the same, so a weak
+    verdict needs a recorded --reason from the issuer and is never enough
+    for a receiver."""
     st = lane_status(resolve_machine(parse_address(addr)))
-    if st['state'] in ('unreachable', 'no_agent') or st['screen'] == 'usage_limit':
-        return True, st['screen'] if st['screen'] == 'usage_limit' else st['state']
-    return False, st['state']
+    if st['state'] in ('unreachable', 'no_agent'):
+        return True, st['state'], False
+    if st['screen'] == 'usage_limit':
+        return True, 'usage_limit', st['state'] in ('idle', 'done')
+    return False, st['state'], False
 
 
 def lead_target(args, store, pane):
@@ -2030,15 +2063,19 @@ def lead_takeover(args):
                    % (plan, ', '.join(rec['succession']) or 'empty'))
     position = position[0]
     for earlier in rec['succession'][:position]:
-        is_gone, state = gone(earlier)
-        if not is_gone:
-            raise Stop(EXIT_POLICY, 'an earlier successor, %s, is reachable (%s); it takes over '
-                       'first' % (earlier, state))
-    lead_gone, state = gone(rec['lead'])
-    if not lead_gone and not args.reason:
-        raise Stop(EXIT_POLICY, 'the lead %s is reachable (%s); take over only when it is gone '
-                   '(unreachable, no agent, usage limit), or after asks to it timed out twice '
-                   'with --reason "<why>" (recorded)' % (rec['lead'], state))
+        is_gone, state, weak = gone(earlier)
+        if not is_gone or (weak and not args.reason):
+            raise Stop(EXIT_POLICY, 'an earlier successor, %s, is %s; it takes over first%s'
+                       % (earlier, 'reachable (%s)' % state if not is_gone else
+                          'idle with a usage-limit line on screen', '' if not is_gone else
+                          ' — if it really is at its limit, confirm and pass --reason'))
+    lead_gone, state, weak = gone(rec['lead'])
+    if (not lead_gone or weak) and not args.reason:
+        raise Stop(EXIT_POLICY, 'the lead %s is %s; take over only when it is gone (unreachable, '
+                   'no agent, waiting at a usage-limit screen), or with --reason "<why>" '
+                   '(recorded) after asks to it timed out twice or you confirmed its limit'
+                   % (rec['lead'], 'idle with a usage-limit line on screen (not proof)'
+                      if lead_gone else 'reachable (%s)' % state))
     with store.lock():
         again = load_lead(store, plan)
         if not again or again['record']['epoch'] != rec['epoch']:
@@ -2096,7 +2133,7 @@ def briefers(store, pane):
     return out
 
 
-def fence(stored, rec, sender, trusted):
+def fence(stored, rec, sender, trusted, gone_fn):
     """Fenced acceptance of a lead notice (DESIGN §2). Returns
     (status, reason, via, prior): status adopted|current|rejected."""
     data = stored
@@ -2125,8 +2162,9 @@ def fence(stored, rec, sender, trusted):
     if sender in cur['succession'] and rec['epoch'] == cur['epoch'] + 1 \
             and rec['lead'] == sender:
         for earlier in cur['succession'][:cur['succession'].index(sender)]:
-            is_gone, state = gone(earlier)
-            if not is_gone:
+            is_gone, state, weak = gone_fn(earlier)
+            if not is_gone or weak:
+                state = 'idle with a usage-limit line on screen (not proof)' if is_gone else state
                 return ('rejected', 'takeover by %s while an earlier successor %s is reachable '
                         '(%s)' % (sender, earlier, state), None, None)
         return 'adopted', 'takeover by %s' % sender, 'takeover', prior_of(cur, 'takeover')
@@ -2155,29 +2193,56 @@ def handle_lead_notice(store, verdict, body, pane):
             log_lead(store, 'rejected', me, rec, note=reason[:300], target=verdict['from'])
     if len(lines) != 1:
         return reject('a lead notice carries exactly one %s line' % LEAD_PREFIX)
+    raw = lines[0][len(LEAD_PREFIX):].strip()
+    # A lead-v1 record nests two levels and fits in a few KiB; refuse
+    # anything bigger or deeper before the parser sees it.
+    if len(raw) > LEAD_MAX_BYTES or max_nesting(raw) > 2:
+        return reject('the %s line is too large or too deeply nested' % LEAD_PREFIX)
     try:
-        rec = json.loads(lines[0][len(LEAD_PREFIX):].strip())
-    except ValueError:
+        rec = json.loads(raw)
+    except (ValueError, RecursionError):
         return reject('the %s line is not JSON' % LEAD_PREFIX)
     err = lead_record_error(rec)
     if err:
         return reject('malformed lead record: %s' % err)
     sender = verdict['from']
+    trusted = briefers(store, pane)
+    # Reachability is read from Herdr before taking the lock (it can take
+    # seconds per pane); under the lock the decision is re-made from the
+    # reloaded record with the cached answers only.
+    seen = {}
+
+    def probe(addr):
+        if addr not in seen:
+            seen[addr] = gone(addr)
+        return seen[addr]
+    fence(load_lead(store, rec['plan']), rec, sender, trusted, probe)
     with store.lock():
         data = load_lead(store, rec['plan'])
-        was_lead = bool(data and data['record']['lead'] and
-                        data['record']['lead'] in self_strings(pane, store))
-        status, reason, via, prior = fence(data, rec, sender, briefers(store, pane))
+        mine_ = self_strings(pane, store)
+        was_lead = bool(data and data['record']['lead'] and data['record']['lead'] in mine_)
+        status, reason, via, prior = fence(data, rec, sender, trusted,
+                                           lambda a: seen.get(a, (False, 'not checked', False)))
         if status == 'rejected':
             return reject(reason, rec)
         verdict['plan'], verdict['epoch'] = rec['plan'], rec['epoch']
         verdict['lead_status'], verdict['lead_reason'] = status, reason
         if status == 'current':
+            # Panes on one server share the record: a successor that took
+            # over has already rewritten it, so the former lead learns it here.
+            former = ((data.get('prior') or {}).get('lead') in mine_ and
+                      data.get('via') in ('takeover', 'handover') and rec['lead'] not in mine_)
+            if former:
+                verdict['lead_status'] = 'stepped_down'
+                verdict['lead_reason'] = 'this pane led %s until epoch %d' % (
+                    rec['plan'], data['prior']['epoch'])
+                log_lead(store, 'stepped_down', me, data['record'],
+                         target=rec['lead'] or sender, note=verdict['lead_reason'])
             return
         stored = dict(rec)
         stored['updated_at'] = now_iso()
         save_lead(store, stored, prior, via)
-        stepped = was_lead and rec['lead'] not in self_strings(pane, store)
+        stepped = was_lead and rec['lead'] not in mine_
         if stepped:
             verdict['lead_status'] = 'stepped_down'
         log_lead(store, 'stepped_down' if stepped else 'adopted', me, stored,
@@ -2194,10 +2259,6 @@ def handle_lead_notice(store, verdict, body, pane):
 # developer accepts it once per profile, when the profile is created.
 SCREENS = [
     ('bypass_ack', [r'Bypass Permissions mode', r'Yes, I accept']),
-    ('usage_limit', [r"You['’]ve hit your (?:[\w-]+ )?(?:usage |session |weekly |rate )?limit",
-                     r'(?i)\busage limit reached\b', r'(?i)\blimit reached\s*[·∙•|-]\s*resets\b',
-                     r'(?i)\brate[ -]limit(?:ed| reached| exceeded)\b',
-                     r'(?i)\b429 Too Many Requests\b']),
     ('folder_trust', [r'Do you trust the (files|contents) (in|of) this (folder|directory)',
                       r'Is this a project you created or one you trust',
                       r'Yes, I trust this folder', r'(Do you t|T)rust this folder\?',
@@ -2210,6 +2271,14 @@ SCREENS = [
                     r'Would you like to (run|make|apply)', r'Allow (command|once|this)',
                     r"Yes, and don't ask again", r'(?i)approve (this|the) ',
                     r'(?i)permission (request|required)']),
+    # A CLI's own limit banner, anchored at the start of a line (after at
+    # most a few UI glyphs, never a quoted '>' prompt line), so prose that
+    # merely mentions a limit does not match.
+    ('usage_limit', [r"(?m)^[^\w>\n]{0,3}[ \t]*You['’]ve hit your (?:[\w-]+ )?limit\b",
+                     r'(?mi)^[^\w>\n]{0,3}[ \t]*(?:Claude )?usage limit reached\b',
+                     r'(?mi)^[^\w>\n]{0,3}[ \t]*(?:[\w-]+ )?limit reached[ \t]*[·∙•|-][ \t]*resets\b',
+                     r'(?mi)^[^\w>\n]{0,3}[ \t]*(?:API )?Error:?[ \t]*(?:429\b|rate limit (?:reached|exceeded)\b)',
+                     r'(?mi)^[^\w>\n]{0,3}[ \t]*rate limit (?:reached|exceeded)\b']),
 ]
 # The only keyable screen and the keys that accept it (Herdr key names): the
 # folder-trust default option is the accepting one.
@@ -2354,7 +2423,9 @@ def lanes_plan(args, store, pane):
     record this pane leads or is listed in; None when nothing resolves."""
     plan = plan_of(args, required=False)
     if plan:
-        return load_lead(store, plan)
+        data = load_lead(store, plan)
+        if data or getattr(args, 'plan', None) is not None:
+            return data
     mine_ = self_strings(pane, store)
     found = [d for d in all_leads(store)
              if mine_ & set([d['record']['lead'] or ''] + d['record']['lanes']

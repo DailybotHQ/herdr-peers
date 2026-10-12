@@ -308,8 +308,11 @@ state, so panes on one Herdr server share it. Only the holder of the
 | takeover | an entry of `succession[]`, when every earlier entry and (unless a recorded reason says asks to it timed out twice) the lead are gone | current + 1 |
 | release | the current lead | current + 1, `lead: null` |
 
-*Gone* means Herdr cannot reach the pane, it runs no agent, or it waits at a
-usage-limit screen.
+*Gone* means Herdr cannot reach the pane, it runs no agent, or it waits
+(blocked) at its CLI's usage-limit screen. A limit banner in the last lines of
+an **idle** pane is not proof — text another pane delivered can look the same
+— so the issuer needs a recorded reason for it, and a receiver never counts
+it as gone.
 
 Every change is written to the delegation log and sent as a **lead notice**
 (§3.3) to every lane and successor — and to the new or old lead on a handover

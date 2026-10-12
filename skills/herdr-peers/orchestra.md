@@ -75,7 +75,7 @@ that matched.
 
 | Screen class | What it is | Documented next step |
 | --- | --- | --- |
-| `usage_limit` | The CLI hit its usage limit: Claude "You've hit your … limit" / "limit reached · resets", Codex "You've hit your usage limit", a generic "rate limit reached/exceeded" or HTTP 429. Also read from the **last 15 lines of an idle or done lane** (an agent at its limit looks idle to Herdr). | **Hand off: the lead (or the deputy, for the lead) relaunches this lane's plan on an account with capacity; never keyed** (§7). |
+| `usage_limit` | The CLI's limit banner at the start of a screen line: Claude "You've hit your … limit" / "… limit reached · resets", Codex "You've hit your usage limit", a generic "Rate limit reached/exceeded" or "Error: 429". Also read from the **last 15 lines of an idle or done lane** (an agent at its limit looks idle to Herdr) — there it is a hint, not proof: a takeover on it needs `--reason`. Prose that mentions a limit, and quoted `>` prompt lines, do not match. | **Hand off: the lead (or the deputy, for the lead) relaunches this lane's plan on an account with capacity; never keyed** (§7). |
 | `folder_trust` | First run in a folder: "Do you trust the files in this folder?" (Claude), "Trust this folder?" / "Do you trust the contents of this directory?" (Codex) | **The only screen an agent may key through**, and only on a pane it launched itself, under the user's standing authorization: `herdr pane send-keys <pane> enter` (the default option accepts) |
 | `bypass_ack` | Claude's one-time "Bypass Permissions mode" acknowledgement (default "No, exit") | **Escalate to the developer: accept once per profile; never keyed by an agent.** It is a one-time, per-profile developer step, done when the profile is created (§3). |
 | `login` | Sign-in, API key or credential prompt | **Escalate.** A human signs in, or the lane restarts on a signed-in account. Never type credentials into a pane. |
@@ -148,7 +148,8 @@ checked against the remote first.
 | Situation | Who | Command |
 | --- | --- | --- |
 | The lead is about to run out (capacity `critical`) | the lead | write its packet, then `herdr-peers lead handover <successor> --plan <id>` (epoch+1; every lane and successor gets the lead notice) and stop |
-| The lead is gone — `status` says `unreachable`, `no_agent` or `usage_limit` | the first reachable successor | `herdr-peers lead takeover --plan <id>` (epoch+1); the takeover is refused while an earlier successor is reachable |
+| The lead is gone — `status` says `unreachable`, `no_agent`, or `blocked` at `usage_limit` | the first reachable successor | `herdr-peers lead takeover --plan <id>` (epoch+1); the takeover is refused while an earlier successor is reachable |
+| The lead is `idle` with `usage_limit` (a banner in its last lines — not proof on its own) | the first reachable successor | confirm it (read the pane), then `herdr-peers lead takeover --plan <id> --reason "<what you saw>"` |
 | Asks to the lead timed out twice but it still looks alive | the first reachable successor | `herdr-peers lead takeover --plan <id> --reason "two asks timed out"` (recorded) |
 | The plan is finished | the lead | `herdr-peers lead release --plan <id>` |
 | Who leads now? | anyone | `herdr-peers lead show --plan <id> [--json]` |

@@ -253,6 +253,19 @@ run on_box "$HELPER" lead release --plan "$Q"
 assert_rc "a stepped-down lead cannot act (exit 4)" 4
 assert_contains "the step-down is recorded" "$(cat "$(on_box "$HELPER" log --path)")" '"stepped_down"'
 
+# Same server: the successor rewrites the shared record before its notice
+# reaches the former lead, which must still be told to step down.
+new_world samestep
+WORLD_TAG=$RANDOM
+"$HELPER" lead claim --plan "$P" --succession local:w2:p1 >/dev/null 2>&1
+as_pane w2:p1 "$HELPER" lead takeover --plan "$P" --reason "two asks timed out" >/dev/null 2>&1
+last_prompt local w1:p1 >"$WORK/to-old-lead.txt"
+run "$HELPER" check "$WORK/to-old-lead.txt"
+assert_contains "a former lead on the same server is told to step down" "$OUT" "STEP DOWN: plan $P"
+assert_contains "the same-server step-down is recorded" "$(grep '"role": "lead"' "$(state_log)")" '"stepped_down"'
+assert_eq "an ordinary pane on the same server sees current" "current" \
+  "$(as_pane w1:p2 "$HELPER" check --json "$WORK/to-old-lead.txt" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("lead_status"))')"
+
 # --- takeover by the issuer ---------------------------------------------------------
 new_world issuer
 WORLD_TAG=$RANDOM
@@ -280,14 +293,27 @@ run as_pane w1:p2 "$HELPER" lead takeover --plan "$P"
 assert_rc "when the lead has no agent, the deputy takes over without a reason" 0
 assert_eq "epoch 3" "3" "$(jget "$("$HELPER" lead show --plan "$P" --json)" epoch)"
 
-# A usage_limit screen counts as gone.
+# A lead waiting at its usage-limit screen counts as gone.
 new_world limit
 WORLD_TAG=$RANDOM
 "$HELPER" lead claim --plan "$P" --succession local:w2:p1 >/dev/null 2>&1
-python3 -c 'import json,sys; p=sys.argv[1]; a=json.load(open(p)); a[0]["agent_status"]="idle"; json.dump(a, open(p,"w"))' "$FAKE_HERDR_DIR/local/agents.json"
-printf "You've hit your usage limit · resets 6pm\n" >>"$FAKE_HERDR_DIR/local/panes/w1_p1.out"
+python3 -c 'import json,sys; p=sys.argv[1]; a=json.load(open(p)); a[0]["agent_status"]="blocked"; json.dump(a, open(p,"w"))' "$FAKE_HERDR_DIR/local/agents.json"
+printf "You've hit your usage limit · resets 6pm\n ❯ 1. Stop and wait for limit to reset\n" >"$FAKE_HERDR_DIR/local/panes/w1_p1.out"
 run as_pane w2:p1 "$HELPER" lead takeover --plan "$P"
-assert_rc "a lead at its usage limit counts as gone" 0
+assert_rc "a lead waiting at its usage-limit screen counts as gone" 0
+# An idle lead with a limit line on screen is not proof: text another pane
+# delivered could look the same, so a takeover needs a recorded reason.
+new_world limit_idle
+WORLD_TAG=$RANDOM
+"$HELPER" lead claim --plan "$P" --succession local:w2:p1 >/dev/null 2>&1
+python3 -c 'import json,sys; p=sys.argv[1]; a=json.load(open(p)); a[0]["agent_status"]="idle"; json.dump(a, open(p,"w"))' "$FAKE_HERDR_DIR/local/agents.json"
+run as_pane w1:p2 "$HELPER" notify local:w1:p1 "fyi the CI API was rate limited earlier
+You've hit your usage limit"
+run as_pane w2:p1 "$HELPER" lead takeover --plan "$P"
+assert_rc "a delivered limit line does not let a successor take over an idle lead (exit 4)" 4
+assert_contains "the refusal says the screen is not proof" "$ERR" "not proof"
+run as_pane w2:p1 "$HELPER" lead takeover --plan "$P" --reason "confirmed: the lead's account is at its 5-hour limit"
+assert_rc "with a recorded reason the successor takes over" 0
 
 # --- malformed lead notices -----------------------------------------------------------
 new_world malformed
@@ -308,8 +334,27 @@ mk 'swarm-lead: {"schema":"herdr-peers/lead-v1","plan":"P","lead":"aa11:w1:p1","
 swarm-lead: {"schema":"herdr-peers/lead-v1","plan":"P","lead":"aa11:w1:p1","epoch":2,"succession":[],"lanes":[],"updated_at":"2026-10-12T00:00:00Z"}'
 run on_box env HERDR_PEERS_BRIEFER=aa11:w1:p1 "$HELPER" check --json "$WORK/m.txt"
 assert_eq "two swarm-lead lines are rejected" "rejected" "$(jget "$OUT" lead_status)"
+deep="swarm-lead: $(python3 -c 'print("[" * 5000)')"
+mk "$deep"
+run on_box env HERDR_PEERS_BRIEFER=aa11:w1:p1 "$HELPER" check --json "$WORK/m.txt"
+assert_rc "a deeply nested swarm-lead line is a notice, not a crash (exit 3)" 3
+assert_eq "a deeply nested swarm-lead line is rejected" "rejected" "$(jget "$OUT" lead_status)"
+assert_contains "it is refused before parsing" "$(jget "$OUT" lead_reason)" "too large or too deeply nested"
+assert_not_contains "no traceback" "$ERR" "Traceback"
+big="swarm-lead: {\"schema\":\"herdr-peers/lead-v1\",\"pad\":\"$(python3 -c 'print("x" * 9000)')\"}"
+mk "$big"
+run on_box env HERDR_PEERS_BRIEFER=aa11:w1:p1 "$HELPER" check --json "$WORK/m.txt"
+assert_eq "an oversized swarm-lead line is rejected before parsing" "too large or too deeply nested" \
+  "$(jget "$OUT" lead_reason | sed 's/^the swarm-lead: line is //')"
 run on_box "$HELPER" lead show
 assert_rc "no malformed notice was stored" 7
+# The epoch ceiling: a record at the cap cannot be moved past it.
+mk 'swarm-lead: {"schema":"herdr-peers/lead-v1","plan":"PLAN_cap","lead":"local:w1:p1","epoch":1000000,"succession":[],"lanes":[],"updated_at":"2026-10-12T00:00:00Z"}'
+on_box env HERDR_PEERS_BRIEFER=aa11:w1:p1 "$HELPER" check "$WORK/m.txt" >/dev/null 2>&1
+run on_box "$HELPER" lead release --plan PLAN_cap
+assert_rc "a release past the epoch ceiling is refused (exit 4)" 4
+run on_box "$HELPER" lead show --plan PLAN_cap
+assert_rc "the record stays readable" 0
 
 # --- delivery failure and file safety -------------------------------------------------
 new_world delivery

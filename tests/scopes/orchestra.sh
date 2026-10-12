@@ -305,10 +305,20 @@ screen local w1:p2 "$(printf 'old output line\n%.0s' 1 2 3)
 run "$HELPER" status --json local:w1:p2
 assert_eq "an idle lane at its limit stays idle" "idle" "$(jget "$OUT" state)"
 assert_eq "an idle lane at its limit shows usage_limit" "usage_limit" "$(jget "$OUT" screen)"
-screen local w1:p2 "we discussed the rate limit exceeded case earlier
+screen local w1:p2 "You've hit your usage limit
 $(printf 'later work line\n%.0s' $(seq 1 20))"
 run "$HELPER" status --json local:w1:p2
-assert_eq "a limit phrase above the last 15 lines of an idle lane is ignored" "none" "$(jget "$OUT" screen)"
+assert_eq "a limit banner above the last 15 lines of an idle lane is ignored" "none" "$(jget "$OUT" screen)"
+screen local w1:p2 "fyi the CI API was rate limited earlier; we hit a 429 Too Many Requests and the usage limit reached message"
+run "$HELPER" status --json local:w1:p2
+assert_eq "prose that mentions limits is not a limit banner" "none" "$(jget "$OUT" screen)"
+screen local w1:p2 "> You've hit your usage limit"
+run "$HELPER" status --json local:w1:p2
+assert_eq "a quoted prompt line is not a limit banner" "none" "$(jget "$OUT" screen)"
+screen bb22 w1:p3 "Do you want to proceed?
+You've hit your usage limit"
+run "$HELPER" status --json "$B"
+assert_eq "a pending approval outranks a limit line" "permission" "$(jget "$OUT" screen)"
 screen local w1:p2 "Do you want to proceed?"
 run "$HELPER" status --json local:w1:p2
 assert_eq "an idle lane reports no other screen class" "none" "$(jget "$OUT" screen)"
@@ -341,6 +351,9 @@ assert_eq "the lane's capacity comes from its message" "low 22 @work2" \
 assert_eq "a lane that reported nothing has no capacity" "null" "$(jget "$C" lanes.1.capacity)"
 run "$HELPER" lanes --json
 assert_eq "without --plan the one record this pane leads is used" "$P" "$(jget "$OUT" plan)"
+mkdir -p "$WORK/plans/PLAN_004_child"
+run as_pane w1:p2 env DWP_PLAN="$WORK/plans/PLAN_004_child" "$HELPER" lanes --json
+assert_eq "a lane in its child plan sees the record that lists it" "$P local:w1:p1" "$(jget "$OUT" plan) $(jget "$OUT" lead)"
 a=$("$HELPER" ask local:w2:p1 "status?")
 last_prompt local w2:p1 >"$WORK/q.txt"
 as_pane w2:p1 "$HELPER" check "$WORK/q.txt" >/dev/null 2>&1

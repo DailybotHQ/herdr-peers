@@ -432,3 +432,18 @@ assert_contains "a remote notice names the probed self machine" "$(last_prompt b
   "from=aa11:w1:p1 reply=no depth=0"
 run env HERDR_PEERS_MAX_BYTES=120 "$HELPER" notify local:w1:p2 "$(printf 'x%.0s' $(seq 1 200))"
 assert_rc "an oversized notice is refused (exit 4)" 4
+
+# Replies recorded by `check` alone (no `wait`) complete the asks: the
+# fan-out cap frees up without cancelling anything.
+new_world checkonly
+for i in 1 2 3 4; do
+  id=$("$HELPER" ask local:w1:p2 "q$i")
+  last_prompt local w1:p2 >"$WORK/a$i.txt"
+  as_pane w1:p2 "$HELPER" check "$WORK/a$i.txt" >/dev/null
+  as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id" "ans$i" >/dev/null
+  last_prompt local w1:p1 >"$WORK/r$i.txt"
+  "$HELPER" check "$WORK/r$i.txt" >/dev/null
+done
+assert_eq "four replies recorded by check leave no open ask" "0" "$("$HELPER" log --open --json | grep -c .)"
+run "$HELPER" ask local:w1:p2 "a fifth ask"
+assert_rc "the fan-out cap is free again after check-only replies" 0

@@ -41,9 +41,12 @@ compatible (additive fields and screen class); new schema
 - The address `lead` in `ask` and `notify` resolves to the current lead of
   `--plan` / `$DWP_PLAN` (falling back to the one record that lists this
   pane, for lanes whose `DWP_PLAN` is a child plan).
-- Screen class `usage_limit` (Claude, Codex and generic rate-limit messages,
-  HTTP 429) in `status` and `lanes`, also detected from the last 15 lines of
-  an idle or done lane; next step "hand off", never keyed.
+- Screen class `usage_limit` in `status` and `lanes`: the CLI's own limit
+  banner (Claude, Codex, a generic "Rate limit reached/exceeded" or
+  "Error: 429") anchored at the start of a screen line, so prose and quoted
+  prompts do not match; also read from the last 15 lines of an idle or done
+  lane, where it is a hint (a takeover on it needs `--reason`). Next step
+  "hand off", never keyed.
 - `lanes --json` adds `plan`, `lead`, `epoch` and a per-lane `capacity`
   parsed from `capacity=<verdict> [NN%] [@profile]` lines in recorded asks,
   replies and notices; lanes listed in the lead record appear even when
