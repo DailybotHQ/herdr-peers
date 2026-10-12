@@ -4,12 +4,12 @@
 # cap, scope, self-refusal, reply routing and record-before-rely.
 
 field() { python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d.get(sys.argv[2]))' "$1" "$2" 2>/dev/null; }
-last_log() { tail -1 "$WORK/.herdr-peers/log.ndjson" 2>/dev/null; }
+last_log() { tail -1 "$(state_log)" 2>/dev/null; }
 ULID='^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
 
 # --- entry points ------------------------------------------------------------
 run "$HELPER" --version
-assert_eq "--version names version and protocol" "herdr-peers 0.2.2 (protocol 1)" "$OUT"
+assert_eq "--version names version and protocol" "herdr-peers 0.2.3 (protocol 1)" "$OUT"
 run "$ROOT/bin/herdr-peers" --version
 assert_rc "bin/ shim runs the skill's helper" 0
 ln -s "$ROOT/bin/herdr-peers" "$SANDBOX/bin/hp-link"
@@ -35,7 +35,7 @@ assert_eq "ask is recorded launched before relying" "launched" "$(field "$rec" s
 assert_eq "record names the peer kind" "codex" "$(field "$rec" kind)"
 assert_contains "record stores a prompt digest" "$(field "$rec" prompt_digest)" "sha256:"
 assert_not_contains "record never stores the prompt text" "$rec" "parser"
-check "log dir carries a .gitignore" test -f "$WORK/.herdr-peers/.gitignore"
+check "default state is outside the checkout" test ! -e "$WORK/.herdr-peers"
 check "nothing is written under .dwp without DWP_PLAN" test ! -e "$WORK/.dwp"
 
 run "$HELPER" ask local:w1:p1 "talking to myself"
@@ -223,7 +223,7 @@ run "$HELPER" ask "${LONG_C:0:12}:w1:p1" "via the 12 characters an older list pr
 assert_rc "ask accepts a unique 12-character id prefix" 0
 assert_contains "the prefix is routed to the full machine id" "$(tail -1 "$FAKE_HERDR_DIR/argv.log")" \
   "\"--machine\", \"$LONG_C\""
-assert_contains "the record carries the full id" "$(tail -1 "$WORK/.herdr-peers/log.ndjson")" "$LONG_C:w1:p1"
+assert_contains "the record carries the full id" "$(tail -1 "$(state_log)")" "$LONG_C:w1:p1"
 run "$HELPER" status "${LONG_C:0:12}:w1:p1" --json
 assert_rc "status accepts a unique prefix too" 0
 assert_contains "status reports the full id" "$OUT" "$LONG_C:w1:p1"
@@ -256,7 +256,7 @@ assert_eq "log --json prints one JSON record per line" "2" "$lines"
 new_world location
 git init -q "$WORK" && mkdir -p "$WORK/sub/dir" && cd "$WORK/sub/dir" || exit 2
 run "$HELPER" log --path
-assert_eq "the log lives at the git toplevel" "$(cd "$WORK" && pwd -P)/.herdr-peers/log.ndjson" "$OUT"
+assert_contains "the log lives under XDG state" "$OUT" "/herdr-peers/"
 run env HERDR_PEERS_LOG="$WORLD/custom/peers.ndjson" "$HELPER" log --path
 assert_eq "HERDR_PEERS_LOG overrides the location" "$WORLD/custom/peers.ndjson" "$OUT"
 
@@ -325,9 +325,9 @@ assert_eq "log --id returns only that ask's records (caller, delegate, cancel)" 
 new_world remote_reply
 id=$("$HELPER" ask bb22:w1:p1 "remote round trip")
 cp "$FAKE_HERDR_DIR/bb22/panes/w1_p1.last" "$WORK/remote-ask.txt"
-run as_pane w1:p1 env HERDR_PEERS_LOG="$WORLD/box-log.ndjson" "$HELPER" check "$WORK/remote-ask.txt"
+run as_pane w1:p1 env FAKE_HERDR_SERVER_ID=remote-box HERDR_PEERS_LOG="$WORLD/box-log.ndjson" "$HELPER" check "$WORK/remote-ask.txt"
 assert_rc "the remote peer may answer" 0
-run as_pane w1:p1 env HERDR_PEERS_LOG="$WORLD/box-log.ndjson" "$HELPER" reply aa11:w1:p1 "$id" "box is fine"
+run as_pane w1:p1 env FAKE_HERDR_SERVER_ID=remote-box HERDR_PEERS_LOG="$WORLD/box-log.ndjson" "$HELPER" reply aa11:w1:p1 "$id" "box is fine"
 assert_rc "the remote peer replies to the caller's machine id" 0
 assert_contains "the reply travels through --machine aa11" "$(tail -1 "$FAKE_HERDR_DIR/argv.log")" '"--machine", "aa11", "agent", "prompt", "w1:p1"'
 assert_contains "the reply lands in the caller's pane" "$(cat "$FAKE_HERDR_DIR/aa11/panes/w1_p1.last")" "box is fine"

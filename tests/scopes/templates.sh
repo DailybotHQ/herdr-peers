@@ -13,7 +13,7 @@ for f in grant.md ask.md reply.md delegation-record.json; do
 done
 
 fields=$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(" ".join(sorted(s["required"])))' "$SCHEMA")
-for k in task transport via kind profile target worktree prompt_digest state result_path; do
+for k in server_id task transport via kind profile target worktree prompt_digest state result_path; do
   assert_contains "schema requires delegation field $k" " $fields " " $k "
 done
 states=$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(",".join(s["properties"]["state"]["enum"]))' "$SCHEMA")
@@ -35,7 +35,7 @@ as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id2" "two" >/dev/null
 id3=$("$HELPER" ask --fanout 5 --reason "demo" local:w1:p2 "third")
 "$HELPER" cancel "$id3" --reason "not needed" >/dev/null                                       # caller cancelled
 FAKE_HERDR_FAIL="agent prompt" "$HELPER" ask local:w1:p2 "will fail" >/dev/null 2>&1          # caller failed
-LOG="$WORK/.herdr-peers/log.ndjson"
+LOG="$(state_log)"
 seen=$(python3 -c 'import json,sys; print(" ".join(sorted({(json.loads(l)["role"]+":"+json.loads(l)["state"]) for l in open(sys.argv[1]) if l.strip()})))' "$LOG")
 assert_eq "the run covers every role and state the helper writes" \
   "caller:cancelled caller:completed caller:failed caller:launched delegate:completed delegate:launched" "$seen"

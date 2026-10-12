@@ -188,6 +188,10 @@ def main(argv):
     if group == 'machine' and verb == 'list':
         print(json.dumps(load_json(os.path.join(root, 'machines.json'), [])))
         return
+    if group == 'api' and verb == 'snapshot':
+        server_id = os.environ.get('FAKE_HERDR_SERVER_ID', 'fake-local')
+        ok('cli:api:snapshot', {'snapshot': {'server_id': server_id},
+                                'type': 'session_snapshot'})
     if group == 'agent':
         return agent_cmd(srv, verb, tail)
     if group == 'pane':

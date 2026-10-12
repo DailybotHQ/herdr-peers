@@ -34,7 +34,8 @@ else
     assert_eq "live: the real listing marks exactly one row as you" "1" "$you"
     run live "$HELPER" ask --scope local local:w0:p0 "never sent"
     assert_rc "live: asking a pane that does not exist fails cleanly (exit 1)" 1
-    check "live: nothing was recorded for the failed ask" sh -c "! grep -q '\"state\": \"launched\"' '$SANDBOX/live/.herdr-peers/log.ndjson' 2>/dev/null"
+    live_log=$(live "$HELPER" log --path 2>/dev/null || true)
+    check "live: nothing was recorded for the failed ask" test ! -e "$live_log"
     run live "$HELPER" status --json "local:$LIVE_PANE"
     assert_rc "live: status reads this pane's real state" 0
     state=$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])' 2>/dev/null)

@@ -12,7 +12,7 @@ LANES_SCHEMA="$ROOT/docs/schema/lanes-v1.json"
 VALIDATE="$ROOT/tests/tools/validate_records.py"
 # screen MACHINE PANE TEXT — what the fake shows in that pane.
 screen() { printf '%s\n' "$3" >"$FAKE_HERDR_DIR/$1/panes/$(printf '%s' "$2" | tr ':' '_').out"; }
-last_log() { tail -1 "$WORK/.herdr-peers/log.ndjson" 2>/dev/null; }
+last_log() { tail -1 "$(state_log)" 2>/dev/null; }
 sends_keys() { grep -c 'send-keys' "$FAKE_HERDR_DIR/argv.log"; }
 
 # --- status: lane states ---------------------------------------------------------
@@ -115,7 +115,7 @@ assert_rc "a malformed --vendor is a usage error (exit 2)" 2
 run "$HELPER" log
 assert_contains "log shows vendor and profile" "$OUT" "openai     @work1"
 run python3 "$VALIDATE" "$ROOT/skills/herdr-peers/templates/delegation-record.json" \
-  "$WORK/.herdr-peers/log.ndjson"
+  "$(state_log)"
 assert_rc "records with vendor validate against the delegation schema" 0
 
 # --- lanes (lanes-v1) ---------------------------------------------------------------
@@ -174,7 +174,7 @@ run env HERDR_PANE_ID=w9:p9 "$HELPER" ask local:w1:p2 "from a stale id"
 assert_rc "an ask from a pane that does not exist is refused (exit 6)" 6
 assert_contains "the refusal names the stale id" "$ERR" "stale"
 assert_eq "nothing was sent from the stale id" "" "$(pane_text local w1:p2)"
-check "nothing was recorded from the stale id" test ! -e "$WORK/.herdr-peers/log.ndjson"
+check "nothing was recorded from the stale id" test ! -e "$(state_log)"
 sleep 30 &
 other=$!
 echo "$other" >"$FAKE_HERDR_DIR/local/panes/w1_p1.pids"

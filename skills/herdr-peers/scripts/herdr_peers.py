@@ -26,7 +26,7 @@ import subprocess
 import sys
 import time
 
-VERSION = '0.2.2'
+VERSION = '0.2.3'
 PROTOCOL = 1
 MARKER = '[herdr-peers]'
 DEFAULT_MAX_BYTES = 16384
@@ -556,6 +556,57 @@ def my_terminal_id():
     return ((data.get('result') or {}).get('pane') or {}).get('terminal_id')
 
 
+def server_identity():
+    """Return a stable, non-path Herdr server identity for this process.
+
+    Herdr exposes the socket path to managed panes. Some test or future Herdr
+    servers expose an explicit id through the API instead, so prefer that when
+    the socket environment is unavailable. The value is used to partition
+    local state and is safe to put in records; a socket path is reduced to a
+    digest rather than being written to the log.
+    """
+    raw = os.environ.get('HERDR_SERVER_ID')
+    if raw and re.fullmatch(MACHINE_RE, raw):
+        return raw
+    socket_path = os.environ.get('HERDR_SOCKET_PATH')
+    if socket_path:
+        return 'sha256:' + hashlib.sha256(('socket:' + socket_path).encode('utf-8')).hexdigest()
+    try:
+        data = herdr_json(['api', 'snapshot'], timeout=8)
+        result = data.get('result') if isinstance(data, dict) else None
+        snapshot = result.get('snapshot') if isinstance(result, dict) else None
+        if isinstance(snapshot, dict):
+            for key in ('server_id', 'server_identity', 'id'):
+                value = snapshot.get(key)
+                if isinstance(value, str) and re.fullmatch(MACHINE_RE, value):
+                    return value
+            value = snapshot.get('socket') or snapshot.get('socket_path')
+            if isinstance(value, str) and value:
+                return 'sha256:' + hashlib.sha256(('socket:' + value).encode('utf-8')).hexdigest()
+    except Stop:
+        pass
+    # A standalone `check` can run without Herdr. It has no server context,
+    # so keep that state isolated under an explicit, deterministic bucket.
+    return 'unknown'
+
+
+def state_root():
+    root = os.environ.get('XDG_STATE_HOME')
+    if not root:
+        root = os.path.join(os.path.expanduser('~'), '.local', 'state')
+    return os.path.join(root, 'herdr-peers')
+
+
+def state_key(server_id):
+    """A filesystem-safe key that does not expose a socket path."""
+    return hashlib.sha256(server_id.encode('utf-8')).hexdigest()
+
+
+def self_cache_path(store, pane):
+    """Cache a probe per server and pane; panes on one server are distinct."""
+    return os.path.join(store.dir, 'self-%s.json' % state_key(pane)[:24])
+
+
 def enabled_machines():
     rc, out, err = herdr(['machine', 'list', '--json'], timeout=12)
     if rc != 0:
@@ -572,8 +623,9 @@ def enabled_machines():
 
 def probe_self(pane, store):
     """The saved-machine id whose server hosts this very pane (matched by
-    terminal_id), cached per terminal in the log directory; None if none."""
-    cache = os.path.join(store.dir, 'self.json')
+    terminal_id), cached per terminal in this server's state directory."""
+    cache = self_cache_path(store, pane)
+    migrate_legacy_self(pane, store)
     try:
         terminal = my_terminal_id()
     except Stop:
@@ -628,14 +680,49 @@ def self_addresses(pane, store, probe=False):
 
 
 def cached_self(pane, store):
+    migrate_legacy_self(pane, store)
     try:
-        with open(os.path.join(store.dir, 'self.json'), 'r', encoding='utf-8') as fh:
+        with open(self_cache_path(store, pane), 'r', encoding='utf-8') as fh:
             cached = json.load(fh)
         if cached.get('pane') == pane:
             return cached.get('machine_id')
     except (OSError, ValueError):
         pass
     return None
+
+
+def migrate_legacy_self(pane, store):
+    """Migrate the old checkout cache only when its terminal proves it is ours.
+
+    A checkout may be bind-mounted into another machine. Once this server has
+    inspected the legacy file, a marker prevents a later server from treating
+    the same file as fresh state. A missing terminal identity is not enough to
+    migrate or mark it, so a later Herdr-aware invocation can retry safely.
+    """
+    marker = os.path.join(store.dir, 'legacy-self-%s.migrated' % state_key(pane)[:24])
+    if os.path.exists(marker):
+        return
+    try:
+        terminal = my_terminal_id()
+    except Stop:
+        return
+    legacy = os.path.join(project_root(), '.herdr-peers', 'self.json')
+    cached = None
+    try:
+        with open(legacy, 'r', encoding='utf-8') as fh:
+            cached = json.load(fh)
+    except (OSError, ValueError):
+        pass
+    if isinstance(cached, dict) and cached.get('pane') == pane and \
+            cached.get('terminal_id') == terminal and \
+            isinstance(cached.get('machine_id'), str) and \
+            re.fullmatch(MACHINE_RE, cached['machine_id']):
+        store.ensure()
+        write_private(self_cache_path(store, pane),
+                      json.dumps({'pane': pane, 'terminal_id': terminal,
+                                  'machine_id': cached['machine_id']}))
+    store.ensure()
+    write_private(marker, 'migrated\n')
 
 
 def agent_info(addr):
@@ -681,13 +768,17 @@ class Store(object):
     """Append-only delegation log (protocol §6, record before relying)."""
 
     def __init__(self):
+        self.server_id = server_identity()
+        self.state_dir = os.path.join(state_root(), state_key(self.server_id))
         explicit = os.environ.get('HERDR_PEERS_LOG')
         if explicit:
             self.path = os.path.abspath(explicit)
-            self.dir = os.path.dirname(self.path)
+            # Keep the caller-selected log path, but never share the mutable
+            # lock, self cache or reply copies between Herdr servers.
+            self.dir = self.state_dir
             self.owned_dir = False
         else:
-            self.dir = os.path.join(project_root(), '.herdr-peers')
+            self.dir = self.state_dir
             self.path = os.path.join(self.dir, 'log.ndjson')
             self.owned_dir = True
         self.replies = os.path.join(self.dir, 'replies')
@@ -695,12 +786,14 @@ class Store(object):
     def ensure(self):
         if not os.path.isdir(self.dir):
             os.makedirs(self.dir, 0o700)
-        if self.owned_dir:
-            ignore = os.path.join(self.dir, '.gitignore')
-            if not os.path.lexists(ignore):
-                write_private(ignore, '# herdr-peers local state; never commit it\n*\n')
+        if not self.owned_dir:
+            parent = os.path.dirname(self.path)
+            if parent and not os.path.isdir(parent):
+                os.makedirs(parent, 0o700)
+        # XDG state is outside the checkout, so no repository .gitignore is
+        # needed.
 
-    def records(self):
+    def records(self, all_machines=False):
         out = []
         try:
             with open(self.path, 'r', encoding='utf-8') as fh:
@@ -712,21 +805,24 @@ class Store(object):
                         rec = json.loads(line)
                     except ValueError:
                         continue
-                    if isinstance(rec, dict):
+                    if isinstance(rec, dict) and (all_machines or
+                                                  rec.get('server_id') == self.server_id):
                         out.append(rec)
         except OSError:
             pass
         return out
 
-    def latest(self):
+    def latest(self, all_machines=False):
         """{(role, id): last record}."""
         out = {}
-        for rec in self.records():
+        for rec in self.records(all_machines=all_machines):
             out[(rec.get('role'), rec.get('id'))] = rec
         return out
 
     def append(self, rec):
         self.ensure()
+        rec = dict(rec)
+        rec['server_id'] = self.server_id
         line = json.dumps(rec, sort_keys=True, ensure_ascii=False) + '\n'
         append_line(self.path, line)
         plan = os.environ.get('DWP_PLAN')
@@ -1266,7 +1362,7 @@ def cmd_list(args):
                          'you': machine == 'local' and pane == my_pane_id})
     if self_id and my_pane_id:
         store.ensure()
-        write_private(os.path.join(store.dir, 'self.json'),
+        write_private(self_cache_path(store, my_pane_id),
                       json.dumps({'pane': my_pane_id, 'terminal_id': my_term,
                                   'machine_id': self_id}))
     n = 0
@@ -1309,9 +1405,10 @@ def cmd_log(args):
     if args.path:
         print(store.path)
         return EXIT_OK
-    recs = store.records()
+    recs = store.records(all_machines=args.all_machines)
     if args.open:
-        recs = [r for r in store.latest().values() if r.get('state') == 'launched']
+        recs = [r for r in store.latest(all_machines=args.all_machines).values()
+                if r.get('state') == 'launched']
     if args.id:
         recs = [r for r in recs if r.get('id') == args.id]
     if args.json:
@@ -1477,7 +1574,7 @@ def cmd_lanes(args):
     store = Store()
     pane = my_pane(args)
     per_peer = {}
-    for (role, _), rec in store.latest().items():
+    for (role, _), rec in store.latest(all_machines=args.all).items():
         if role != 'caller' or not (args.all or mine(rec, pane)):
             continue
         peer = parse_address(rec.get('target') or '')
@@ -1485,7 +1582,7 @@ def cmd_lanes(args):
             continue
         per_peer.setdefault(peer, []).append(rec)
     first_ts = {}
-    for rec in store.records():
+    for rec in store.records(all_machines=args.all):
         if rec.get('role') == 'caller':
             first_ts.setdefault(rec.get('id'), rec.get('ts'))
     labels = machine_labels() if per_peer else {}
@@ -1616,6 +1713,7 @@ def build_parser():
     lg.add_argument('--json', action='store_true')
     lg.add_argument('--id')
     lg.add_argument('--open', action='store_true', help='only asks still open')
+    lg.add_argument('--all-machines', action='store_true', help='include records from every Herdr server in this log')
     lg.add_argument('--path', action='store_true', help='print the log path')
 
     st = sub.add_parser('status', help="a peer lane's state and blocked-screen class "

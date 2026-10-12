@@ -151,7 +151,7 @@ are evaluated in order; the first match decides.
   exceed the cap only with a recorded reason (`--fanout N --reason "…"`).
 - **Record before relying.** Before a caller uses a reply, the delegation and
   its outcome MUST be written to the caller's record: a local append-only log
-  (`.herdr-peers/log.ndjson`, or `$HERDR_PEERS_LOG`), and — when the caller
+  (machine-scoped XDG state, or `$HERDR_PEERS_LOG`), and — when the caller
   runs inside a plan that sets `DWP_PLAN` — that plan's delegation record as
   well. Records hold a digest of the prompt, never its text.
 - A delegate's result is **asserted** evidence until the caller verifies it
