@@ -4,7 +4,7 @@
 
 | Version | Supported |
 | --- | --- |
-| 0.3.x (latest: 0.3.1) | yes |
+| 0.3.x (latest: 0.3.2) | yes |
 | < 0.3 | no |
 
 While herdr-peers is `0.x`, only the latest release receives fixes. Fixes

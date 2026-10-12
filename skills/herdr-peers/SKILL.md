@@ -1,11 +1,11 @@
 ---
 name: herdr-peers
 description: "Ask another coding agent in a Herdr pane — on this machine or another one — and get exactly one authorized reply back, with a loop guard, depth limit 1, a fan-out cap and a record of every delegation; send one-way notices; keep a plan's lead with epochs and succession. Use only when the user mentions Herdr, peers, or another agent, pane or machine, or when a plan you are executing delegates a task through Herdr. Do not use merely because parallel work could help. Requires HERDR_ENV=1 and Herdr's official herdr skill."
-version: "0.3.1"
+version: "0.3.2"
 license: MIT
 allowed-tools: Bash, Read
 metadata:
-  version: "0.3.1"
+  version: "0.3.2"
   protocol: 1
 ---
 
@@ -59,18 +59,18 @@ opinion nobody asked for, or to avoid doing the work yourself.
 | `status <machine>:<pane> [--json]` | A peer lane's state (`working`, `idle`, `blocked`, `done`, `unknown`, `no_agent`, `unreachable`), agent kind, and the class of a waiting screen with its documented next step. Read-only: never sends keys. |
 | `lanes [--json] [--all] [--plan P]` | One row per peer you asked or your lead record lists: agent, vendor, profile, live state, screen class (incl. `usage_limit`), open asks, last reported capacity, last ask. `--json` prints the `herdr-peers/lanes-v1` contract with `plan`, `lead` and `epoch`. |
 | `lead claim --plan P [--succession A,B] [--lanes A,B]` | Become the lead of plan P (epoch 1, or +1 after a release), or refresh your record (`--lanes` replaces the list, empty clears, omitted preserves); sends a lead notice to every lane and successor. |
-| `lead show [--plan P] [--json]` | The plan's lead record (`herdr-peers/lead-v1`: plan, lead, epoch, succession, lanes, updated_at); without a plan, every record. |
+| `lead show [--plan P] [--json] [--pane ID]` | The plan's lead record (`herdr-peers/lead-v1`: plan, lead, epoch, succession, lanes, repo_root, updated_at); without a plan, every record. |
 | `lead handover <machine>:<pane> --plan P [--succession …] [--lanes …]` | The current lead hands over (epoch+1) and stops leading. |
 | `lead takeover --plan P [--reason R]` | The first reachable successor takes over a lead that is gone (unreachable, no agent, usage limit) — or, with a recorded `--reason`, one whose asks timed out twice (epoch+1). |
 | `lead release --plan P` | The current lead leaves the plan without a lead (epoch+1). |
 | `cancel <id> [--reason R]` | Closes an open ask (yours, or one you decline). |
 
 `ask`, `notify`, `reply`, `check`, `wait`, `status`, `lanes`, `cancel` and the `lead`
-verbs that change a record take `--pane <pane_id>`:
+verbs (including `lead show`) take `--pane <pane_id>`:
 this session's own pane, which wins over the inherited `HERDR_PANE_ID`. A Codex
 lane needs it — Codex runs its commands from a per-profile background server
 whose `HERDR_PANE_ID` names the pane that first started it — so pass the pane
-the lead's brief names (`herdr-peers ask --pane w2:p4 …`). `status` validates
+the lead's brief names (`herdr-peers ask --pane w2:p4 …`). `status` and `lead show` validate
 an explicit pane but still addresses its positional target. A machine id may be
 shortened to any unique prefix of at least 4 characters.
 
@@ -86,7 +86,7 @@ Environment (all optional):
 | `HERDR_PEERS_LOG` | Shared log file override (default is machine-scoped XDG state: `$XDG_STATE_HOME/herdr-peers/<server>/log.ndjson`). Records are filtered to the current server; use `log --all-machines` to inspect a shared override. |
 | `HERDR_PEERS_PYTHON` | Python interpreter for the helper (default `python3`). |
 | `HERDR_PEERS_BRIEFER` | The address that launched or briefed this pane (set by the launcher): the only sender whose *first* lead notice for a plan is accepted (a peer whose ask this pane recorded counts too). |
-| `DWP_PLAN`, `DWP_TASK` | When a plan directory is set, records are mirrored to its `analysis_results/delegations.ndjson`, tagged with the task; its basename is the default `--plan`. |
+| `DWP_PLAN`, `DWP_TASK` | Plan directory or id: ids resolve under the git checkout root using the `.dwp`, `plans`, `<id>` path components when that directory exists. Records mirror to `analysis_results/delegations.ndjson`, tagged with the task. A directory basename or the id itself is the default `--plan` (including `repo/id`). Missing directories warn and skip the mirror. |
 
 Exit codes: `0` ok · `1` Herdr error · `2` usage · `3` protocol refusal —
 never answer (also a notice) · `4` policy refusal (scope, self, fan-out, size, control
@@ -182,9 +182,14 @@ named here) and `Read`.
   and reply copies remain machine-scoped. `log --all-machines` includes every
   server's records in an overridden log. An old checkout `.herdr-peers/self.json`
   is migrated only when its terminal id matches the current Herdr pane.
+  Lead records carry the claiming repository git common root (`repo_root`,
+  null outside git), kept local and omitted from lead notices. Fencing
+  never compares it. Active claims from a different root are refused:
+  qualify the id with `--plan <repo>/<id>`. Released claims start with empty
+  lanes/succession unless explicitly supplied, keeping epochs monotonic.
   Lead records live in the same state directory (`leads/`, `0600`, written
-  atomically). When `DWP_PLAN` names a plan
-  directory, the same records are appended to that plan's
+  atomically). When `DWP_PLAN` names an existing plan
+  directory or a resolvable plan id, the same records are appended to that plan's
   `analysis_results/delegations.ndjson`.
 - Panes, only when the human or the plan asked for a new peer
   ([launcher.md](launcher.md)); you close only panes you created.

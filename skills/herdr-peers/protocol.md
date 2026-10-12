@@ -299,7 +299,8 @@ filename prefix is the expected decision (`answer-`, `notice-`, `never-`,
 A **lead** is the peer that holds a plan's lead record. A plan has at most one
 lead; several plans MAY have different leads in one workspace. The record
 (`herdr-peers/lead-v1`, `docs/schema/lead-v1.json` in the repository) is
-`{schema, plan, lead, epoch, succession[], lanes[], updated_at}`; `lead` is
+`{schema, plan, lead, epoch, succession[], lanes[], updated_at}` on the
+wire, with optional local `repo_root` metadata in stored records; `lead` is
 `null` after a release. Each peer keeps its copy in the helper's machine-scoped
 state, so panes on one Herdr server share it. Only the holder of the
 **highest epoch** acts as lead.
@@ -317,6 +318,32 @@ state, so panes on one Herdr server share it. Only the holder of the
 an **idle** pane is not proof — text another pane delivered can look the same
 — so the issuer needs a recorded reason for it, and a receiver never counts
 it as gone.
+
+`repo_root` is the claiming repository's canonical git common root (shared
+by linked worktrees), or `null` outside git. It is optional on legacy
+records; other unknown keys are refused. New claims capture it locally;
+lead notices omit it so strict older
+receivers accept the unchanged wire record and host paths never reach
+remote machines. The state file keeps it in the local envelope outside the seven-key
+record; new helper reads reconstruct the optional field for `lead show`.
+This keeps same-server older helpers able to read the shared record.
+Fencing never compares it. Local handover, takeover and
+release preserve it. An active `claim` first checks the holder: another
+pane is refused as
+foreign to the lead. The holder is then refused (exit 4) when its recorded
+root differs from the caller's, with safe local diagnostics naming both
+roots and the remedy `--plan <repo>/<id>`. Secret-shaped caller roots are
+redacted. Subfolders share the same common root and remain valid. A legacy
+active record without this field
+keeps the holder checks; its holder's refresh captures the root.
+
+Plan ids accept safe slash-separated segments such as `repo/PLAN_001_work`
+(up to 128 characters total). Absolute paths, traversal and empty segments
+are refused. Records stay keyed by plan id: lanes in other repositories
+can read the record or resolve `lead` by `--plan` without a root check.
+A claim after release starts with empty lanes and succession (explicit
+lists still apply), captures the new caller's root, and increments the
+existing epoch; it never revives stale lanes from the released record.
 
 A refresh through `lead claim --lanes A,B` replaces `lanes[]`; omitting
 `--lanes` preserves it on refresh, and `--lanes ''` clears it. A lead SHOULD
@@ -373,3 +400,12 @@ plan's own authorization.
 The address `lead` in `ask` and `notify` names the current lead of `--plan`
 or `$DWP_PLAN`; when that plan (from `$DWP_PLAN`) has no record, it names the
 lead of the one stored record that lists this peer as a lane or successor.
+
+### Plan mirror resolution
+
+`DWP_PLAN` may name an existing directory or a plan id. If it is not a
+directory, the helper resolves the git checkout root from the caller's
+cwd, then appends the `.dwp`, `plans`, and `<id>` path components. The checkout root (not the common root) keeps a
+linked worktree's plan mirror local. When no directory is found, the
+existing warning is retained and mirroring is skipped; the helper's
+machine-scoped record still works. Mirrors remain private (0600).

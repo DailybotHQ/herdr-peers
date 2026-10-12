@@ -14,7 +14,7 @@
     "generated_at": { "type": "string",
                       "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
                       "description": "RFC 3339 UTC time of the listing." },
-    "plan": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    "plan": { "type": ["string", "null"], "pattern": "^(?=.{1,128}$)[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$",
               "description": "The plan whose lead record was resolved (--plan, $DWP_PLAN, or the one record this pane is in); null when none." },
     "lead": { "type": ["string", "null"],
               "pattern": "^(local|[A-Za-z0-9._-]{1,64}):[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}$",
