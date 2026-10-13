@@ -32,6 +32,7 @@ MARKER = '[herdr-peers]'
 DEFAULT_MAX_BYTES = 16384
 DEFAULT_FANOUT = 4
 DEFAULT_WAIT_S = 600
+WAIT_SLICE_S = 5.0  # wait re-reads the log between pane-output waits this long
 GRANT_LINE = 'You may answer this without asking a human. Reply exactly once with:'
 REPLY_CLAUSE = 'This is a reply. Do not answer it.'
 NOTICE_CLAUSE = 'This is a notice. Do not answer it.'
@@ -1443,27 +1444,33 @@ def cmd_wait(args):
     pane = my_pane(args)
     if not mine(asked, pane):
         raise Stop(EXIT_USAGE, 'no ask with id %s from this pane in %s' % (args.id, store.path))
-    stored = store.reply_path(args.id)
-    if asked.get('state') == 'completed' and os.path.isfile(stored):
-        print(read_file(stored).rstrip('\n'))  # rebuilt from the id, never from the log
+    if settled_reply(store, asked):
         return EXIT_OK
-    if asked.get('state') == 'completed':
-        raise Stop(EXIT_PROTOCOL, 'ask %s is completed but its reply copy %s is missing'
-                   % (args.id, stored))
-    if asked.get('state') in ('failed', 'cancelled', 'unroutable'):
-        note = asked.get('note')
-        suffix = ': %s' % note if note else ''
-        raise Stop(EXIT_PROTOCOL, 'ask %s is %s%s' % (args.id, asked['state'], suffix))
     baseline = read_pane(args.pane if args.pane else pane, args.lines + 50)
     new_stamp = '%s protocol=%d reply-to=%s from=%s depth=1' % (
         MARKER, PROTOCOL, args.id, asked.get('target'))
     legacy_stamp = '%s protocol=%d reply-to=%s depth=1' % (
         MARKER, PROTOCOL, args.id)
-    needle = '(?m)^(?:%s|%s)(?:\\s.*)?$' % (re.escape(new_stamp), re.escape(legacy_stamp))
-    timeout_ms = int(args.timeout * 1000)
-    rc, out, err = herdr(['pane', 'wait-output', pane, '--regex', needle, '--source',
-                          'recent-unwrapped', '--timeout', str(timeout_ms)],
-                         timeout=args.timeout + 15)
+    # An agent's TUI echoes a delivered prompt indented (Claude Code, Codex), so
+    # the stamp may follow leading blanks; extract_reply still demands it exactly.
+    needle = '(?m)^[ \\t]*(?:%s|%s)(?:\\s.*)?$' % (re.escape(new_stamp), re.escape(legacy_stamp))
+    deadline = time.time() + args.timeout
+    while True:
+        # Wait in slices: between them, a reply that `check` recorded meanwhile
+        # (the agent read it as input while this command blocked) ends the wait.
+        left = max(0.0, deadline - time.time())
+        span = min(left, WAIT_SLICE_S)
+        rc, out, err = herdr(['pane', 'wait-output', pane, '--regex', needle, '--source',
+                              'recent-unwrapped', '--timeout', str(max(1, int(span * 1000)))],
+                             timeout=span + 15)
+        if rc == 0:
+            break
+        timed_out = rc == 124 or 'timeout' in (err + out)
+        asked = store.latest().get(('caller', args.id)) or asked
+        if settled_reply(store, asked):
+            return EXIT_OK
+        if not timed_out or time.time() >= deadline:
+            break
     if rc != 0:
         peer = parse_address(asked.get('target') or '')
         state = 'unknown'
@@ -1508,6 +1515,24 @@ def cmd_wait(args):
     return EXIT_OK
 
 
+def settled_reply(store, asked):
+    """Print the stored reply and return True when the ask is completed; raise
+    when it is closed without one; return False while it is still open."""
+    ask_id = asked['id']
+    stored = store.reply_path(ask_id)
+    if asked.get('state') == 'completed' and os.path.isfile(stored):
+        print(read_file(stored).rstrip('\n'))  # rebuilt from the id, never from the log
+        return True
+    if asked.get('state') == 'completed':
+        raise Stop(EXIT_PROTOCOL, 'ask %s is completed but its reply copy %s is missing'
+                   % (ask_id, stored))
+    if asked.get('state') in ('failed', 'cancelled', 'unroutable'):
+        note = asked.get('note')
+        suffix = ': %s' % note if note else ''
+        raise Stop(EXIT_PROTOCOL, 'ask %s is %s%s' % (ask_id, asked['state'], suffix))
+    return False
+
+
 def read_pane(pane, lines):
     rc, text, _ = herdr(['pane', 'read', pane, '--source', 'recent-unwrapped',
                          '--lines', str(lines)], timeout=20)
@@ -1540,18 +1565,22 @@ def extract_reply(text, ask_id, expected_from, max_lines):
             break
     if stamp is None:
         return None
-    start = max(-1, stamp - max_lines - 1)
-    for i in range(stamp - 1, start, -1):
-        if MARKER in lines[i]:
-            start = i
-            break
-    body_start = start + 1
-    if start >= 0:
-        for i in range(start + 1, stamp):
-            if lines[i].strip() == REPLY_CLAUSE:
-                body_start = i + 1
+    indent = len(lines[stamp]) - len(lines[stamp].lstrip(' \t'))
+    if indent:
+        body = echoed_body(lines, stamp, indent, max_lines)
+    else:
+        start = max(-1, stamp - max_lines - 1)
+        for i in range(stamp - 1, start, -1):
+            if MARKER in lines[i]:
+                start = i
                 break
-    body = lines[body_start:stamp]
+        body_start = start + 1
+        if start >= 0:
+            for i in range(start + 1, stamp):
+                if lines[i].strip() == REPLY_CLAUSE:
+                    body_start = i + 1
+                    break
+        body = lines[body_start:stamp]
     while body and not body[0].strip():
         body.pop(0)
     while body and not body[-1].strip():
@@ -1566,6 +1595,34 @@ def extract_reply(text, ask_id, expected_from, max_lines):
     elif verdict.get('reply_from') != expected_from:
         return None
     return '\n'.join(body), legacy
+
+
+ECHO_GLYPH_RE = re.compile(r'[^\w\s][ \t]*')
+
+
+def echoed_body(lines, stamp, indent, max_lines):
+    """The body of a reply an agent's TUI echoed as its input: continuation
+    lines carry `indent` blanks and the first line carries the prompt glyph in
+    their place (Claude Code `❯ `, Codex `› `). Stops at that first line, at
+    any line not indented like the stamp, and at another protocol message."""
+    body = []
+    floor = max(-1, stamp - max_lines - 1)
+    for i in range(stamp - 1, floor, -1):
+        line = lines[i]
+        if MARKER in line or line.strip() == REPLY_CLAUSE:
+            break
+        if not line.strip():
+            body.append('')
+            continue
+        head, rest = line[:indent], line[indent:]
+        if not head.strip():
+            body.append(rest)
+            continue
+        if ECHO_GLYPH_RE.fullmatch(head):
+            body.append(rest)
+        break
+    body.reverse()
+    return body
 
 
 def close_caller_unroutable(store, ask_id, note):

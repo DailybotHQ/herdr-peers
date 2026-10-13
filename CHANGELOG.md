@@ -9,6 +9,16 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Fixed
+
+- `wait` no longer times out on a reply that reached the caller's pane. An
+  agent's TUI (Claude Code, Codex) echoes a delivered prompt indented, with
+  its prompt glyph on the first line, and `wait` only matched a stamp at the
+  start of a line. It now accepts the indented stamp (still exact, still
+  from the asked peer) and drops the glyph and indent from the body. It also
+  re-reads the log every few seconds, so a reply that `check` recorded while
+  `wait` blocked ends the wait.
+
 ### Changed
 
 - Repository tooling: the vendored `deepworkplan` skill moved to 7.8.0 and

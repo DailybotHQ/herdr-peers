@@ -192,6 +192,42 @@ assert_contains "the timeout reports the peer state" "$ERR" "the peer is idle"
 run "$HELPER" wait 01M4EZB9004TFF59TDWH9EDD1R --timeout 1
 assert_rc "wait on an unknown id is a usage error (exit 2)" 2
 
+# An agent's TUI echoes a delivered prompt indented, with its prompt glyph on
+# the first line (Claude Code `❯ `, Codex `› `). The reply comes from a peer on
+# another machine and lands while `wait` runs in this same pane.
+new_world wait_rendered
+id=$("$HELPER" ask bb22:w1:p1 "Which repository and branch?")
+for glyph in '❯' '›'; do
+  [ "$glyph" = '›' ] && id=$("$HELPER" ask bb22:w1:p1 "Which repository and branch, again?")
+  ( sleep 0.4
+    printf '%s js, Patricia\n\n  [herdr-peers] protocol=1 reply-to=%s from=bb22:w1:p1 depth=1\n  This is a reply. Do not answer it.\n\n' \
+      "$glyph" "$id" >>"$FAKE_HERDR_DIR/local/panes/w1_p1.out" ) &
+  run "$HELPER" wait "$id" --timeout 5
+  wait
+  assert_rc "wait sees a reply the agent echoed indented ($glyph)" 0
+  assert_eq "wait drops the echo's prompt glyph and indent ($glyph)" "js, Patricia" "$OUT"
+  assert_eq "the rendered reply completes the ask ($glyph)" "completed" "$(field "$(last_log)" state)"
+done
+id=$("$HELPER" ask bb22:w1:p1 "multi-line answer?")
+( sleep 0.4
+  printf '● Ran 1 shell command\n\n❯ first line\n  second line\n\n  [herdr-peers] protocol=1 reply-to=%s from=bb22:w1:p1 depth=1\n  This is a reply. Do not answer it.\n' \
+    "$id" >>"$FAKE_HERDR_DIR/local/panes/w1_p1.out" ) &
+run "$HELPER" wait "$id" --timeout 5
+wait
+assert_eq "an echoed multi-line reply keeps its lines and nothing above them" "first line
+second line" "$OUT"
+
+# A reply recorded by `check` while `wait` blocks (the agent read it as input
+# but the pane no longer shows the stamp) ends the wait too.
+id=$("$HELPER" ask bb22:w1:p1 "recorded elsewhere?")
+printf 'stored answer\n\n[herdr-peers] protocol=1 reply-to=%s from=bb22:w1:p1 depth=1\nThis is a reply. Do not answer it.\n' \
+  "$id" >"$WORK/stored-reply.txt"
+( sleep 0.4; "$HELPER" check "$WORK/stored-reply.txt" >/dev/null 2>&1 ) &
+run "$HELPER" wait "$id" --timeout 5
+wait
+assert_rc "wait returns a reply that check recorded meanwhile" 0
+assert_eq "wait prints the reply check recorded" "stored answer" "$OUT"
+
 # --- list ---------------------------------------------------------------------
 new_world list
 run "$HELPER" list
