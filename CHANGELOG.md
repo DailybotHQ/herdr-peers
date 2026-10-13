@@ -9,6 +9,13 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Changed
+
+- Repository tooling: the vendored `deepworkplan` skill moved to 7.8.0 and
+  the AI Diff Reviewer skill to v3.3.14, the pack's pins (`skills-lock.json`);
+  the addon registry records herdr v1.0.0. The shipped skill and helper are
+  unchanged.
+
 ## [1.0.0] - 2026-10-13
 
 The first stable release. Protocol stays **1**; the helper's behavior, wire
