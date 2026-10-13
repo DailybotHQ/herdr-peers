@@ -28,7 +28,7 @@ herdr-peers (skill + helper script)
 | Root | `README.md`, `CHANGELOG.md` (Keep a Changelog), `SECURITY.md` (policy), `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `CREDITS.md`, `LICENSE`; `CLAUDE.md` is a symlink to this file |
 
 The protocol's interface version is `metadata.protocol` in `SKILL.md`; a wire
-change bumps it (and the minor version while 0.x). Keep `protocol.md`, the
+change bumps it (and the major version, since 1.0.0). Keep `protocol.md`, the
 helper constants and `templates/` in step — the `skill` and `templates` test
 scopes compare them.
 

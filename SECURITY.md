@@ -4,10 +4,10 @@
 
 | Version | Supported |
 | --- | --- |
-| 0.3.x (latest: 0.3.3) | yes |
-| < 0.3 | no |
+| 1.0.x (latest: 1.0.0) | yes |
+| < 1.0 | no |
 
-While herdr-peers is `0.x`, only the latest release receives fixes. Fixes
+Only the latest release receives fixes. Fixes
 land on `main` first and ship in the next tag (see [CHANGELOG.md](CHANGELOG.md)).
 
 ## Reporting a vulnerability

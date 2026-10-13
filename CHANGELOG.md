@@ -2,11 +2,35 @@
 
 All notable changes to herdr-peers are documented here. The format is based
 on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions
-follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (0.x:
-breaking changes bump the minor version and, when the wire format changes,
-the protocol number).
+follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Since
+1.0.0 a breaking change to the public interface bumps the major version, and
+a wire-format change also bumps the protocol number (before 1.0.0, breaking
+changes bumped the minor version).
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-10-13
+
+The first stable release. Protocol stays **1**; the helper's behavior, wire
+formats and schemas are unchanged from 0.3.3.
+
+### Changed
+
+- The public interface is now committed to Semantic Versioning: a breaking
+  change to any of the following bumps the major version, and a wire-format
+  change also bumps the protocol number.
+  - The CLI verbs `list`, `ask`, `notify`, `wait`, `check`, `reply`,
+    `status`, `lanes`, `lead claim|show|handover|takeover|release`, `log`
+    and `cancel`, their documented flags, and `--version` and `--skill`.
+  - Exit codes `0`–`7` and the documented `HERDR_PEERS_*`, `DWP_PLAN` and
+    `DWP_TASK` environment variables.
+  - Protocol 1: the ask, reply and notice stamps, the reply grant, the loop
+    guard, depth limit 1 and the fan-out cap.
+  - The JSON contracts `herdr-peers/lanes-v1`, `herdr-peers/lead-v1` and
+    the delegation record (`templates/delegation-record.json`).
+- Since v0.3.3 only the version moved to 1.0.0 (SKILL.md, the helper's
+  `--version`, the README install pins and SECURITY.md); there are no
+  functional changes. 0.x releases are no longer supported.
 
 ## [0.3.3] - 2026-10-12
 
@@ -301,7 +325,8 @@ First release. Interface version: **protocol 1** (`metadata.protocol: 1` in
   `harness lint protocol helper skill templates security live`; CI on Ubuntu
   and macOS.
 
-[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.3...v1.0.0
 [0.3.3]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.0...v0.3.1
