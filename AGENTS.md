@@ -18,6 +18,7 @@ herdr-peers (skill + helper script)
 | `skills/herdr-peers/scripts/` | The helper: `herdr-peers` (bash entry) + `herdr_peers.py` (python3 stdlib). It lives inside the skill so `npx skills add` installs it. |
 | `bin/herdr-peers` | Checkout shim that runs the skill's helper |
 | `tests/` | `run.sh` (sandboxed runner), `lib.sh`, `fakes/herdr`, `scopes/`, `fixtures/messages/`, `tools/` |
+| `assets/` | README logos (`logo-light.png`, `logo-dark.png`) |
 | `docs/` | `TESTING_GUIDE.md`, `SECURITY.md` (threat model) |
 | `scripts/` | `check-public-hygiene.sh` (public-hygiene check; allow-list in `.public-hygiene-allow`), `release-assets.sh` (release notes + `SHA256SUMS`) |
 | `.github/` | `workflows/ci.yml` (suite on Ubuntu + macOS, `public hygiene` job), `workflows/release.yml` (annotated tag → release), issue/PR templates, `CODEOWNERS`, `dependabot.yml` |
