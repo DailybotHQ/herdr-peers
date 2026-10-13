@@ -1,3 +1,11 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/DailybotHQ/herdr-peers/main/assets/logo-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/DailybotHQ/herdr-peers/main/assets/logo-light.png">
+    <img alt="herdr-peers" src="https://raw.githubusercontent.com/DailybotHQ/herdr-peers/main/assets/logo-light.png" width="440">
+  </picture>
+</p>
+
 # herdr-peers
 
 Any coding agent in a [Herdr](https://herdr.dev) pane can ask any other agent
@@ -7,29 +15,37 @@ reply** back.
 [![CI](https://github.com/DailybotHQ/herdr-peers/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/DailybotHQ/herdr-peers/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/DailybotHQ/herdr-peers?sort=semver)](https://github.com/DailybotHQ/herdr-peers/releases)
 [![License: MIT](https://img.shields.io/github/license/DailybotHQ/herdr-peers)](LICENSE)
+[![Protocol](https://img.shields.io/badge/protocol-1-blue.svg)](skills/herdr-peers/protocol.md)
+[![Powered by Dailybot](https://img.shields.io/badge/Powered%20by-Dailybot-6C5CE7.svg)](https://www.dailybot.com?utm_source=dailybotopensource&utm_medium=herdr-peers)
 
 ## What it is
 
-herdr-peers lets any coding agent in a [Herdr](https://herdr.dev) pane ask
-any other agent — in any pane, on any machine Herdr can reach — and get
-**exactly one authorized reply** back. It is a standalone agent skill plus a
-small helper (bash and the python3 standard library), for people who run
-several coding agents side by side and for the lead agent that coordinates
-them.
+herdr-peers is a standalone agent skill plus a small helper (bash and the
+python3 standard library) for people who run several coding agents side by
+side, and for the lead agent that coordinates them.
 
 Herdr can already put text into another agent's pane. What it does not
 define is a *conversation*: who may answer, how the answer finds its way back
 across machines, how two agents avoid answering each other forever, how many
 peers one agent may keep busy, and where the record of "I asked, it answered"
-lives. herdr-peers is that layer — a small protocol (stamp + reply grant +
-loop guard, depth limit 1, fan-out cap 4) and a helper so agents never
-hand-build it. Since v0.2.0 it is also the lead's control plane: it shows
-every lane's live state, says why a lane is stuck (including a lane at its
-usage limit), and lists open and recent asks and reported capacity per lane.
-Since v0.3.0 agents can send one-way **notices** that are never answered, and
-a plan has a **lead record** — epochs, an ordered succession, fenced handover
-and takeover — so the swarm outlives one account's limit. It builds on Herdr's official skill and never re-teaches
-Herdr's CLI.
+lives. herdr-peers is that layer, so agents never hand-build it:
+
+- **Ask and reply.** A small protocol — stamp, reply grant, loop guard,
+  depth limit 1, fan-out cap 4 — carries one ask to a peer and exactly one
+  reply back, on the same machine or across machines.
+- **Notices.** One-way messages (`reply=no`) that the receiver records and
+  never answers: handoffs, progress, "done".
+- **The lead's control plane.** `status` and `lanes` show every lane's live
+  state, say why a lane is stuck (folder trust, a login, a permission, a
+  usage limit), and list open and recent asks and reported capacity.
+- **Plan leadership.** A plan has a lead record — epochs, an ordered
+  succession, fenced handover and takeover, scoped to the claiming
+  repository — so a swarm outlives one account's usage limit.
+- **A record of every delegation.** An append-only, machine-scoped log of
+  digests (never prompt text), mirrored into a DeepWorkPlan plan when one is
+  set.
+
+It builds on Herdr's official skill and never re-teaches Herdr's CLI.
 
 ## Install
 
@@ -37,7 +53,7 @@ The skill (the helper ships inside it, at
 `~/.agents/skills/herdr-peers/scripts/herdr-peers` for a global install):
 
 ```bash
-npx --yes skills add DailybotHQ/herdr-peers@v0.3.2 --skill herdr-peers -g -y
+npx --yes skills add DailybotHQ/herdr-peers@v0.3.3 --skill herdr-peers -g -y
 ```
 
 Herdr's official skill, which this one depends on — pinned, or use the
@@ -51,11 +67,11 @@ Every machine whose agents should answer needs the skill too. From a
 checkout of the tag instead, verified against the release's `SHA256SUMS`:
 
 ```bash
-git clone --branch v0.3.2 https://github.com/DailybotHQ/herdr-peers
+git clone --branch v0.3.3 https://github.com/DailybotHQ/herdr-peers
 cd herdr-peers
-curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v0.3.2/SHA256SUMS
+curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v0.3.3/SHA256SUMS
 shasum -a 256 -c SHA256SUMS      # every shipped file: OK
-bin/herdr-peers --version        # herdr-peers 0.3.2 (protocol 1)
+bin/herdr-peers --version        # herdr-peers 0.3.3 (protocol 1)
 ```
 
 Requirements: Herdr ≥ 0.9.1, `bash`, `python3` ≥ 3.9 (standard library
@@ -140,8 +156,9 @@ next (folder trust only, on a pane you launched yourself, under the user's stand
 | `reply <machine>:<pane> <id> "<answer>"` | Answer an ask exactly once. |
 | `status <machine>:<pane> [--json]` | A lane's state (`working`, `idle`, `blocked`, `done`, `unknown`, `no_agent`, `unreachable`) and the class of a waiting screen — `folder_trust`, `bypass_ack` (Claude's bypass acknowledgement), `usage_limit` (hand off; also on idle lanes), `login`, `permission`, `unknown` — with the documented next step. Read-only: never sends keys, never prints screen text. |
 | `lanes [--json] [--all] [--plan P]` | One row per peer you asked or your lead record lists: agent, vendor, profile, live state, screen class, open asks, last reported capacity, last ask. `--json` is the contract [`herdr-peers/lanes-v1`](docs/schema/lanes-v1.json) (0.3.0 adds `plan`, `lead`, `epoch`, `capacity`); consumers ignore unknown keys. |
-| `lead claim\|show\|handover\|takeover\|release` | A plan's lead record [`herdr-peers/lead-v1`](docs/schema/lead-v1.json): who leads, the epoch, the ordered succession, the lanes notified on every change. Only the highest epoch leads; a stale lead steps down. |
+| `lead claim\|show\|handover\|takeover\|release` | A plan's lead record [`herdr-peers/lead-v1`](docs/schema/lead-v1.json): who leads, the epoch, the ordered succession, the lanes notified on every change. Only the highest epoch leads; a stale lead steps down. A record belongs to the repository that claimed it; from another repository, name it as `--plan <repo>/<id>`. |
 | `log [--open] [--json]`, `cancel <id>` | The delegation record (with vendor and profile); close an open ask. |
+| `--version`, `--skill` | Print the version and protocol; print the installed SKILL.md. |
 
 Folder trust is the only screen an agent may key through: by the lead, on a
 pane it launched itself, under the user's standing authorization. Claude's
@@ -250,8 +267,9 @@ in a public issue.
 | [skills/herdr-peers/orchestra.md](skills/herdr-peers/orchestra.md) | Leading many lanes: `status`, `lanes`, blocked screens, accounts, containers, troubleshooting |
 | [skills/herdr-peers/discipline.md](skills/herdr-peers/discipline.md) | How agents ask, wait, answer and clean up |
 | [skills/herdr-peers/launcher.md](skills/herdr-peers/launcher.md) | Launching a delegate in a new pane |
-| [skills/herdr-peers/templates/](skills/herdr-peers/templates/) | Grant, ask and reply templates; the delegation-record JSON schema |
+| [skills/herdr-peers/templates/](skills/herdr-peers/templates/) | Grant, ask, reply and notice templates; the delegation-record JSON schema |
 | [docs/schema/lanes-v1.json](docs/schema/lanes-v1.json) | The `lanes --json` contract (`herdr-peers/lanes-v1`) |
+| [docs/schema/lead-v1.json](docs/schema/lead-v1.json) | The lead record contract (`herdr-peers/lead-v1`) |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model and accepted residual risks |
 | [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) | Test scopes and the source-to-test map |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |

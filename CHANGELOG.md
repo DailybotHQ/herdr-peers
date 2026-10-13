@@ -8,6 +8,17 @@ the protocol number).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-12
+
+Protocol stays **1**; the helper, wire formats and schemas are unchanged.
+
+### Changed
+
+- The README carries the herdr-peers logo (light and dark variants in
+  `assets/`), a feature overview of asks, notices, the control plane, plan
+  leadership and the delegation record, repository-qualified plan ids,
+  `--version`/`--skill`, and the `lead-v1` schema in the documentation map.
+
 ## [0.3.2] - 2026-10-12
 
 Protocol stays **1**. `lead-v1` gains optional `repo_root`; legacy records
@@ -290,7 +301,8 @@ First release. Interface version: **protocol 1** (`metadata.protocol: 1` in
   `harness lint protocol helper skill templates security live`; CI on Ubuntu
   and macOS.
 
-[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/DailybotHQ/herdr-peers/compare/v0.2.3...v0.3.0
