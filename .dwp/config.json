@@ -2,12 +2,12 @@
   "addons": {
     "ai-diff-reviewer": {
       "enabled": true,
-      "version": "v3.3.11"
+      "version": "v3.3.14"
     },
     "herdr": {
       "enabled": true,
       "note": "This repository ships herdr-peers; the checkout helper is bin/herdr-peers.",
-      "version": "v0.2.3"
+      "version": "v1.0.0"
     }
   },
   "benchmark": {
