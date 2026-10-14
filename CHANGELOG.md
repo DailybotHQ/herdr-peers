@@ -21,6 +21,12 @@ changes bumped the minor version).
 
 ### Changed
 
+- Repository tooling: the vendored deepworkplan skill moved to 7.8.1, the
+  pack's coding-agents-kit and devcontainer-kit pins moved to v1.0.1, and
+  the existing addon pins remain herdr v1.0.0 and AI Diff Reviewer v3.3.14
+  (skills-lock.json, .dwp/config.json). The shipped skill and helper are
+  unchanged.
+
 - Repository tooling: the vendored `deepworkplan` skill moved to 7.8.0 and
   the AI Diff Reviewer skill to v3.3.14, the pack's pins (`skills-lock.json`);
   the addon registry records herdr v1.0.0. The shipped skill and helper are
