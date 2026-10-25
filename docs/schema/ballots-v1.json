@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "herdr-peers/ballots-v1",
+  "title": "herdr-peers debate ballots (ballots-v1)",
+  "description": "What `herdr-peers debate tally` reads: the options a panel ranks and/or the items it gives verdicts on, and one ballot per voter. A voter named `lead` is always left out (the lead never votes). Producers may add keys within a schema version; consumers must ignore unknown keys.",
+  "type": "object",
+  "required": ["schema", "ballots"],
+  "properties": {
+    "schema": { "const": "herdr-peers/ballots-v1" },
+    "options": { "type": "array", "uniqueItems": true,
+                 "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+                 "description": "Options to rank (T1, T2, ...)." },
+    "items": { "type": "array", "uniqueItems": true,
+               "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+               "description": "Items of a draft package that receive a verdict (V1, D1, ...)." },
+    "ballots": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["voter"],
+        "properties": {
+          "voter": { "type": "string", "description": "The voting pane (w1:p2) or a lane name; unique." },
+          "ranking": { "type": "array", "uniqueItems": true, "items": { "type": "string" },
+                       "description": "Options best first; may be partial (unranked options earn 0 Borda points and lose every duel against a ranked one)." },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 100 },
+          "items": { "type": "object",
+                     "additionalProperties": { "type": "string", "pattern": "^[A-Z][A-Z_-]{0,15}$" },
+                     "description": "Item id -> verdict (ACCEPT, AMEND, REJECT, KEEP, REVERSE, ...). A missing item counts as ABSTAIN." }
+        }
+      }
+    }
+  }
+}

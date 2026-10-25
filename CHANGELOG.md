@@ -9,7 +9,150 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-25
+
+Protocol stays **1**: the ask, reply and notice stamps, the reply grant, the
+loop guard, depth limit 1, the fan-out cap and every existing verb, flag,
+exit code and JSON contract are unchanged. The release is additive.
+
+### Added
+
+- **Debates for any purpose, a native sub-skill**
+  ([`debate.md`](skills/herdr-peers/debate.md)). A lead runs a panel of
+  peers through rounds and closes with one trustworthy result. The lead
+  chooses the **purpose** first — **decide**, **research** the state of the
+  art, **stress-test**, **verify**, **generate** — and each purpose has its
+  formats, its counting and its deliverable; purposes chain (research →
+  decide, decide → verify). Also: sizes (quick, standard, deep); the lead's
+  contract (never votes, the human's words verbatim, one channel, filings on
+  disk with one-line replies, no external actions); nine formats (angle
+  research, classic rounds, draft package, claim-by-claim cross-exam, red
+  team then defenders, steelman then judge, blind fresh-context challenge,
+  replication panel, divergent proposals) with a forced verdict space for
+  decisions; brief design (scope, settled results, premise ledger and
+  dead-objection rule, questions or per-angle sub-questions, weighted
+  criteria); a lane and angle catalog per purpose (for research: literature,
+  industry, open source, vendors, practitioners, history, standards,
+  economics, risks, frontier, skeptic, contrarian); evidence levels and
+  dated sources; bias control (context resets, anonymized filings, sealed
+  proposals, rotated sides, independence before triangulation, recusal);
+  counting; operating and recovering a panel; closing with cross-review and
+  a fix log; optional outputs for the team.
+- **`herdr-peers debate`**, the lead's tools (`scripts/debate.py`, standard
+  library only):
+  - `tally FILE|DIR` counts a [`herdr-peers/ballots-v1`](docs/schema/ballots-v1.json)
+    file, or a directory of per-pane `*.ballot.json` files (one ballot each,
+    same options and items), so the lead never retypes a ballot: Borda, first places, Copeland, every pairwise duel, the Condorcet
+    winner and loser, per-item verdicts (ACCEPT / AMEND / REJECT …, missing =
+    ABSTAIN) and the median confidence; `--json` prints
+    [`herdr-peers/tally-v1`](docs/schema/tally-v1.json). A voter named `lead`
+    is always left out, as is every `--exclude` (in any case); a voter is one
+    identity whatever its case or a `local:` prefix, and a hostile ranking
+    shape exits 2 instead of a traceback.
+  - `claims PATH… [--rounds] [--map M] [--min-lanes N] [--anonymous [--seed
+    S] [--redact W]]` merges lanes'
+    [`herdr-peers/claims-v1`](docs/schema/claims-v1.json) ledgers: each claim
+    is `established` (enough independent lanes, a FACT with a source, two
+    distinct sources), `agreed` (evidence bar not met), `contested`,
+    `partial` (several lanes, fewer than `--min-lanes`), `single` (one lane),
+    `unsupported`, `disputed` (enough disputing lanes, evidence bar not met)
+    or `refuted` (enough disputing lanes with the same evidence bar as
+    `established`), with the supporters' and the disputers' sources, FACT
+    counts and median confidences reported apart, the vendors, coverage per
+    lane and the claims only one lane raised. Statuses are a **quorum, not a
+    verification** — the report says so (`basis`). `--rounds` takes the
+    rounds in order and lets a lane's later ledger override its earlier one
+    claim by claim, so a triangulation round keeps round-1 consensus; lanes
+    are named without a `local:` prefix and matched case-insensitively.
+    `--map` merges synonym keys; `--anonymous` names lanes `Lane_A`… and
+    angles `Angle_A`…, drops vendors and redacts lane ids, addresses,
+    profile handles, vendors, angles and model names from every claim's text
+    and sources; `--json` prints
+    [`herdr-peers/claims-report-v1`](docs/schema/claims-report-v1.json).
+  - `anon SRC DST --key K [--seed S] [--redact W]` copies filings to
+    `Filing_A.md`, `Filing_B.md`… in an order derived from a random 128-bit
+    secret (or `--seed`) that is kept only in the key and never printed, so
+    the filing names cannot rebuild the mapping; pane ids, Herdr addresses,
+    profile handles, filename stems and model and vendor names are redacted;
+    a filing that carries a secret-shaped value stops the run before
+    anything is written; the mapping goes to a `0600` key that must sit
+    outside both directories.
+  - `filings DIR --expect a,b [--min-words N]` lists present, missing and
+    short filings, exiting 5 while the round is incomplete — recover from disk
+    and re-ask only the missing panes.
+  - `panel --seats N [--kinds …] [--owner A] [--exclude …] [--all-workspaces]
+    [--no-ak]` proposes a panel and runs nothing. Seats go round-robin over
+    model **providers** (`codex-xai` counts as xai) for diverse
+    perspectives; within a provider the seat with the **most quota** goes
+    first: idle panes (by their last reported capacity) and — when agentkit
+    (`ak`) is installed — the accounts `ak pick <kind> --owner <lead>`
+    proposes are ranked together, known headroom first, then unknown, then
+    `low`, an idle pane winning only a tie; `critical` panes and panes in
+    another plan's lead record are never seated. Each
+    reused pane gets its context reset (`/clear`; `/new` and Enter for
+    Codex); each new seat its `ak lease`, pane split (`HERDR_PEERS_BRIEFER`
+    set), `ak <kind> @<profile> --trust-cwd` launch and `ak lease release`.
+    It reports the provider mix, whether it meets the diversity bar (three
+    providers, none above half), and the two seats with the most quota as
+    the lead's successors (another provider than the lead's first on a
+    tie; seats of unknown quota fill the rest, with a note); without `ak` it
+    recommends coding-agents-kit, also when the panel is filled.
+  - Every debate verb accepts `--pane` (Codex lanes pass it on every call).
+    [`herdr-peers/panel-v1`](docs/schema/panel-v1.json) with `--json`.
+- **Standing preferences in every debate** (`debate.md` §3): mix model
+  providers (at least three when available, none above half the panel,
+  roles spread across providers), seat the agents with the most quota, and
+  let the lead **hand over before it runs dry** — successors chosen by quota
+  at claim time, `ak capacity --self` at every round boundary, a handoff
+  packet and `lead handover` at `critical`. Every one-line reply ends with
+  the pane's `capacity=` line.
+- SKILL.md and the README recommend coding-agents-kit (`ak`, v1.0.1 or
+  later) as an optional companion, never installed by an agent.
+- Sixteen debate templates under `skills/herdr-peers/templates/debate/`:
+  `HUMAN_NOTE.md`, `DEBATE_BRIEF.md`, `RESEARCH_BRIEF.md`,
+  `STRESS_TEST_BRIEF.md` (pre-seeded claim keys, a claims ledger and the
+  forced verdict filed as a ballot), `ROUND_BRIEF.md`, `ROUND_SYNTHESIS.md`,
+  `LEAD_CHECKS.md`, `HANDOFF.md` (the lead's handoff packet, with each
+  lane's last capacity), `ballots.json`, `claims.json`, `DECISION.md`,
+  `STATE_OF_THE_ART.md`, `STRESS_TEST.md` (one verdict vocabulary — GO, GO
+  with conditions, NO-GO — and a claims-status-to-ruling guide),
+  `REPLICATION.md`, `FIXLOG.md` and `TEAM_BRIEF.md` (with an audio-script
+  outline). Replies end with `capacity=… <@profile or ->`.
+- **Delivery to a blocked peer.** `reply` and `notify` retry the delivery to
+  a peer blocked at a question or approval (`agent_blocked`) with backoff
+  for up to `--wait-blocked SECONDS` (default `HERDR_PEERS_BLOCKED_WAIT` or
+  600, at most 3600; 0 tries once, as before) before recording the reply
+  `unroutable` or refusing the notice. It is still exactly one reply: only
+  the delivery is retried, each attempt under the log lock with the
+  exactly-once check. Before, a reply to a lead whose pane showed a question
+  to its human was closed unroutable at once and lost.
+- `lanes` shows the last capacity a lane of the lead record reported to any
+  pane of this server, so a lead that took over still sees it.
+- A `debate` test scope with a fake `ak` (`tests/fakes/agentkit/ak`), a fake
+  agent that unblocks (`<machine>/blocked.json`), and threat-model rows
+  T23–T27 (hostile debate inputs, un-blinding, panel provisioning, secrets
+  in debate files, delivery to a blocked peer).
+
+### Known limitations
+
+Recorded in [docs/SECURITY.md](docs/SECURITY.md) "Residual risk":
+
+- Claims statuses are a quorum of lanes and their self-declared evidence;
+  the helper opens no source and nothing gates a status on the lead's checks.
+- Reused panes are ranked by self-reported capacity, not cross-checked with
+  `ak usage`.
+- A lead's successor comes from the panel and learns the anonymization key;
+  re-sealing later blind rounds is a documented step, not enforced.
+- Lead notices are not retried on a blocked lane, and replies to a former
+  lead's asks still reach the former lead's pane (read filings from disk).
+
 ### Fixed
+
+- The helper no longer writes `__pycache__` into the skill directory: the
+  entry script runs Python with `-B` and the `debate` import sets
+  `sys.dont_write_bytecode`. The bytecode embedded the checkout's absolute
+  path in an installed skill and failed the `skill` scope's name checks
+  locally. Found by the verification debate; a `skill` test pins it.
 
 - `wait` no longer times out on a reply that reached the caller's pane. An
   agent's TUI (Claude Code, Codex) echoes a delivered prompt indented, with
@@ -348,7 +491,8 @@ First release. Interface version: **protocol 1** (`metadata.protocol: 1` in
   `harness lint protocol helper skill templates security live`; CI on Ubuntu
   and macOS.
 
-[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/DailybotHQ/herdr-peers/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.3...v1.0.0
 [0.3.3]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.1...v0.3.2

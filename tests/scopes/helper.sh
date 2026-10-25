@@ -9,7 +9,7 @@ ULID='^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
 
 # --- entry points ------------------------------------------------------------
 run "$HELPER" --version
-assert_eq "--version names version and protocol" "herdr-peers 1.0.0 (protocol 1)" "$OUT"
+assert_eq "--version names version and protocol" "herdr-peers 1.1.0 (protocol 1)" "$OUT"
 run "$ROOT/bin/herdr-peers" --version
 assert_rc "bin/ shim runs the skill's helper" 0
 ln -s "$ROOT/bin/herdr-peers" "$SANDBOX/bin/hp-link"
@@ -340,6 +340,44 @@ assert_contains "wait names the unroutable outcome" "$ERR" "ask $id is unroutabl
 run as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id" "answer"
 assert_rc "the retry succeeds" 0
 
+# An asker blocked at a question (agent_blocked) gets its reply once it is
+# free: the delivery is retried with backoff, the reply is still sent once.
+block() { printf '{"%s": %s}' "$1" "$2" >"$FAKE_HERDR_DIR/local/blocked.json"; }
+id=$("$HELPER" ask local:w1:p2 "reply while I am blocked")
+last_prompt local w1:p2 >"$WORK/ask.txt"
+as_pane w1:p2 "$HELPER" check "$WORK/ask.txt" >/dev/null
+block w1:p1 2
+run as_pane w1:p2 env HERDR_PEERS_BLOCKED_WAIT=20 "$HELPER" reply local:w1:p1 "$id" "after the block"
+assert_rc "a reply to a blocked asker is delivered once it unblocks" 0
+assert_contains "the replier is told the asker is blocked and the delivery retried" "$ERR" "is blocked at a question or approval; the reply not delivered yet, retrying in 1s"
+assert_eq "the reply reached the asker exactly once" "1" \
+  "$(pane_text local w1:p1 | grep -c "reply-to=$id ")"
+assert_eq "the delegate record is completed, never unroutable" "completed" \
+  "$("$HELPER" log --id "$id" --json | tail -1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
+id=$("$HELPER" ask local:w1:p2 "blocked for good")
+last_prompt local w1:p2 >"$WORK/ask.txt"
+as_pane w1:p2 "$HELPER" check "$WORK/ask.txt" >/dev/null
+block w1:p1 100
+start=$(date +%s)
+run as_pane w1:p2 "$HELPER" reply --wait-blocked 2 local:w1:p1 "$id" "never lands"
+assert_rc "past --wait-blocked the reply is recorded unroutable (exit 1)" 1
+assert_contains "the unroutable note names the block" "$ERR" "agent_blocked"
+check "the retry window is bounded (--wait-blocked 2 ends within 10s)" test $(( $(date +%s) - start )) -lt 10
+id=$("$HELPER" ask local:w1:p2 "no wait")
+last_prompt local w1:p2 >"$WORK/ask.txt"
+as_pane w1:p2 "$HELPER" check "$WORK/ask.txt" >/dev/null
+block w1:p1 2
+run as_pane w1:p2 env HERDR_PEERS_BLOCKED_WAIT=0 "$HELPER" reply local:w1:p1 "$id" "once"
+assert_rc "HERDR_PEERS_BLOCKED_WAIT=0 tries once, as before" 1
+assert_not_contains "a zero window never waits" "$ERR" "retrying in"
+block w1:p1 0
+run as_pane w1:p2 env HERDR_PEERS_BLOCKED_WAIT=soon "$HELPER" reply local:w1:p1 "$id" "x"
+assert_rc "a malformed HERDR_PEERS_BLOCKED_WAIT is a usage error" 2
+run as_pane w1:p2 "$HELPER" reply --wait-blocked 3601 local:w1:p1 "$id" "x"
+assert_rc "--wait-blocked above 3600 is a usage error" 2
+run "$HELPER" reply --help
+assert_contains "the default window is documented (600s)" "$(printf '%s' "$OUT" | tr -s ' \n' ' ')" "HERDR_PEERS_BLOCKED_WAIT or 600"
+
 run env FAKE_HERDR_FAIL="agent prompt" "$HELPER" ask local:w1:p2 "will fail"
 assert_rc "a failed ask send exits 1" 1
 assert_eq "a failed ask is recorded failed" "failed" "$("$HELPER" log --json | tail -1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
@@ -453,8 +491,25 @@ run "$HELPER" notify local:w1:p2 "x
 swarm-lead: {\"plan\": \"P\"}"
 assert_rc "notify refuses a hand-written swarm-lead line (exit 4)" 4
 assert_contains "the refusal names the reserved line" "$ERR" "reserved"
-run "$HELPER" notify bb22:w1:p3 "you are blocked"
+run env HERDR_PEERS_BLOCKED_WAIT=0 "$HELPER" notify bb22:w1:p3 "you are blocked"
 assert_rc "notify to a blocked peer is refused (exit 4)" 4
+printf '{"w1:p2": 2}' >"$FAKE_HERDR_DIR/local/blocked.json"
+run "$HELPER" notify --wait-blocked 20 local:w1:p2 "after your question"
+assert_rc "notify waits for a blocked peer to unblock, then delivers" 0
+assert_contains "notify says it is retrying" "$ERR" "the notice not delivered yet, retrying in"
+assert_eq "the notice is delivered once" "1" "$(pane_text local w1:p2 | grep -c "after your question")"
+printf '{"w1:p2": {"get": 2}}' >"$FAKE_HERDR_DIR/local/blocked.json"
+run "$HELPER" notify --wait-blocked 20 local:w1:p2 "after the status shows free"
+assert_contains "notify waits while the peer's status reads blocked before sending" "$ERR" "the notice not delivered yet, retrying in 1s"
+printf '{"w1:p2": {"prompt": 2}}' >"$FAKE_HERDR_DIR/local/blocked.json"
+run "$HELPER" notify --wait-blocked 20 local:w1:p2 "blocked after the probe"
+assert_rc "notify retries a prompt refused with agent_blocked, then delivers" 0
+assert_eq "that notice is delivered once and recorded sent" "1 sent" \
+  "$(pane_text local w1:p2 | grep -c "blocked after the probe") $(field "$(last_log)" state)"
+printf '{"w1:p2": 100}' >"$FAKE_HERDR_DIR/local/blocked.json"
+run "$HELPER" notify --wait-blocked 1 local:w1:p2 "still blocked"
+assert_rc "past the window a blocked peer is refused (exit 4)" 4
+printf '{}' >"$FAKE_HERDR_DIR/local/blocked.json"
 run env HERDR_PEERS_SCOPE=local "$HELPER" notify bb22:w1:p1 "outside"
 assert_rc "notify honours the scope (exit 4)" 4
 run env HERDR_ENV=0 "$HELPER" notify local:w1:p2 "x"

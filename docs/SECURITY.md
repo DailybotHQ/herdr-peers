@@ -76,6 +76,11 @@ notices. Both sides keep an append-only local record.
 | T21 | **Notice abuse** — notices skip the fan-out cap and may be sent while holding an ask. | A notice grants nothing and is never answered, so it cannot start a loop or a chain; it has the ask's hygiene (size, control characters, marker, secrets, scope, self, blocked peer). Receivers record each id once (rule 12). | `helper`, `security`, `protocol` |
 | T22 | **Lead-record file tricks** | Lead records live in the machine-scoped state (`leads/`, directory `0700`, files `0600`), are written atomically (temp file + rename) and never read or written through a symlink; a corrupt record stops every lead verb instead of being guessed at. Records hold plan ids and addresses only. | `lead` |
 | T19 | **Screen reading** — `status`/`lanes` read a waiting lane's visible screen, which may show secrets or hostile text, and could be tempted to answer it. | Read-only: they print a class and the name of the matched pattern, never screen text, and never send keys (`argv.log` proves no `send-keys`). Only folder trust may be keyed through — by the lead, on a pane it launched itself, under the user's standing authorization (the only screen with keys in `UNBLOCK_KEYS`). Claude's bypass-permissions acknowledgement is never keyed by an agent: the developer accepts it once per profile. A usage-limit screen (`usage_limit`: the CLI's own banner anchored at the start of a line, also read from the last 15 lines of an idle lane) is handed off — the lead relaunches the lane's plan on an account with capacity — and never keyed. Because a peer can deliver text that looks like a banner into an idle pane, an idle-pane match never counts as "gone" for a receiver's fencing and needs a recorded `--reason` for a takeover. Login, permission and unknown screens escalate. | `orchestra` |
+| T23 | **Debate inputs** — ballots, claims ledgers and filings are written by other agents and may be hostile (huge, malformed, symlinked, instructions in prose, shell text in a verdict). | `debate tally` and `debate claims` read JSON files of at most 4 MiB each, never through a symlink, validate every id, ranking (strings only: a hostile shape exits 2, never a traceback), verdict (uppercase word only), stance, evidence level and confidence, cap claims (500 per lane), text (500 characters) and sources (20 of 300 characters), and refuse duplicates — a voter or lane is one identity whatever its case or a `local:` prefix, and `lead` is excluded in any case; `filings` accepts plain names only (no paths). Nothing in a filing or ballot is executed, evaluated or forwarded; the lead never votes (`lead` is always excluded). | `debate` |
+| T24 | **Un-blinding** — the anonymization key, the order's secret or identities leak to the panel. | `debate anon` derives the filing order from a random 128-bit secret (or `--seed`) kept only in the key file and never printed (without that secret the public filing names do not rebuild the map; anyone holding the key file or a guessable `--seed` can, so keep both away from the panel); refuses a key inside the filings or the output directory, never overwrites a key or a non-empty output directory, writes the key `0600` with `O_EXCL`/`O_NOFOLLOW`, and redacts pane ids, Herdr addresses, profile handles, filename stems, model and vendor names and each `--redact` word. `debate claims --anonymous` renames lanes and angles (`Lane_A`, `Angle_A`), drops vendors and redacts the same identities from every claim's text and sources. | `debate` |
+| T25 | **Panel provisioning** — a helper that launches agents or spends accounts on its own. | `debate panel` is read-only: it reads Herdr's agent list, this server's lead records and `ak pick` (once per call), and prints commands — lease, split, launch, release — that the lead runs only with the human's go-ahead (the fakes prove no prompt, key, split, run or lease is issued). Panes that lead or serve another plan's lead record are never offered; proposed launches carry no permission flag (agentkit's own posture, which the human controls, applies). | `debate` |
+| T26 | **Secrets in debate files** — a pane dumps a token into its filing, which `anon` would copy to every peer. | `debate anon` runs the helper's secret detector (`secret_finding`: values of `*_API_KEY`/`*_TOKEN`-style variables and known token shapes) over every filing first and refuses the run, naming the kind, never the value, before anything is written. | `debate` |
+| T27 | **Delivery to a blocked peer** — a reply retried into a pane that shows a question, or retried forever. | Only the delivery of the one recorded reply is retried, with backoff, for at most `--wait-blocked` / `HERDR_PEERS_BLOCKED_WAIT` seconds (default 600, cap 3600); each attempt takes the log lock and re-checks exactly-once, so concurrent replies still send one; the text is never changed and a still-blocked peer is recorded `unroutable` as before. Herdr refuses input to a blocked agent (`agent_blocked`), so no attempt types into the question. | `helper` |
 
 ## Residual risk (accepted)
 
@@ -111,6 +116,31 @@ notices. Both sides keep an append-only local record.
   one Herdr server share one state directory, so a local process can rewrite
   a lead record directly; a lead record grants no authority either way —
   lanes act only within their plan's authorization.
+- **Anonymization is redaction, not anonymity.** `debate anon` and `claims
+  --anonymous` remove names they can recognize; a filing's style, a
+  self-description in other words, a quoted fact only one pane knew, or a
+  claim key that names its author can still identify it. Blind rounds rely
+  on the brief's rules as much as on the tool. A lead's successor that sat
+  on the panel learns the key: the method re-seals later blind rounds with a
+  new key, but nothing enforces it.
+- **Claims statuses are a quorum, not verification.** `established` and
+  `refuted` count lanes and the evidence they declare; the helper opens no
+  source, so colluding or careless lanes can reach either status. The report
+  says so (`basis`); the lead re-checks the citations that matter
+  (`LEAD_CHECKS.md`). Nothing gates a status on those checks.
+- **Reported capacity is self-reported.** `debate panel` ranks reused panes
+  by the `capacity=` line each pane wrote about itself; a pane can overstate
+  or understate it. New seats come from `ak pick`, which reads the account
+  quota; reused panes are not cross-checked against `ak usage`.
+- **Blocked-peer retries are bounded and not universal.** `reply` and
+  `notify` retry a blocked peer for up to 10 minutes by default, and the
+  replying agent's command waits that long; a peer still blocked after the
+  window gets an `unroutable` record, and the answer survives only in the
+  replier's files. Lead notices (`lead claim`, `handover`, `takeover`,
+  `release`) are not retried: a blocked lane is reported as not delivered
+  and reads the record with `lead show`. Replies to the asks of a lead that
+  handed over still go to that lead's pane (the protocol routes a reply
+  only to its ask's `from=`).
 - **The local record is local.** Anyone with write access to the XDG state
   directory (or an explicit log path) can edit it; it is an audit aid, not
   tamper-proof evidence.

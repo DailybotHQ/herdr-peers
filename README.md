@@ -41,6 +41,15 @@ lives. herdr-peers is that layer, so agents never hand-build it:
 - **Plan leadership.** A plan has a lead record — epochs, an ordered
   succession, fenced handover and takeover, scoped to the claiming
   repository — so a swarm outlives one account's usage limit.
+- **Debates, for any purpose.** A lead runs a panel of peers through
+  rounds to **decide** (advocates, red teams, cross-examination, a counted
+  ballot), **research the state of the art** (one angle per lane, then
+  triangulation), **stress-test** an idea, **verify** an earlier result with
+  a fresh panel, or **generate** options. `herdr-peers debate` counts
+  ballots (Borda, pairwise, Condorcet winner and loser), merges research
+  claims (established, contested, single-lane), anonymizes filings, finds
+  missing ones on disk, and proposes a panel from idle panes and, with
+  agentkit (`ak`), from the accounts with the most headroom.
 - **A record of every delegation.** An append-only, machine-scoped log of
   digests (never prompt text), mirrored into a DeepWorkPlan plan when one is
   set.
@@ -53,7 +62,7 @@ The skill (the helper ships inside it, at
 `~/.agents/skills/herdr-peers/scripts/herdr-peers` for a global install):
 
 ```bash
-npx --yes skills add DailybotHQ/herdr-peers@v1.0.0 --skill herdr-peers -g -y
+npx --yes skills add DailybotHQ/herdr-peers@v1.1.0 --skill herdr-peers -g -y
 ```
 
 Herdr's official skill, which this one depends on — pinned, or use the
@@ -67,16 +76,27 @@ Every machine whose agents should answer needs the skill too. From a
 checkout of the tag instead, verified against the release's `SHA256SUMS`:
 
 ```bash
-git clone --branch v1.0.0 https://github.com/DailybotHQ/herdr-peers
+git clone --branch v1.1.0 https://github.com/DailybotHQ/herdr-peers
 cd herdr-peers
-curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v1.0.0/SHA256SUMS
+curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v1.1.0/SHA256SUMS
 shasum -a 256 -c SHA256SUMS      # every shipped file: OK
-bin/herdr-peers --version        # herdr-peers 1.0.0 (protocol 1)
+bin/herdr-peers --version        # herdr-peers 1.1.0 (protocol 1)
 ```
 
 Requirements: Herdr ≥ 0.9.1, `bash`, `python3` ≥ 3.9 (standard library
 only). The official-skill pin above is for Herdr 0.9.3; for another version
 use `herdr --skill`.
+
+Recommended: [coding-agents-kit](https://github.com/DailybotHQ/coding-agents-kit)
+(`ak`) — optional, but lanes and debates work much better with it: account
+quota (`ak usage`, `ak pick`), leases, and one-command launches on a chosen
+account and provider (`ak claude @work1`). `herdr-peers debate panel`
+suggests it when it is missing.
+
+```bash
+git clone --branch v1.0.1 https://github.com/DailybotHQ/coding-agents-kit
+./coding-agents-kit/install.sh
+```
 
 ## Quickstart
 
@@ -153,10 +173,11 @@ next (folder trust only, on a pane you launched yourself, under the user's stand
 | `notify <machine>:<pane> "<text>"` | A one-way notice (`reply=no`): recorded by the receiver, never answered, no fan-out slot, allowed while holding an ask. |
 | `wait <id>` | Block until the reply arrives in your pane; record it. |
 | `check [FILE]` | Classify a received message (answer, notice, never, none) and record it; a lead notice is accepted only through the fencing rules. |
-| `reply <machine>:<pane> <id> "<answer>"` | Answer an ask exactly once. |
+| `reply <machine>:<pane> <id> "<answer>"` | Answer an ask exactly once. A blocked asker (a question on its screen) gets the same reply once it is free: the delivery is retried for up to 600 s (`--wait-blocked`, `HERDR_PEERS_BLOCKED_WAIT`) before it is recorded unroutable; `notify` does the same. |
 | `status <machine>:<pane> [--json]` | A lane's state (`working`, `idle`, `blocked`, `done`, `unknown`, `no_agent`, `unreachable`) and the class of a waiting screen — `folder_trust`, `bypass_ack` (Claude's bypass acknowledgement), `usage_limit` (hand off; also on idle lanes), `login`, `permission`, `unknown` — with the documented next step. Read-only: never sends keys, never prints screen text. |
 | `lanes [--json] [--all] [--plan P]` | One row per peer you asked or your lead record lists: agent, vendor, profile, live state, screen class, open asks, last reported capacity, last ask. `--json` is the contract [`herdr-peers/lanes-v1`](docs/schema/lanes-v1.json) (0.3.0 adds `plan`, `lead`, `epoch`, `capacity`); consumers ignore unknown keys. |
 | `lead claim\|show\|handover\|takeover\|release` | A plan's lead record [`herdr-peers/lead-v1`](docs/schema/lead-v1.json): who leads, the epoch, the ordered succession, the lanes notified on every change. Only the highest epoch leads; a stale lead steps down. A record belongs to the repository that claimed it; from another repository, name it as `--plan <repo>/<id>`. |
+| `debate tally\|claims\|anon\|filings\|panel` | A debate lead's tools ([debate.md](skills/herdr-peers/debate.md)) — decide, research, stress-test, verify, generate: count a [`ballots-v1`](docs/schema/ballots-v1.json) file, or a directory of per-pane ballots, into [`tally-v1`](docs/schema/tally-v1.json); merge lanes' [`claims-v1`](docs/schema/claims-v1.json) ledgers, across rounds with `--rounds`, into a [`claims-report-v1`](docs/schema/claims-report-v1.json) (established, agreed, contested, partial, single, unsupported, disputed, refuted — a quorum count, not a verification — with coverage; `--anonymous` blinds lanes, angles, claim text and sources); copy filings to anonymized `Filing_A.md`… in an order only the key can rebuild (a filing carrying a secret is refused); list missing or short filings (exit 5); propose a panel ([`panel-v1`](docs/schema/panel-v1.json)) from idle panes and `ak pick` — read-only, it runs nothing. |
 | `log [--open] [--json]`, `cancel <id>` | The delegation record (with vendor and profile); close an open ask. |
 | `--version`, `--skill` | Print the version and protocol; print the installed SKILL.md. |
 
@@ -173,12 +194,12 @@ containers, troubleshooting — is in
 [orchestra.md](skills/herdr-peers/orchestra.md).
 
 Optional environment: `HERDR_PEERS_SCOPE`, `HERDR_PEERS_SELF`,
-`HERDR_PEERS_DEPTH`, `HERDR_PEERS_FANOUT` (lower only), `HERDR_PEERS_MAX_BYTES`,
+`HERDR_PEERS_DEPTH`, `HERDR_PEERS_FANOUT` (lower only), `HERDR_PEERS_MAX_BYTES`, `HERDR_PEERS_BLOCKED_WAIT`,
 `HERDR_PEERS_LOG`, `HERDR_PEERS_PYTHON`, `HERDR_PEERS_BRIEFER`, `DWP_PLAN`/`DWP_TASK` — see the table
 in [SKILL.md](skills/herdr-peers/SKILL.md#2-the-helper).
 
 Exit codes: `0` ok · `1` Herdr error (or an undelivered lead notice) · `2` usage · `3` protocol refusal
-(never answer; also a notice) · `4` policy refusal · `5` timeout · `6` not inside Herdr, a
+(never answer; also a notice) · `4` policy refusal · `5` timeout (or incomplete `debate filings`) · `6` not inside Herdr, a
 missing `herdr` or `python3`, or a stale `HERDR_PANE_ID` · `7` not a
 protocol message, or no lead record.
 

@@ -16,6 +16,11 @@ State lives in $FAKE_HERDR_DIR (required):
                              (`pane process-info`; name defaults to "agent";
                              absent = none reported)
   unreachable                machine ids (one per line) whose SSH call fails
+  <machine>/blocked.json     {"<pane>": N}: that agent is blocked for its next N
+                             `agent get`/`agent prompt` calls, then free again
+                             (a human answering the question it showed);
+                             {"<pane>": {"get": N, "prompt": M}} blocks only
+                             those calls (a status probe, or prompts after it)
   argv.log                   one JSON line per invocation: {"machine", "argv"}
 
 FAKE_HERDR_FAIL="<group> <verb>" makes that command fail with a server error
@@ -203,6 +208,25 @@ def main(argv):
     usage_error("unrecognized subcommand '%s'" % ' '.join(args[:2]))
 
 
+def blocked_for_now(srv, pane, verb):
+    """Consume one call of a pane's temporary block (<machine>/blocked.json)."""
+    path = os.path.join(srv.dir, 'blocked.json')
+    counts = load_json(path, {})
+    left = counts.get(pane) if isinstance(counts, dict) else None
+    if isinstance(left, dict):
+        n = left.get(verb)
+        if not isinstance(n, int) or n <= 0:
+            return False
+        counts[pane] = dict(left, **{verb: n - 1})
+    elif not isinstance(left, int) or left <= 0:
+        return False
+    else:
+        counts[pane] = left - 1
+    with open(path, 'w', encoding='utf-8') as fh:
+        json.dump(counts, fh)
+    return True
+
+
 def agent_cmd(srv, verb, tail):
     cid = 'cli:agent:' + verb
     pos = positional(tail, VALUE_FLAGS)
@@ -214,6 +238,8 @@ def agent_cmd(srv, verb, tail):
         agent = srv.find_agent(pos[0])
         if agent is None:
             server_error(cid, 'agent_not_found', 'agent target %s not found' % pos[0])
+        if blocked_for_now(srv, agent['pane_id'], 'get'):
+            agent = dict(agent, agent_status='blocked')
         ok(cid, {'agent': agent, 'type': 'agent_info'})
     if verb == 'prompt':
         if len(pos) < 2:
@@ -221,8 +247,9 @@ def agent_cmd(srv, verb, tail):
         agent = srv.find_agent(pos[0])
         if agent is None:
             server_error(cid, 'agent_not_found', 'agent target %s not found' % pos[0])
-        if agent.get('agent_status') == 'blocked':
-            server_error(cid, 'agent_blocked', 'agent %s is blocked' % pos[0])
+        if agent.get('agent_status') == 'blocked' or blocked_for_now(srv, agent['pane_id'], 'prompt'):
+            server_error(cid, 'agent_blocked', 'agent %s is blocked and requires interactive '
+                         'input' % pos[0])
         srv.append_pane(agent['pane_id'], pos[1])
         with open(srv.pane_file(agent['pane_id'])[:-4] + '.last', 'w', encoding='utf-8') as fh:
             fh.write(pos[1] + '\n')  # the latest prompt alone, as an agent receives it
