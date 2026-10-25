@@ -14,10 +14,10 @@ herdr-peers (skill + helper script)
 
 | Path | What |
 | --- | --- |
-| `skills/herdr-peers/` | The installable skill: `SKILL.md`, normative `protocol.md`, `discipline.md`, `launcher.md`, `templates/` (incl. `delegation-record.json` schema) |
-| `skills/herdr-peers/scripts/` | The helper: `herdr-peers` (bash entry) + `herdr_peers.py` (python3 stdlib). It lives inside the skill so `npx skills add` installs it. |
+| `skills/herdr-peers/` | The installable skill: `SKILL.md`, normative `protocol.md`, `discipline.md`, `launcher.md`, `orchestra.md`, the debate sub-skill `debate.md`, `templates/` (incl. `delegation-record.json` schema and `templates/debate/`) |
+| `skills/herdr-peers/scripts/` | The helper: `herdr-peers` (bash entry) + `herdr_peers.py` (python3 stdlib) + `debate.py` (the `debate` verb). It lives inside the skill so `npx skills add` installs it. |
 | `bin/herdr-peers` | Checkout shim that runs the skill's helper |
-| `tests/` | `run.sh` (sandboxed runner), `lib.sh`, `fakes/herdr`, `scopes/`, `fixtures/messages/`, `tools/` |
+| `tests/` | `run.sh` (sandboxed runner), `lib.sh`, `fakes/herdr`, `fakes/agentkit/ak`, `scopes/`, `fixtures/messages/`, `tools/` |
 | `assets/` | README logos (`logo-light.png`, `logo-dark.png`) |
 | `docs/` | `TESTING_GUIDE.md`, `SECURITY.md` (threat model) |
 | `scripts/` | `check-public-hygiene.sh` (public-hygiene check; allow-list in `.public-hygiene-allow`), `release-assets.sh` (release notes + `SHA256SUMS`) |

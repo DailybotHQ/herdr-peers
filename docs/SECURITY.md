@@ -76,6 +76,9 @@ notices. Both sides keep an append-only local record.
 | T21 | **Notice abuse** — notices skip the fan-out cap and may be sent while holding an ask. | A notice grants nothing and is never answered, so it cannot start a loop or a chain; it has the ask's hygiene (size, control characters, marker, secrets, scope, self, blocked peer). Receivers record each id once (rule 12). | `helper`, `security`, `protocol` |
 | T22 | **Lead-record file tricks** | Lead records live in the machine-scoped state (`leads/`, directory `0700`, files `0600`), are written atomically (temp file + rename) and never read or written through a symlink; a corrupt record stops every lead verb instead of being guessed at. Records hold plan ids and addresses only. | `lead` |
 | T19 | **Screen reading** — `status`/`lanes` read a waiting lane's visible screen, which may show secrets or hostile text, and could be tempted to answer it. | Read-only: they print a class and the name of the matched pattern, never screen text, and never send keys (`argv.log` proves no `send-keys`). Only folder trust may be keyed through — by the lead, on a pane it launched itself, under the user's standing authorization (the only screen with keys in `UNBLOCK_KEYS`). Claude's bypass-permissions acknowledgement is never keyed by an agent: the developer accepts it once per profile. A usage-limit screen (`usage_limit`: the CLI's own banner anchored at the start of a line, also read from the last 15 lines of an idle lane) is handed off — the lead relaunches the lane's plan on an account with capacity — and never keyed. Because a peer can deliver text that looks like a banner into an idle pane, an idle-pane match never counts as "gone" for a receiver's fencing and needs a recorded `--reason` for a takeover. Login, permission and unknown screens escalate. | `orchestra` |
+| T23 | **Debate inputs** — ballots and filings are written by other agents and may be hostile (huge, malformed, symlinked, instructions in prose, shell text in a verdict). | `debate tally` reads one JSON file of at most 4 MiB, never through a symlink, validates every id, ranking and verdict (uppercase word only) and refuses duplicates; `filings` accepts plain names only (no paths). Nothing in a filing or ballot is executed, evaluated or forwarded; the lead never votes (`lead` is always excluded). | `debate` |
+| T24 | **Un-blinding** — the anonymization key or identities leak to the panel. | `debate anon` refuses a key inside the filings or the output directory, never overwrites a key or a non-empty output directory, writes the key `0600` with `O_EXCL`/`O_NOFOLLOW`, and redacts pane ids, Herdr addresses, filename stems, model and vendor names and each `--redact` word. | `debate` |
+| T25 | **Panel provisioning** — a helper that launches agents or spends accounts on its own. | `debate panel` is read-only: it reads Herdr's agent list, this server's lead records and `ak pick` (once per call), and prints commands — lease, split, launch, release — that the lead runs only with the human's go-ahead (the fakes prove no prompt, key, split, run or lease is issued). Panes that lead or serve another plan's lead record are never offered; proposed launches carry no permission flag (agentkit's own posture, which the human controls, applies). | `debate` |
 
 ## Residual risk (accepted)
 
@@ -111,6 +114,10 @@ notices. Both sides keep an append-only local record.
   one Herdr server share one state directory, so a local process can rewrite
   a lead record directly; a lead record grants no authority either way —
   lanes act only within their plan's authorization.
+- **Anonymization is redaction, not anonymity.** `debate anon` removes
+  names it can recognize; a filing's style, a self-description in other
+  words, or a quoted fact only one pane knew can still identify its author.
+  Blind rounds rely on the brief's rules as much as on the tool.
 - **The local record is local.** Anyone with write access to the XDG state
   directory (or an explicit log path) can edit it; it is an audit aid, not
   tamper-proof evidence.

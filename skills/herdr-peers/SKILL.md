@@ -1,11 +1,11 @@
 ---
 name: herdr-peers
-description: "Ask another coding agent in a Herdr pane — on this machine or another one — and get exactly one authorized reply back, with a loop guard, depth limit 1, a fan-out cap and a record of every delegation; send one-way notices; keep a plan's lead with epochs and succession. Use only when the user mentions Herdr, peers, or another agent, pane or machine, or when a plan you are executing delegates a task through Herdr. Do not use merely because parallel work could help. Requires HERDR_ENV=1 and Herdr's official herdr skill."
-version: "1.0.0"
+description: "Ask another coding agent in a Herdr pane — on this machine or another one — and get exactly one authorized reply back, with a loop guard, depth limit 1, a fan-out cap and a record of every delegation; send one-way notices; keep a plan's lead with epochs and succession; lead a multi-agent debate (rounds, red teams, counted ballots, a panel seated from idle panes or agentkit accounts). Use only when the user mentions Herdr, peers, a debate or panel of agents, or another agent, pane or machine, or when a plan you are executing delegates a task through Herdr. Do not use merely because parallel work could help. Requires HERDR_ENV=1 and Herdr's official herdr skill."
+version: "1.1.0"
 license: MIT
 allowed-tools: Bash, Read
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   protocol: 1
 ---
 
@@ -64,6 +64,7 @@ opinion nobody asked for, or to avoid doing the work yourself.
 | `lead takeover --plan P [--reason R]` | The first reachable successor takes over a lead that is gone (unreachable, no agent, usage limit) — or, with a recorded `--reason`, one whose asks timed out twice (epoch+1). |
 | `lead release --plan P` | The current lead leaves the plan without a lead (epoch+1). |
 | `cancel <id> [--reason R]` | Closes an open ask (yours, or one you decline). |
+| `debate tally\|anon\|filings\|panel` | A debate lead's tools ([debate.md](debate.md)): `tally FILE` counts a `herdr-peers/ballots-v1` file (Borda, first places, pairwise, Condorcet winner and loser, item verdicts; the lead never votes); `anon SRC DST --key K` copies filings to `Filing_A.md`… with identities redacted; `filings DIR --expect a,b` lists missing or short filings (exit 5 when incomplete); `panel --seats N` proposes a panel — idle panes, then accounts from `ak pick` — and runs nothing. |
 
 `ask`, `notify`, `reply`, `check`, `wait`, `status`, `lanes`, `cancel` and the `lead`
 verbs (including `lead show`) take `--pane <pane_id>`:
@@ -90,7 +91,7 @@ Environment (all optional):
 
 Exit codes: `0` ok · `1` Herdr error · `2` usage · `3` protocol refusal —
 never answer (also a notice) · `4` policy refusal (scope, self, fan-out, size, control
-characters, secrets, no reply route) · `5` timeout · `6` not inside Herdr, or a stale pane id (pass `--pane`) ·
+characters, secrets, no reply route) · `5` timeout (also `debate filings`: incomplete) · `6` not inside Herdr, or a stale pane id (pass `--pane`) ·
 `7` not a protocol message, or no lead record. A `lead` verb whose record
 was written exits `0` even if lane notices fail; failed deliveries are warned
 and recorded. A handover whose new lead was not notified exits `1` despite
@@ -161,7 +162,9 @@ writing peer, fan-out and join, cleanup, layout — is in
 [launcher.md](launcher.md). Running many lanes as a lead — `status`,
 `lanes`, blocked screens, accounts and vendors, containers — is in
 [orchestra.md](orchestra.md), with lane ↔ lane asks, succession and
-handoff. Message templates and the delegation-record
+handoff. Running a debate — formats, briefs, bias control, counting,
+seating a panel with agentkit — is in [debate.md](debate.md), with its
+templates in [templates/debate/](templates/debate/). Message templates and the delegation-record
 schema are in [templates/](templates/).
 
 ## 6. Trust boundary (write scope)
@@ -193,6 +196,10 @@ named here) and `Read`.
   `analysis_results/delegations.ndjson`.
 - Panes, only when the human or the plan asked for a new peer
   ([launcher.md](launcher.md)); you close only panes you created.
+- `debate anon` writes only the new output directory and the new key
+  file it is given (`0600`, never overwritten). `debate tally`, `filings`
+  and `panel` only read; `panel` prints commands and runs none of them
+  ([debate.md](debate.md) §10).
 
 **Reads only:** `status` and `lanes` read Herdr's agent state and a waiting
 lane's visible screen; they print a screen class, never screen text, and

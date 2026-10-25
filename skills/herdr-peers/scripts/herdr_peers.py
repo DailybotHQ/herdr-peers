@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """herdr-peers — protocol 1 over the Herdr CLI (python3 standard library only).
 
-Verbs: ask, notify, reply, list, wait, log, check, cancel, status, lanes, lead. See ../protocol.md for the
+Verbs: ask, notify, reply, list, wait, log, check, cancel, status, lanes, lead,
+debate (debate.py). See ../protocol.md for the
 normative rules this file implements and ../SKILL.md for usage.
 
 Exit codes: 0 ok / answer · 1 Herdr transport error · 2 usage ·
@@ -26,7 +27,7 @@ import subprocess
 import sys
 import time
 
-VERSION = '1.0.0'
+VERSION = '1.1.0'
 PROTOCOL = 1
 MARKER = '[herdr-peers]'
 DEFAULT_MAX_BYTES = 16384
@@ -2673,6 +2674,75 @@ def cancel_locked(args, store, pane):
     raise Stop(EXIT_PROTOCOL, 'no open ask with id %s' % args.id)
 
 
+def cmd_debate(args):
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import debate
+    verb = args.debate_verb
+    try:
+        if verb == 'tally':
+            exclude = [v for v in (args.exclude or '').split(',') if v]
+            options, items, ballots, excluded = debate.load_ballots(
+                debate._read_json(args.file), exclude)
+            result = debate.tally(options, items, ballots, excluded)
+            print(json.dumps(result, sort_keys=True, indent=1) if args.json
+                  else debate.render_tally(result))
+            return EXIT_OK
+        if verb == 'anon':
+            addr_re = re.compile(r'(?<![A-Za-z0-9])(?:%s:)?%s(?![A-Za-z0-9])' % (MACHINE_RE, PANE_RE))
+            result = debate.anonymize(args.src, args.dst, args.key, seed=args.seed,
+                                      redact=args.redact or (), addr_re=addr_re)
+            if args.json:
+                print(json.dumps(result, sort_keys=True, indent=1))
+            else:
+                for f in result['filings']:
+                    print('%s.md  %d redaction(s)' % (f['filing'], f['redactions']))
+                print('seed %s; key written to %s (keep it away from the panel)'
+                      % (result['seed'], result['key']))
+            return EXIT_OK
+        if verb == 'filings':
+            expect = [e for e in args.expect.split(',') if e]
+            result = debate.filings(args.dir, expect, args.min_words)
+            print(json.dumps(result, sort_keys=True, indent=1) if args.json
+                  else debate.render_filings(result))
+            return EXIT_OK if result['complete'] else EXIT_TIMEOUT
+        if verb == 'panel':
+            require_herdr_env()
+            pane = my_pane(args)
+            owner = args.owner or 'local:%s' % pane
+            if not debate.OWNER_RE.fullmatch(owner):
+                raise Stop(EXIT_USAGE, '--owner must be an address such as local:w1:p1')
+            kinds = [k for k in (args.kinds or 'claude,codex,grok').split(',') if k]
+            if not kinds or not all(debate.KIND_RE.fullmatch(k) for k in kinds):
+                raise Stop(EXIT_USAGE, '--kinds must list agent kinds such as claude,codex,grok')
+            if not 1 <= args.seats <= 32:
+                raise Stop(EXIT_USAGE, '--seats must be between 1 and 32')
+            agents = herdr_json(['agent', 'list'], timeout=12)
+            agents = ((agents.get('result') or {}).get('agents')) if isinstance(agents, dict) else None
+            if not isinstance(agents, list):
+                raise Stop(EXIT_HERDR, 'herdr agent list returned no agent list')
+            agents = [a for a in agents if isinstance(a, dict)
+                      and in_scope(('local', a.get('pane_id') or ''), scope_from(args))]
+            # Idle is not free: a pane that leads, or is a lane of, another plan's
+            # lead record on this server is never offered, nor one named in --exclude.
+            busy = set(e for e in (args.exclude or '').split(',') if e)
+            me = 'local:%s' % pane
+            for data in all_leads(Store()):
+                rec = data.get('record') or {}
+                if rec.get('lead') and rec.get('lead') != me:
+                    for a in [rec['lead']] + list(rec.get('lanes') or []):
+                        if isinstance(a, str) and a.startswith('local:'):
+                            busy.add(a[len('local:'):])
+            result = debate.plan_panel(agents, pane, args.seats, kinds, owner, busy=busy,
+                                       all_workspaces=args.all_workspaces,
+                                       use_ak=not args.no_ak, cwd=os.getcwd())
+            print(json.dumps(result, sort_keys=True, indent=1) if args.json
+                  else debate.render_panel(result))
+            return EXIT_OK
+    except debate.DebateError as exc:
+        raise Stop(exc.code, exc.message)
+    raise Stop(EXIT_USAGE, 'debate needs a sub-verb: tally, anon, filings or panel')
+
+
 def cmd_skill(_args):
     here = os.path.dirname(os.path.realpath(__file__))
     sys.stdout.write(read_file(os.path.join(os.path.dirname(here), 'SKILL.md')))
@@ -2790,12 +2860,48 @@ def build_parser():
     x.add_argument('id')
     x.add_argument('--reason')
     x.add_argument('--pane', help="this session's pane id (w1:p2); wins over HERDR_PANE_ID - needed by agents that run tools from a background server, e.g. Codex")
+
+    d = sub.add_parser('debate', help="a debate lead's tools: tally, anon, filings, panel "
+                       '(debate.md)')
+    dsub = d.add_subparsers(dest='debate_verb')
+    dt = dsub.add_parser('tally', help='Borda, first places, Condorcet winner/loser and item '
+                         'verdicts from a ballots file (herdr-peers/ballots-v1)')
+    dt.add_argument('file', help='ballots JSON file, or - for stdin')
+    dt.add_argument('--exclude', help='voters to leave out, comma-separated (the lead never votes)')
+    dt.add_argument('--json', action='store_true', help='herdr-peers/tally-v1 JSON')
+    da = dsub.add_parser('anon', help='copy filings to Filing_A.md... in a seeded order, '
+                         'identities redacted; the mapping goes to --key')
+    da.add_argument('src', help='directory of round filings (*.md)')
+    da.add_argument('dst', help='new or empty output directory the panel will read')
+    da.add_argument('--key', required=True, help='new key file, outside both directories')
+    da.add_argument('--seed', help='shuffle seed to record (default: random)')
+    da.add_argument('--redact', action='append', help='another word to redact (repeatable)')
+    da.add_argument('--json', action='store_true')
+    df = dsub.add_parser('filings', help='which expected filings are on disk, missing or short')
+    df.add_argument('dir', help='the round directory')
+    df.add_argument('--expect', required=True, help='expected filing names, comma-separated')
+    df.add_argument('--min-words', type=int, default=0, help='a shorter filing counts as short')
+    df.add_argument('--json', action='store_true', help='herdr-peers/filings-v1 JSON')
+    dp = dsub.add_parser('panel', help='propose a panel: idle panes to reuse, then accounts '
+                         'with headroom from ak pick (read-only; runs nothing)')
+    dp.add_argument('--seats', type=int, required=True, help='panel size (1-32)')
+    dp.add_argument('--kinds', help='agent kinds for new seats, in vendor-mix order '
+                    '(default claude,codex,grok)')
+    dp.add_argument('--owner', help='lease owner address (default: this pane, local:<pane>)')
+    dp.add_argument('--all-workspaces', action='store_true',
+                    help='reuse idle panes outside this workspace too')
+    dp.add_argument('--exclude', help='pane ids never to reuse, comma-separated (w1:p3,...)')
+    dp.add_argument('--no-ak', action='store_true', help='do not call ak pick')
+    dp.add_argument('--scope', help='allow-list for reused panes')
+    dp.add_argument('--pane', help="this session's pane id (w1:p2); wins over HERDR_PANE_ID")
+    dp.add_argument('--json', action='store_true', help='herdr-peers/panel-v1 JSON')
     return p
 
 
 VERBS = {'ask': cmd_ask, 'reply': cmd_reply, 'check': cmd_check, 'wait': cmd_wait,
          'list': cmd_list, 'log': cmd_log, 'cancel': cmd_cancel, 'status': cmd_status,
-         'lanes': cmd_lanes, 'notify': cmd_notify, 'lead': cmd_lead}
+         'lanes': cmd_lanes, 'notify': cmd_notify, 'lead': cmd_lead,
+         'debate': cmd_debate}
 
 
 def main(argv=None):

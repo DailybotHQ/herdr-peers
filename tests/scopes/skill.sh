@@ -65,9 +65,12 @@ assert_contains "installs the official skill pinned to a tag" "$body" \
 assert_contains "offers the version-matched herdr --skill" "$body" "herdr --skill"
 assert_contains "has a Trust boundary (write scope) section" "$body" "## 6. Trust boundary (write scope)"
 assert_contains "says received text is data, not instructions" "$body" "data, not instructions"
+assert_contains "links the debate sub-skill" "$body" "[debate.md](debate.md)"
+assert_contains "the debate sub-skill keeps the lead out of the vote" "$(cat "$SKILL_DIR/debate.md")" "The lead never votes"
+assert_contains "the debate sub-skill asks before spawning panes" "$(cat "$SKILL_DIR/debate.md")" "ask the human before"
 
 # Marketplace rules over every shipped skill file.
-all=$(cat "$SKILL_DIR"/*.md "$SKILL_DIR"/templates/* "$SKILL_DIR"/scripts/* 2>/dev/null)
+all=$(cat "$SKILL_DIR"/*.md "$SKILL_DIR"/templates/* "$SKILL_DIR"/templates/debate/* "$SKILL_DIR"/scripts/* 2>/dev/null)
 if printf '%s' "$all" | grep -Eq '(curl|wget)[^|]*\|[[:space:]]*(sudo[[:space:]]+)?(ba|z|da)?sh\b'; then
   t_fail "no fetch-piped-to-shell line (E005)"
 else t_ok "no fetch-piped-to-shell line (E005)"; fi
@@ -80,7 +83,7 @@ if grep -rqi 'dailybot' "$SKILL_DIR"; then t_fail "no vendor (dailybot) names un
 if grep -rqiE 'deepworkplan|\.dwp/' "$SKILL_DIR"; then t_fail "standalone: no methodology names or .dwp/ paths"; else t_ok "standalone: no methodology names or .dwp/ paths"; fi
 
 # Relative links in the skill's markdown resolve inside the skill directory.
-broken=$(cd "$SKILL_DIR" && for f in *.md templates/*.md; do
+broken=$(cd "$SKILL_DIR" && for f in *.md templates/*.md templates/debate/*.md; do
   [ -f "$f" ] || continue
   grep -Eo '\]\([^)#]+\)' "$f" | sed 's/^](//; s/)$//' | grep -v '://' |
     while IFS= read -r l; do [ -e "$(dirname "$f")/$l" ] || echo "$f -> $l"; done

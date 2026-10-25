@@ -9,6 +9,60 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-25
+
+Protocol stays **1**: the ask, reply and notice stamps, the reply grant, the
+loop guard, depth limit 1, the fan-out cap and every existing verb, flag,
+exit code and JSON contract are unchanged. The release is additive.
+
+### Added
+
+- **Debates, a native sub-skill** ([`debate.md`](skills/herdr-peers/debate.md)).
+  A lead runs a panel of peers through rounds and closes with a decision
+  record: the lead's contract (never votes, the human's words verbatim, one
+  channel, filings on disk with one-line replies, no external actions);
+  eight formats (lane research, classic rounds, claim-by-claim cross-exam,
+  blind fresh-context challenge with a sealed proposal, devil's-advocate
+  trial with role reversal, steelman then judge, replication panel, naming
+  round) with three rounds and a forced verdict space as the default; brief
+  design (decided vs. not decided, premise ledger and dead-objection rule,
+  Q-ids with options, weighted criteria, lanes with red teams and a forced
+  advocate, FACT / INFERENCE / OPEN evidence, forbidden sources); bias
+  control (context resets, anonymized filings, rotated sides, vendor mix,
+  recusal); lead checks; counting; operating and recovering a panel; closing
+  with cross-review and a fix log; optional outputs for the team.
+- **`herdr-peers debate`**, the lead's tools (`scripts/debate.py`, standard
+  library only):
+  - `tally FILE` counts a [`herdr-peers/ballots-v1`](docs/schema/ballots-v1.json)
+    file: Borda, first places, Copeland, every pairwise duel, the Condorcet
+    winner and loser, per-item verdicts (ACCEPT / AMEND / REJECT …, missing =
+    ABSTAIN) and the median confidence; `--json` prints
+    [`herdr-peers/tally-v1`](docs/schema/tally-v1.json). A voter named `lead`
+    is always left out, as is every `--exclude`.
+  - `anon SRC DST --key K [--seed S] [--redact W]` copies filings to
+    `Filing_A.md`, `Filing_B.md`… in a seeded order with pane ids, Herdr
+    addresses, filename stems and model names redacted; the mapping goes to a
+    `0600` key that must sit outside both directories.
+  - `filings DIR --expect a,b [--min-words N]` lists present, missing and
+    short filings, exiting 5 while the round is incomplete — recover from disk
+    and re-ask only the missing panes.
+  - `panel --seats N [--kinds …] [--owner A] [--exclude …] [--all-workspaces]
+    [--no-ak]` proposes a panel and runs nothing: idle panes first (vendors
+    interleaved, panes in another plan's lead record skipped), with the
+    per-kind context reset (`/clear`; `/new` and Enter for Codex), then — when
+    agentkit (`ak`) is installed — new panes on the accounts `ak pick <kind>
+    --owner <lead>` ranks highest, round-robin over kinds, each with its
+    `ak lease`, pane split (`HERDR_PEERS_BRIEFER` set), `ak <kind> @<profile>
+    --trust-cwd` launch and the `ak lease release` for the close;
+    [`herdr-peers/panel-v1`](docs/schema/panel-v1.json) with `--json`.
+- Nine debate templates under `skills/herdr-peers/templates/debate/`:
+  `HUMAN_NOTE.md`, `DEBATE_BRIEF.md`, `ROUND_BRIEF.md`, `ROUND_SYNTHESIS.md`,
+  `LEAD_CHECKS.md`, `ballots.json`, `DECISION.md`, `FIXLOG.md`,
+  `TEAM_BRIEF.md` (with an audio-script outline).
+- A `debate` test scope with a fake `ak` (`tests/fakes/agentkit/ak`), and
+  threat-model rows T23–T25 (hostile debate inputs, un-blinding, panel
+  provisioning).
+
 ### Fixed
 
 - `wait` no longer times out on a reply that reached the caller's pane. An
@@ -348,7 +402,8 @@ First release. Interface version: **protocol 1** (`metadata.protocol: 1` in
   `harness lint protocol helper skill templates security live`; CI on Ubuntu
   and macOS.
 
-[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/DailybotHQ/herdr-peers/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.3...v1.0.0
 [0.3.3]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.1...v0.3.2

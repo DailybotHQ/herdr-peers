@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "herdr-peers/tally-v1",
+  "title": "herdr-peers debate tally (tally-v1)",
+  "description": "What `herdr-peers debate tally --json` prints. Borda: rank i of m options earns m-1-i. Pairwise: a voter prefers a over b when a is ranked above b, or a is ranked and b is not. Condorcet winner: beats every other option head to head; loser: loses to every other. Producers may add keys within a schema version; consumers must ignore unknown keys.",
+  "type": "object",
+  "required": ["schema", "voters", "ranked_ballots", "excluded", "options", "borda_max",
+               "condorcet_winner", "condorcet_loser", "pairwise", "items", "median_confidence"],
+  "properties": {
+    "schema": { "const": "herdr-peers/tally-v1" },
+    "voters": { "type": "integer", "minimum": 1 },
+    "ranked_ballots": { "type": "integer", "minimum": 0 },
+    "excluded": { "type": "array", "items": { "type": "string" },
+                  "description": "Voters left out: `lead` and every --exclude." },
+    "options": { "type": "array", "description": "Ordered by Borda, then first places, then input order.",
+                 "items": { "type": "object", "required": ["id", "borda", "first_places", "copeland"],
+                            "properties": { "id": { "type": "string" }, "borda": { "type": "integer" },
+                                            "first_places": { "type": "integer" },
+                                            "copeland": { "type": "integer" } } } },
+    "borda_max": { "type": "integer" },
+    "condorcet_winner": { "type": ["string", "null"] },
+    "condorcet_loser": { "type": ["string", "null"] },
+    "pairwise": { "type": "array",
+                  "items": { "type": "object", "required": ["a", "b", "a_over_b", "b_over_a", "winner"] } },
+    "items": { "type": "array",
+               "items": { "type": "object", "required": ["id", "verdicts"],
+                          "properties": { "verdicts": { "type": "object",
+                                                        "additionalProperties": { "type": "integer" } } } } },
+    "median_confidence": { "type": ["number", "null"] }
+  }
+}
