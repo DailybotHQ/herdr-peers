@@ -1,7 +1,8 @@
 # State of the art — <topic>
 
 As of <date>. Panel: <N> lanes (<angles>; model families <...>). The lead
-filed no claims. Claims report: `debate claims rounds/round2/ --map keymap.json`.
+filed no claims. Claims report: `debate claims --rounds rounds/round1 rounds/round2
+--map keymap.json` (a quorum count, not a verification: see `LEAD_CHECKS.md`).
 
 ## The answer in five lines
 

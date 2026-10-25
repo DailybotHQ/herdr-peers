@@ -1,16 +1,16 @@
 # Debate brief — <debate id>, round 1
 
-Purpose: **<decide / stress-test / verify / generate>** (for research, use `RESEARCH_BRIEF.md`).
+Purpose: **<decide / verify / generate>** (for research, use `RESEARCH_BRIEF.md`; for a stress test, `STRESS_TEST_BRIEF.md`).
 
 You are one pane of a <N>-pane panel. The lead does not vote. Read first:
 `HUMAN_NOTE.md`. Then write your filing to `rounds/round1/<your pane>.md`
 and reply with exactly one line:
 
     rounds/round1/<pane>.md | verdict: <one line> | strongest point: <one line>
-    capacity=<ok|low|critical|unknown> <NN>% <@profile>
+    capacity=<ok|low|critical|unknown> <NN>% <@profile or ->
 
 The capacity line comes from `ak capacity --self` when agentkit launched
-you (otherwise `unknown`). At `low`, finish this filing and say so; at
+you (otherwise `capacity=unknown -`). At `low`, finish this filing and say so; at
 `critical`, write what you have, say so, and stop.
 
 Codex panes: pass `--pane <your pane id>` on every `herdr-peers` call.

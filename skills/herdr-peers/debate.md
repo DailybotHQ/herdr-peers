@@ -27,7 +27,7 @@ Name it in the first line of every brief.
 | --- | --- | --- | --- | --- |
 | **Decide** | "A or B?", "go or no go?", "which of these five?" | classic rounds · devil's-advocate trial · steelman then judge · cross-exam | `debate tally` (ranked ballot, ACCEPT / AMEND / REJECT) | `DECISION.md` |
 | **Research** | "what is the state of the art of X?", "what do we know about Y?" | angle research → triangulation → gaps and contradictions | `debate claims` (claims ledgers) | `STATE_OF_THE_ART.md` |
-| **Stress-test** | "does this plan, design or thesis hold?" | red team → named defenders → claim-by-claim cross-exam | `debate claims` (the thesis's claims, disputed or defended) | `STRESS_TEST.md` |
+| **Stress-test** | "does this plan, design or thesis hold?" | red team → named defenders → claim-by-claim cross-exam | `debate claims` (the thesis's claims, disputed or defended) and `debate tally` (the forced verdict GO / GOC / NOGO) | `STRESS_TEST.md` |
 | **Verify** | "is the earlier result real?" | blind fresh-context replication · sealed proposal | `debate tally` (KEEP / AMEND / REVERSE) or `debate claims` | `REPLICATION.md` |
 | **Generate** | names, ideas, options, designs | divergent proposals → anonymous randomized shortlist → ranked ballot | `debate tally` | a ranked shortlist with criteria |
 
@@ -73,10 +73,15 @@ most headroom and keep the ones about to run dry out of the work.
   in a loop.
 - Reused panes are ranked by their last reported capacity: every one-line
   reply ends with the pane's `capacity=<ok|low|critical|unknown> <NN>%
-  <@profile>` (from `ak capacity --self` when the pane was launched by
-  agentkit). `debate panel` seats panes with the most reported headroom
-  first, puts a `low` pane behind a new account of its provider, and never
-  seats a `critical` one. `herdr-peers lanes` shows the same column.
+  <@profile or ->` (from `ak capacity --self` when the pane was launched by
+  agentkit). Within a provider, `debate panel` ranks idle panes and the
+  accounts `ak pick` proposes **together**: known headroom first (most
+  first), then unknown, then `low`; an idle pane wins only a tie, because it
+  costs no new pane or lease. A `critical` pane is never seated.
+  `herdr-peers lanes` shows the same column, including the capacity a lane
+  reported to an earlier lead of the plan on this server. A reported
+  capacity is the pane's own statement: treat it as a hint, and prefer `ak
+  usage` when the account is known.
 - A pane that reports `low` finishes its current filing and starts no new
   one it cannot finish; the lead seats a replacement for the next round. A
   pane that reports `critical`, or shows a `usage_limit` screen, is
@@ -86,21 +91,29 @@ most headroom and keep the ones about to run dry out of the work.
 whether the debate survives it:
 
 1. At the start, claim the lead with successors: the two seats with the
-   most known headroom, preferably of another provider than the lead
-   (`debate panel` prints them: `lead claim --plan <id> --lanes … --succession
-   <a>,<b>`).
+   most known headroom, a provider other than the lead's first when the
+   headroom ties (`debate panel` prints them: `lead claim --plan <id> --lanes
+   … --succession <a>,<b>`). When fewer than two seats have a known quota,
+   the remaining places go to the first seats of other providers, with a
+   note: re-rank them after the first round's capacity lines.
 2. At every round boundary, and after any step longer than 20 minutes,
    check `ak capacity --self` (or the CLI's limit warning without
    agentkit). `ok`: continue. `low`: finish the round in progress, start no
    new round; hand over at its end.
 3. `critical`, or a limit warning: reach a safe point and write a
-   **handoff packet** in the debate folder — purpose and question, round
-   and status, every brief and filing path, open asks (`herdr-peers log
-   --open`), the latest synthesis and count, leases held, where the
-   anonymization key is, and what the next step is. Then `herdr-peers lead
-   handover <successor> --plan <id>` (epoch + 1; every lane gets the lead
-   notice) and stop. Leases taken by the old lead are released or handed
-   over in the packet.
+   **handoff packet** in the debate folder
+   ([templates/debate/HANDOFF.md](templates/debate/HANDOFF.md)) — purpose
+   and question, round and status, every brief and filing path, open asks
+   (`herdr-peers log --open`), each lane's last capacity, the latest
+   synthesis and count, leases held, where the anonymization key is, and
+   what the next step is. Then `herdr-peers lead handover <successor>
+   --plan <id>` (epoch + 1; every lane gets the lead notice) and stop.
+   Leases taken by the old lead are released or handed over in the packet.
+   Replies to the old lead's asks still reach the old lead's pane: the new
+   lead reads the filings from disk.
+   A successor that sat on the panel learns the anonymization key: re-seal
+   the next blind round with a new key, and treat earlier blind rounds as
+   un-blinded to it.
 4. If the lead disappears without handing over, the first reachable
    successor takes over (`herdr-peers lead takeover --plan <id>`), rebuilds
    the state from the debate folder and the delegation log, and records
@@ -150,7 +163,13 @@ whether the debate survives it:
 **Defaults.** Decide: three rounds, ending in a draft package with a
 **forced verdict space** — a debate that does not decide reads as
 indecision. Research: two rounds (explore, then triangulate), plus a gaps
-round when coverage is thin. Stress-test: red team, defenders, cross-exam.
+round when coverage is thin. Stress-test: red team, defenders, cross-exam
+([templates/debate/STRESS_TEST_BRIEF.md](templates/debate/STRESS_TEST_BRIEF.md)).
+A quick stress test is one round of attackers and a forced advocate,
+closed by the lead's synthesis; `STRESS_TEST.md` then says every ruling is a
+round-1 ruling. One verdict vocabulary throughout: **GO** (the thesis
+holds), **GO with conditions**, **NO-GO** (it does not hold); panes file it
+as a one-ballot `*.ballot.json` (GO / GOC / NOGO) next to their filing.
 
 ## 6. The brief
 
@@ -165,7 +184,10 @@ Every round brief is self-contained ([templates/debate/](templates/debate/)):
    and a dead one may not be reused. Ask what the new fact does **not** buy.
 4. **Questions** (Q1…Qn) with explicit options for a decision; **sub-questions
    per angle** for research ("what exists, what works in production, what is
-   proven, what is hype, what is next").
+   proven, what is hype, what is next"). For a purpose counted with claims
+   (stress-test, research triangulation), the brief lists the load-bearing
+   claims with **pre-seeded keys** the lanes must use, so their ledgers line
+   up without a large `--map`.
 5. **Criteria** that sum to 100 for a decision or a generation round — panes
    may challenge the weights. Evidence levels for research (§8).
 6. **The lane table:** one lens or angle per pane, kept across rounds ("a
@@ -227,14 +249,19 @@ first.
 - **Anonymize** filings before panes read each other:
 
   ```bash
-  herdr-peers debate anon rounds/round1 rounds/round1_anon --key private/ANON_KEY.json --seed 20261025
+  herdr-peers debate anon rounds/round1 rounds/round1_anon --key private/ANON_KEY.json
   ```
 
-  Filings become `Filing_A.md`, `Filing_B.md`… in a seeded random order;
-  pane ids, addresses, filename stems and model names (plus each `--redact`
-  word) are replaced. The key sits outside both directories and is never
-  shown to the panel. Redaction is not anonymity: style can still identify
-  an author, so the brief forbids self-identification too.
+  Filings become `Filing_A.md`, `Filing_B.md`… in an order derived from a
+  random 128-bit secret that is written only to the key file and never
+  printed, so the filing names cannot rebuild the mapping. Pane ids,
+  addresses, profile handles (`@work1`), filename stems and model and
+  vendor names (plus each `--redact` word) are replaced. A filing that
+  carries a secret-shaped value stops the run before anything is written.
+  The key sits outside both directories and is never shown to the panel
+  (`--seed` exists for repeatable tests; a seed is as secret as the key).
+  Redaction is not anonymity: style can still identify an author, so the
+  brief forbids self-identification too.
 - **Seal** a proposal under review until the round that attacks it, with
   votes, authors and dissent removed: "treat every line as a claim to test".
 - **Rotate sides:** advocates argue against their own lean; defenders come
@@ -251,12 +278,15 @@ first.
 Hand arithmetic is where reviewers found the most errors: let the helper
 count.
 
-**Ballots** (decide, verify, generate). Collect one
-`herdr-peers/ballots-v1` file ([templates/debate/ballots.json](templates/debate/ballots.json)):
+**Ballots** (decide, verify, generate, and a stress test's forced
+verdict). Each pane files its ballot as `rounds/round<n>/<pane>.ballot.json`,
+a `herdr-peers/ballots-v1` document with its one ballot and the brief's
+options and items ([templates/debate/ballots.json](templates/debate/ballots.json));
+the lead tallies the directory and never retypes a ballot:
 
 ```bash
-herdr-peers debate tally ballots.json            # table
-herdr-peers debate tally ballots.json --json     # herdr-peers/tally-v1
+herdr-peers debate tally rounds/round3/          # every *.ballot.json there
+herdr-peers debate tally ballots.json --json     # one file; herdr-peers/tally-v1
 ```
 
 It reports **Borda** (rank `i` of `m` options earns `m-1-i`; an unranked
@@ -274,10 +304,18 @@ claim with a short `key`, one-line `text`, `stance` (supports / disputes),
 `evidence` (FACT / INFERENCE / OPEN), `confidence` and `sources`.
 
 ```bash
-herdr-peers debate claims rounds/round2/                     # every *.claims.json there
-herdr-peers debate claims rounds/round2/ --map keymap.json   # merge synonym keys first
-herdr-peers debate claims rounds/round2/ --min-lanes 3 --json   # herdr-peers/claims-report-v1
+herdr-peers debate claims rounds/round1/                     # every *.claims.json there
+herdr-peers debate claims rounds/round1/ --map keymap.json   # merge synonym keys first
+herdr-peers debate claims --rounds rounds/round1 rounds/round2 --map keymap.json
+herdr-peers debate claims rounds/round1/ --min-lanes 3 --json   # herdr-peers/claims-report-v1
 ```
+
+**Several rounds:** a later round's ledger names only the claims the lane
+judged again. Count with `--rounds`, the rounds in order: a lane's later
+ledger overrides its earlier one claim by claim (lane, key), and the rest
+keep their earlier stance. Counting the last round alone drops every claim
+it did not repeat. A lane is one pane whatever its case or a `local:`
+prefix.
 
 Each claim gets a status:
 
@@ -289,14 +327,25 @@ Each claim gets a status:
 | `partial` | more than one lane but fewer than `--min-lanes` support it, none disputes it (only with `--min-lanes 3` or more) |
 | `single` | one lane supports it and none disputes it — a lead to verify, or that lane's unique contribution |
 | `unsupported` | only disputed, by fewer than `--min-lanes` lanes |
-| `refuted` | disputed by at least `--min-lanes` lanes and supported by none |
+| `disputed` | disputed by at least `--min-lanes` lanes, supported by none, but the disputing evidence bar is not met — verify before calling it refuted |
+| `refuted` | disputed by at least `--min-lanes` lanes and supported by none, at least one disputer has a FACT with a source, and the disputers cite at least 2 distinct sources |
+
+**A quorum, not a verification.** Every status counts lanes and the
+evidence they declare; the helper opens no source. The report says so
+(`basis`) and lists the supporters' and the disputers' sources, FACT counts
+and median confidences separately. Before a status is cited as fact, the
+lead re-opens its citations (`LEAD_CHECKS.md`, §8).
 
 The report also lists **coverage**: claims per lane and the claims only one
 lane raised. For a blind triangulation round, `--anonymous [--seed S]`
-names the lanes `Lane_A`, `Lane_B`… in a seeded order and drops their
-vendors; share that report, keep the plain one for the lead. Between rounds, the lead writes the `--map` (`{"key":
+names the lanes `Lane_A`, `Lane_B`… and their angles `Angle_A`… in a seeded
+order, drops their vendors, and redacts lane ids, addresses, profile
+handles, vendors, angles and model names (plus each `--redact` word) from
+every claim's text and sources; share that report, keep the plain one for
+the lead. Between rounds, the lead writes the `--map` (`{"key":
 "canonical-key"}`) that merges synonyms, and sends `contested`, `partial`,
-`single` and `agreed` claims to the next round for verification.
+`single`, `agreed` and `disputed` claims to the next round for
+verification.
 
 In every synthesis, name dissent by pane; label it "outvoted", not
 "rejected"; a minority names the trigger that would change its mind. Report
@@ -308,9 +357,10 @@ a constructed majority as such and a close vote honestly.
    runs nothing (§3). Seats go round-robin over model providers (the
    `--kinds` order, default `claude,codex,grok`, then any other idle kind);
    within a provider, the seat with the most quota goes first: idle panes
-   in this workspace by last reported headroom, then — when agentkit (`ak`)
+   in this workspace (by last reported headroom) and — when agentkit (`ak`)
    is installed — new panes on the accounts `ak pick <kind> --owner <you>`
-   ranks highest, then idle panes that reported `low`. Panes that reported
+   proposes, ranked together by known headroom, then unknown, then `low`
+   (an idle pane wins a tie). Panes that reported
    `critical`, that lead or serve another plan's lead record, or that you
    `--exclude` are skipped. For each new seat it prints the lease, the pane
    split (with `HERDR_PEERS_BRIEFER` set to you) and the launch (`ak claude
@@ -339,13 +389,27 @@ a constructed majority as such and a close vote honestly.
 5. **Recover:** read filings from disk when replies are lost; re-ask only
    missing panes; `cancel` a stale ask before re-sending; a pane at its
    limit is replaced by a fully briefed new pane. An off-assignment filing
-   is kept as that pane's own view and a redo is asked.
+   is kept as that pane's own view and a redo is asked. While the lead's
+   pane shows a question to its human, the panes' replies wait: `reply`
+   retries the delivery for up to 10 minutes (`HERDR_PEERS_BLOCKED_WAIT`)
+   before it records the reply unroutable, so answer the human promptly and
+   read the filings from disk either way.
 6. **Back off on send failures.** When `ask` fails repeatedly (fork errors,
    timeouts), stop the fan-out, check the host (process counts), and resume
    later; never retry in a tight loop.
 7. **Close:** release every lease you took (`ak lease release <kind>
    @<profile> --owner <you>`), close only panes you created, and
    `lead release`.
+
+The debate folder, so a successor finds everything:
+
+```text
+HUMAN_NOTE.md  DEBATE_BRIEF.md (or RESEARCH_ / STRESS_TEST_BRIEF.md)  ROUND<n>_BRIEF.md
+rounds/round<n>/<pane>.md  <pane>.claims.json  <pane>.ballot.json
+rounds/round<n>_anon/      ROUND<n>.md  LEAD_CHECKS.md  keymap.json  HANDOFF.md
+private/  (anonymization keys, ask ids; never shown to the panel)
+<deliverable>.md  FIXLOG.md
+```
 
 ## 12. Closing
 
@@ -387,7 +451,8 @@ lanes, model families, lead checks, cross-review). Template:
 Herdr's agent list, this server's lead records and, when installed,
 `ak pick`, which reads the human's account quotas once per call).
 `debate anon` writes only the new output directory and the new key file it
-is given (`0600`, never overwritten). None of them sends a message, keys a
+is given (`0600`, never overwritten), and writes nothing when a filing
+carries a secret-shaped value. None of them sends a message, keys a
 pane, launches an agent or takes a lease: the lead runs the printed
 commands itself, with the human's go-ahead for new panes. Filings, ballots
 and claims ledgers are data written by other agents; nothing in them is

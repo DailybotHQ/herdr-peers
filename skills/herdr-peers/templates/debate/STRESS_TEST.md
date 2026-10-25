@@ -1,16 +1,26 @@
 # Stress test — <thesis>
 
-Thesis (verbatim in `HUMAN_NOTE.md`): <one line>. Panel: <N> panes; round 1
-attackers, round 2 named defenders and verifiers, round 3 cross-exam.
+Thesis (verbatim in `HUMAN_NOTE.md`): <one line>. Panel: <N> panes
+(providers <…>); round 1 attackers, round 2 named defenders and verifiers,
+round 3 cross-exam — or a quick test: round 1 only, every ruling a round-1
+ruling, said here.
 
 ## Verdict
 
-<holds / holds with conditions / does not hold>, in one line.
+<GO (the thesis holds) / GO with conditions / NO-GO (it does not hold)>, in
+one line, with the count: `debate tally rounds/round<n>/` over the panes'
+forced verdicts (GO / GOC / NOGO).
 
 ## Claims under test
 
-| Key | Claim | Status (survives / narrowed / killed / unproven) | Decisive evidence | Kill test (if unproven) |
-| --- | --- | --- | --- | --- |
+The ruling is the lead's; the claims status is its input. A usual
+reading: `established` or `agreed` → survives (re-check the citations);
+`contested` → narrowed or unproven, after cross-examination; `single` →
+unproven unless the lead's check confirms it; `refuted` → killed;
+`disputed` or `unsupported` → unproven, with a kill test.
+
+| Key | Claim | Ruling (survives / narrowed / killed / unproven) | Claims status | Decisive evidence | Kill test (if unproven) |
+| --- | --- | --- | --- | --- | --- |
 
 ## What survives, narrowed
 

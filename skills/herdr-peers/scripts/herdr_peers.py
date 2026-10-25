@@ -1031,6 +1031,46 @@ def warn(message):
     sys.stderr.write('herdr-peers: %s\n' % safe(message))
 
 
+# A peer blocked at a question or approval cannot take input; `reply` and
+# `notify` retry the delivery (never the message: still exactly one) with
+# backoff for a bounded time before they record the failure.
+BLOCKED_WAIT_DEFAULT, BLOCKED_WAIT_MAX = 600, 3600
+BLOCKED_BACKOFF_FIRST, BLOCKED_BACKOFF_CAP = 1, 30
+
+
+class Blocked(Exception):
+    """The peer is blocked; the delivery may be retried."""
+
+
+def blocked_wait(args):
+    """Seconds to keep retrying a delivery to a blocked peer: --wait-blocked,
+    else HERDR_PEERS_BLOCKED_WAIT, else 600. 0 tries once."""
+    raw, src = getattr(args, 'wait_blocked', None), '--wait-blocked'
+    if raw is None:
+        raw, src = os.environ.get('HERDR_PEERS_BLOCKED_WAIT'), 'HERDR_PEERS_BLOCKED_WAIT'
+    if raw is None or raw == '':
+        return BLOCKED_WAIT_DEFAULT
+    if not re.fullmatch(r'[0-9]{1,4}', str(raw)) or int(raw) > BLOCKED_WAIT_MAX:
+        raise Stop(EXIT_USAGE, '%s must be a number of seconds from 0 to %d'
+                   % (src, BLOCKED_WAIT_MAX))
+    return int(raw)
+
+
+def is_blocked(info, error=None):
+    return info.get('agent_status') == 'blocked' or 'agent_blocked' in (error or '')
+
+
+def blocked_backoff(deadline, delay, what, target):
+    """Sleep before the next delivery attempt and return the next delay, or
+    None when the next attempt would fall past DEADLINE."""
+    if time.monotonic() + delay > deadline:
+        return None
+    warn('%s is blocked at a question or approval; %s not delivered yet, retrying in %ds '
+         '(until %ds from now at most)' % (target, what, delay, max(0, int(deadline - time.monotonic()))))
+    time.sleep(delay)
+    return min(delay * 2, BLOCKED_BACKOFF_CAP)
+
+
 # --------------------------------------------------------------------- verbs
 
 def cmd_ask(args):
@@ -1118,7 +1158,7 @@ def cmd_notify(args):
     if args.target == 'lead':
         args.target = lead_target(args, store, pane)
     target = resolve_target(args, store, pane)
-    print(send_notice(args, store, pane, target, body))
+    print(send_notice(args, store, pane, target, body, wait_blocked=blocked_wait(args)))
     return EXIT_OK
 
 
@@ -1139,10 +1179,10 @@ def resolve_target(args, store, pane):
     return target
 
 
-def send_notice(args, store, pane, target, body, extra=None, from_addr=None):
+def send_notice(args, store, pane, target, body, extra=None, from_addr=None, wait_blocked=0):
     """Build, record and deliver one notice; returns its id. Recorded as
     `notifier sent` before delivery and `notifier failed` after a failure
-    (raises then)."""
+    (raises then). A blocked peer is retried for up to WAIT_BLOCKED seconds."""
     if from_addr is None:
         from_addr = resolve_from(args, target, pane, store)
     if target == from_addr:
@@ -1150,16 +1190,25 @@ def send_notice(args, store, pane, target, body, extra=None, from_addr=None):
     notice_id = new_ulid()
     message = build_notice(body, from_addr, notice_id)
     check_size(message)
+    deadline, delay = time.monotonic() + wait_blocked, BLOCKED_BACKOFF_FIRST
     info = agent_info(target)
-    if info.get('agent_status') == 'blocked':
-        raise Stop(EXIT_POLICY, 'the peer at %s is blocked at an approval or question; '
-                   'run `herdr-peers status %s` first' % (fmt_address(target), fmt_address(target)))
+    while is_blocked(info):
+        delay = blocked_backoff(deadline, delay, 'the notice', fmt_address(target))
+        if delay is None:
+            raise Stop(EXIT_POLICY, 'the peer at %s is blocked at an approval or question; '
+                       'run `herdr-peers status %s` first' % (fmt_address(target), fmt_address(target)))
+        info = agent_info(target)
     rec = dict(kind=kind_of(info), vendor=vendor_of(None, kind_of(info)),
                prompt_digest=digest(message), task=getattr(args, 'task', None))
     rec.update(extra or {})
     store.append(make_record('sent', 'notifier', notice_id, fmt_address(target),
                              fmt_address(from_addr), **dict(rec)))
     rc, out, err = herdr(['agent', 'prompt', target[1], message], machine=target[0], timeout=60)
+    while rc != 0 and is_blocked({}, last_line(err or out)):
+        delay = blocked_backoff(deadline, delay, 'the notice', fmt_address(target))
+        if delay is None:
+            break
+        rc, out, err = herdr(['agent', 'prompt', target[1], message], machine=target[0], timeout=60)
     if rc != 0:
         store.append(make_record('failed', 'notifier', notice_id, fmt_address(target),
                                  fmt_address(from_addr),
@@ -1216,11 +1265,22 @@ def cmd_reply(args):
     selves, _ = self_addresses(pane, store)
     if target in selves:
         raise Stop(EXIT_POLICY, 'refusing to reply to your own pane (%s)' % args.target)
-    with store.lock():
-        return reply_locked(args, target, answer, store, pane, selves)
+    if args.message == '-':
+        args.message_text = sys.stdin.read()
+    # Each attempt takes the lock and re-checks exactly-once; between
+    # attempts to a blocked peer the lock is released.
+    deadline, delay = time.monotonic() + blocked_wait(args), BLOCKED_BACKOFF_FIRST
+    while True:
+        retry = time.monotonic() + delay <= deadline
+        try:
+            with store.lock():
+                return reply_locked(args, target, answer, store, pane, selves, retry_blocked=retry)
+        except Blocked:
+            # None: no time left for a wait, so the next attempt is the last.
+            delay = blocked_backoff(deadline, delay, 'the reply', args.target) or float('inf')
 
 
-def reply_locked(args, target, answer, store, pane, selves):
+def reply_locked(args, target, answer, store, pane, selves, retry_blocked=False):
     latest = store.latest()
     if mine(latest.get(('caller', args.id)), pane):
         raise Stop(EXIT_PROTOCOL, 'loop guard: %s is an ask this pane sent; its reply is '
@@ -1229,7 +1289,7 @@ def reply_locked(args, target, answer, store, pane, selves):
     if prior and prior.get('state') in ('completed', 'cancelled'):
         raise Stop(EXIT_PROTOCOL, 'exactly once: %s was already %s' % (args.id, prior['state']))
     if args.message:
-        received = read_text_arg(args.message) if args.message == '-' else read_file(args.message)
+        received = args.message_text if args.message == '-' else read_file(args.message)
         verdict = classify(received, {'self': selves, 'scope': scope_from(args),
                                       'answered': answered_ids(store)})
         if verdict['decision'] != 'answer':
@@ -1262,6 +1322,8 @@ def reply_locked(args, target, answer, store, pane, selves):
         rc, out, err = herdr(['agent', 'prompt', target[1], message], machine=target[0], timeout=60)
         if rc != 0:
             transport_error = last_line(err or out)
+    if transport_error is not None and retry_blocked and is_blocked(info, transport_error):
+        raise Blocked(transport_error)
     if transport_error is not None:
         note = 'reply route unavailable: %s' % transport_error
         store.append(make_record('unroutable', 'delegate', args.id, args.target, own_addr,
@@ -2589,10 +2651,14 @@ def cmd_lanes(args):
             if peer and addr not in mine_:
                 per_peer.setdefault(peer, [])
     first_ts, capacity = {}, {}
+    # A lane of the lead record reports to whichever pane led when it filed:
+    # after a handover the new lead still sees its last capacity line.
+    plan_lanes = set(lead['record']['lanes']) if lead else set()
     for rec in store.records(all_machines=args.all):
         if rec.get('role') == 'caller':
             first_ts.setdefault(rec.get('id'), rec.get('ts'))
-        if isinstance(rec.get('capacity'), dict) and (args.all or mine(rec, pane)):
+        if isinstance(rec.get('capacity'), dict) and (args.all or mine(rec, pane)
+                                                      or rec.get('target') in plan_lanes):
             peer = parse_address(rec.get('target') or '')
             if peer:
                 capacity[peer] = dict(rec['capacity'], at=rec.get('ts'))
@@ -2678,26 +2744,28 @@ def cmd_debate(args):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import debate
     verb = args.debate_verb
+    declared_pane(args)  # accepted on every debate verb (Codex passes --pane everywhere)
+    addr_re = re.compile(r'(?<![A-Za-z0-9])(?:%s:)?%s(?![A-Za-z0-9])' % (MACHINE_RE, PANE_RE))
     try:
         if verb == 'tally':
             exclude = [v for v in (args.exclude or '').split(',') if v]
             options, items, ballots, excluded = debate.load_ballots(
-                debate._read_json(args.file), exclude)
+                debate.read_ballots(args.file), exclude)
             result = debate.tally(options, items, ballots, excluded)
             print(json.dumps(result, sort_keys=True, indent=1) if args.json
                   else debate.render_tally(result))
             return EXIT_OK
         if verb == 'anon':
-            addr_re = re.compile(r'(?<![A-Za-z0-9])(?:%s:)?%s(?![A-Za-z0-9])' % (MACHINE_RE, PANE_RE))
             result = debate.anonymize(args.src, args.dst, args.key, seed=args.seed,
-                                      redact=args.redact or (), addr_re=addr_re)
+                                      redact=args.redact or (), addr_re=addr_re,
+                                      secret_check=secret_finding)
             if args.json:
                 print(json.dumps(result, sort_keys=True, indent=1))
             else:
                 for f in result['filings']:
                     print('%s.md  %d redaction(s)' % (f['filing'], f['redactions']))
-                print('seed %s; key written to %s (keep it away from the panel)'
-                      % (result['seed'], result['key']))
+                print('key written to %s (it holds the order\'s secret: keep it away from '
+                      'the panel)' % result['key'])
             return EXIT_OK
         if verb == 'claims':
             aliases = None
@@ -2709,9 +2777,10 @@ def cmd_debate(args):
                     raise Stop(EXIT_USAGE, '--map must be a JSON object of claim key -> canonical key')
             if not 1 <= args.min_lanes <= 32:
                 raise Stop(EXIT_USAGE, '--min-lanes must be between 1 and 32')
-            lanes = debate.load_claims(args.paths, aliases)
+            lanes = debate.load_claims(args.paths, aliases, rounds=args.rounds)
             if args.anonymous:
-                lanes = debate.blind_lanes(lanes, args.seed)
+                lanes = debate.blind_lanes(lanes, args.seed, redact=args.redact or (),
+                                           addr_re=addr_re)
             result = debate.merge_claims(lanes, args.min_lanes)
             print(json.dumps(result, sort_keys=True, indent=1) if args.json
                   else debate.render_claims(result))
@@ -2807,6 +2876,10 @@ def build_parser():
     r.add_argument('id', help='the id= of the ask')
     r.add_argument('answer', help='the answer, or - to read stdin')
     r.add_argument('--message', help='the received ask (file or -), verified before replying')
+    r.add_argument('--wait-blocked', metavar='SECONDS',
+                   help='while the asker is blocked at a question or approval, retry the '
+                   'delivery with backoff for up to SECONDS before recording it unroutable '
+                   '(default $HERDR_PEERS_BLOCKED_WAIT or 600; 0 tries once)')
     r.add_argument('--scope')
     r.add_argument('--task')
     r.add_argument('--pane', help="this session's pane id (w1:p2); wins over HERDR_PANE_ID - needed by agents that run tools from a background server, e.g. Codex")
@@ -2879,6 +2952,10 @@ def build_parser():
     n.add_argument('--from', dest='sender', help='your address as the peer can reach it')
     n.add_argument('--scope', help='allow-list: *, <machine>, <machine>:<workspace>')
     n.add_argument('--task', help='task id to record (default: $DWP_TASK)')
+    n.add_argument('--wait-blocked', metavar='SECONDS',
+                   help='while the peer is blocked at a question or approval, retry the '
+                   'delivery with backoff for up to SECONDS (default $HERDR_PEERS_BLOCKED_WAIT '
+                   'or 600; 0 tries once)')
     n.add_argument('--pane', help="this session's pane id (w1:p2); wins over HERDR_PANE_ID")
 
     x = sub.add_parser('cancel', help='close an open ask (yours, or one you decline)')
@@ -2891,7 +2968,8 @@ def build_parser():
     dsub = d.add_subparsers(dest='debate_verb')
     dt = dsub.add_parser('tally', help='Borda, first places, Condorcet winner/loser and item '
                          'verdicts from a ballots file (herdr-peers/ballots-v1)')
-    dt.add_argument('file', help='ballots JSON file, or - for stdin')
+    dt.add_argument('file', help='ballots JSON file, - for stdin, or a directory of per-pane '
+                    '*.ballot.json files (one ballot each, same options and items)')
     dt.add_argument('--exclude', help='voters to leave out, comma-separated (the lead never votes)')
     dt.add_argument('--json', action='store_true', help='herdr-peers/tally-v1 JSON')
     da = dsub.add_parser('anon', help='copy filings to Filing_A.md... in a seeded order, '
@@ -2899,7 +2977,8 @@ def build_parser():
     da.add_argument('src', help='directory of round filings (*.md)')
     da.add_argument('dst', help='new or empty output directory the panel will read')
     da.add_argument('--key', required=True, help='new key file, outside both directories')
-    da.add_argument('--seed', help='shuffle seed to record (default: random)')
+    da.add_argument('--seed', help='the order\'s secret, for a repeatable test (default: a random '
+                    '128-bit value); kept only in the key file, never printed')
     da.add_argument('--redact', action='append', help='another word to redact (repeatable)')
     da.add_argument('--json', action='store_true')
     dc = dsub.add_parser('claims', help='merge research lanes\' claims ledgers (herdr-peers/claims-v1): '
@@ -2908,9 +2987,15 @@ def build_parser():
     dc.add_argument('--map', help='JSON object merging synonym keys: {"key": "canonical-key"}')
     dc.add_argument('--min-lanes', type=int, default=2,
                     help='independent lanes needed to agree or establish (default 2)')
+    dc.add_argument('--rounds', action='store_true',
+                    help='each path is one round, in order: a lane\'s later ledger overrides '
+                    'its earlier one claim by claim')
     dc.add_argument('--anonymous', action='store_true',
-                    help='name lanes Lane_A, Lane_B... in a seeded order and drop vendors '
-                    '(for a blind triangulation round)')
+                    help='name lanes Lane_A... and angles Angle_A... in a seeded order, drop '
+                    'vendors and redact identities from claim text and sources (for a blind '
+                    'triangulation round)')
+    dc.add_argument('--redact', action='append', help='another word to redact with --anonymous '
+                    '(repeatable)')
     dc.add_argument('--seed', help='shuffle seed for --anonymous (default: random)')
     dc.add_argument('--json', action='store_true', help='herdr-peers/claims-report-v1 JSON')
     df = dsub.add_parser('filings', help='which expected filings are on disk, missing or short')
@@ -2929,7 +3014,8 @@ def build_parser():
     dp.add_argument('--exclude', help='pane ids never to reuse, comma-separated (w1:p3,...)')
     dp.add_argument('--no-ak', action='store_true', help='do not call ak pick')
     dp.add_argument('--scope', help='allow-list for reused panes')
-    dp.add_argument('--pane', help="this session's pane id (w1:p2); wins over HERDR_PANE_ID")
+    for sp in (dt, da, dc, df, dp):
+        sp.add_argument('--pane', help="this session's pane id (w1:p2); wins over HERDR_PANE_ID")
     dp.add_argument('--json', action='store_true', help='herdr-peers/panel-v1 JSON')
     return p
 

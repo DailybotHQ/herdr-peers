@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "herdr-peers/panel-v1",
   "title": "herdr-peers debate panel proposal (panel-v1)",
-  "description": "What `herdr-peers debate panel --json` prints: a seating proposal that was not executed (`executed` is always false). Seats go round-robin over model providers (the --kinds order, then any other idle kind) to maximize diversity; within a provider an idle agent in this workspace (or every workspace with --all-workspaces, minus panes in another plan's lead record and --exclude) is reused before a new seat is proposed on an account from `ak pick` (pick-v1). Never carries a secret value or an account identity. Producers may add keys within a schema version; consumers must ignore unknown keys.",
+  "description": "What `herdr-peers debate panel --json` prints: a seating proposal that was not executed (`executed` is always false). Seats go round-robin over model providers (the --kinds order, then any other idle kind) to maximize diversity; within a provider the idle agents in this workspace (or every workspace with --all-workspaces, minus panes in another plan's lead record, --exclude and panes that reported critical) and the accounts `ak pick` (pick-v1) proposes are ranked together by known headroom (most first), then unknown, then low; an idle agent wins only a tie. Never carries a secret value or an account identity. Producers may add keys within a schema version; consumers must ignore unknown keys.",
   "type": "object",
   "required": ["schema", "lead", "seats", "filled", "reuse", "new", "mix", "providers", "diverse", "succession", "notes", "executed"],
   "properties": {
@@ -27,7 +27,7 @@
     "diverse": { "type": "boolean",
                  "description": "At least 3 providers (or one per seat when fewer than 3 seats) and no provider above half the panel; false adds a note." },
     "succession": { "type": "array", "maxItems": 2, "items": { "type": "string" },
-                    "description": "Up to two seats with the most known headroom (reported capacity or ak pick), best first, for `lead claim --succession`; a new seat is local:<paneN> until it exists." },
+                    "description": "Up to two seats with the most known headroom (reported capacity or ak pick), best first, a provider other than the lead's first on a tie, for `lead claim --succession`; seats of unknown quota fill the remaining places (with a note). A new seat is local:<paneN> until it exists." },
     "notes": { "type": "array", "items": { "type": "string" } },
     "executed": { "const": false }
   }

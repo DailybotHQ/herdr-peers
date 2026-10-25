@@ -10,7 +10,7 @@ Write two files and reply with exactly one line:
 - `rounds/round1/<your pane>.claims.json` — your claims ledger (`herdr-peers/claims-v1`, template `claims.json`)
 
       rounds/round1/<pane>.md | claims: <n> | headline: <one line>
-      capacity=<ok|low|critical|unknown> <NN>% <@profile>
+      capacity=<ok|low|critical|unknown> <NN>% <@profile or ->
 
 Codex lanes: pass `--pane <your pane id>` on every `herdr-peers` call.
 
@@ -69,7 +69,11 @@ postmortems) and say when you rely on a secondary one.
 
 ## Round 2 (triangulate) — sent later
 
-You will receive the merged claims report (`debate claims`) with every
-claim anonymized: for each `contested`, `single` and `agreed` claim you can
-judge, file `rounds/round2/<pane>.claims.json` with your own stance and
-sources, and fill the gaps the coverage list shows.
+You will receive the merged claims report (`debate claims --anonymous`):
+lanes, angles and identities are blinded. For each `contested`, `single`,
+`agreed` and `disputed` claim you can judge, file
+`rounds/round2/<pane>.claims.json` with your own stance and sources, and
+fill the gaps the coverage list shows. Your round-2 ledger overrides your
+round-1 entry for each key it names; the claims it leaves out keep their
+round-1 stance (the lead counts `debate claims --rounds rounds/round1
+rounds/round2`).
