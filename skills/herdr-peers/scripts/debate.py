@@ -56,7 +56,7 @@ MAX_INPUT = 4 * 1024 * 1024
 # Words that name a model family or vendor, redacted from anonymized filings.
 MODEL_WORDS = ('claude', 'codex', 'grok', 'gemini', 'gpt', 'opus', 'sonnet', 'haiku',
                'fable', 'anthropic', 'openai', 'xai', 'chatgpt', 'llama', 'mistral',
-               'deepseek', 'qwen', 'glm', 'kimi', 'google', 'gemma')
+               'deepseek', 'qwen', 'glm', 'kimi', 'google', 'gemma', 'o1', 'o3', 'o4')
 # An agent profile handle (@work1), never an e-mail address's domain part.
 PROFILE_WORD_RE = re.compile(r'(?<![A-Za-z0-9._%+-])@[A-Za-z0-9][A-Za-z0-9._-]{0,31}')
 # How a reused pane's context is cleared, per agent kind (the first word sent

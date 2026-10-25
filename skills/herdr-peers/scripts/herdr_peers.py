@@ -2742,6 +2742,7 @@ def cancel_locked(args, store, pane):
 
 def cmd_debate(args):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.dont_write_bytecode = True  # no __pycache__ in the skill directory
     import debate
     verb = args.debate_verb
     declared_pane(args)  # accepted on every debate verb (Codex passes --pane everywhere)

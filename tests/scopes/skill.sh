@@ -116,3 +116,9 @@ run "$inst/scripts/herdr-peers" check --json --no-record "$FIXTURES/messages/ans
 assert_contains "the copied skill classifies messages" "$OUT" '"decision": "answer"'
 run "$inst/scripts/herdr-peers" --skill
 assert_contains "the copied skill prints its own SKILL.md" "$OUT" "name: herdr-peers"
+rm -rf "$inst/scripts/__pycache__"
+run env -u PYTHONDONTWRITEBYTECODE "$inst/scripts/herdr-peers" debate tally "$inst/templates/debate/ballots.json"
+assert_rc "the copied skill counts a ballot" 0
+check "the helper writes no __pycache__ into the skill directory" test ! -e "$inst/scripts/__pycache__"
+run env -u PYTHONDONTWRITEBYTECODE python3 "$inst/scripts/herdr_peers.py" debate tally "$inst/templates/debate/ballots.json"
+check "importing debate.py writes no __pycache__ either (direct python run)" test ! -e "$inst/scripts/__pycache__"

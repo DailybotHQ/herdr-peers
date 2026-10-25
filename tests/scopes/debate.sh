@@ -112,7 +112,7 @@ assert_rc "a malformed --pane is refused" 2
 # --- anon ---
 R1="$WORK/rounds/round1"
 mkdir -p "$R1" "$WORK/private"
-printf 'Filed by p2D (claude-opus) from local:w1:p4 on @work1; see bb22:w3:p1 and w2:p9.\nGPT-5, Gemini and Google agree. Acme is my team. Mail ops@example.com.\n' >"$R1/p2D.md"
+printf 'Filed by p2D (claude-opus) from local:w1:p4 on @work1; see bb22:w3:p1 and w2:p9.\nGPT-5, o3-mini, Gemini and Google agree. Acme is my team. Mail ops@example.com.\n' >"$R1/p2D.md"
 printf 'p21 here, running codex.\nThe argument stands on its own.\n' >"$R1/p21.md"
 printf 'no identity here\n' >"$R1/p2F.md"
 printf 'not a filing\n' >"$R1/notes.txt"
@@ -122,7 +122,7 @@ anon_all=$(cat "$WORK"/rounds/round1_anon/*.md)
 assert_eq "one Filing_<letter>.md per .md filing, nothing else" "Filing_A.md Filing_B.md Filing_C.md" \
   "$(cd "$WORK/rounds/round1_anon" && echo *)"
 assert_not_contains "anon never prints the order's secret" "$OUT" "20261025"
-for leak in p2D p21 claude opus GPT-5 Grok codex w1:p4 bb22:w3:p1 w2:p9 Acme @work1 Google; do
+for leak in p2D p21 claude opus GPT-5 o3-mini Grok codex w1:p4 bb22:w3:p1 w2:p9 Acme @work1 Google; do
   assert_not_contains "anon redacts $leak" "$anon_all" "$leak"
 done
 assert_contains "anon keeps the argument text" "$anon_all" "The argument stands on its own."

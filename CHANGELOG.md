@@ -148,6 +148,12 @@ Recorded in [docs/SECURITY.md](docs/SECURITY.md) "Residual risk":
 
 ### Fixed
 
+- The helper no longer writes `__pycache__` into the skill directory: the
+  entry script runs Python with `-B` and the `debate` import sets
+  `sys.dont_write_bytecode`. The bytecode embedded the checkout's absolute
+  path in an installed skill and failed the `skill` scope's name checks
+  locally. Found by the verification debate; a `skill` test pins it.
+
 - `wait` no longer times out on a reply that reached the caller's pane. An
   agent's TUI (Claude Code, Codex) echoes a delivered prompt indented, with
   its prompt glyph on the first line, and `wait` only matched a stamp at the
