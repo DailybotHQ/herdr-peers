@@ -4,13 +4,17 @@ The lead's synthesis. The lead does not vote. Filings: `rounds/round<n>/`.
 
 ## Positions
 
-| Pane | Model family | Verdict | Strongest surviving point | Objections marked dead |
+Provider mix: <anthropic n, openai n, xai n, …>; lead: <pane> (capacity <…>), successors <…>.
+
+| Pane | Provider | Capacity | Verdict or headline | Strongest surviving point | Objections marked dead |
 | --- | --- | --- | --- | --- |
 
-## Tally
+## Count
 
-Paste `herdr-peers debate tally ballots_r<n>.json`: Borda, first places,
-Condorcet winner and loser, item verdicts, median confidence.
+Decisions: paste `herdr-peers debate tally ballots_r<n>.json` (Borda, first
+places, Condorcet winner and loser, item verdicts, median confidence).
+Research and stress tests: paste `herdr-peers debate claims rounds/round<n>/`
+(status per claim, coverage, claims only one lane raised).
 
 ## New evidence to verify
 

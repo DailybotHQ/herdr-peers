@@ -5,6 +5,7 @@ Read first: `HUMAN_NOTE.md`, `ROUND<n-1>.md`<, the anonymized filings in
 File `rounds/round<n>/<pane>.md`; reply with one line:
 
     rounds/round<n>/<pane>.md | <V1..Vn: AC/AM/RE> | <D1..Dn: letters> | dissent: <ids or none>
+    capacity=<ok|low|critical|unknown> <NN>% <@profile>
 
 ## 1. Your assignment
 

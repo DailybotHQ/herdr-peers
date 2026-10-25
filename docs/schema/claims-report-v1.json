@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "herdr-peers/claims-report-v1",
+  "title": "herdr-peers merged claims report (claims-report-v1)",
+  "description": "What `herdr-peers debate claims --json` prints. Status per claim: established (>= min_lanes supporters, no disputer, a FACT with a source, >= 2 distinct sources), agreed (enough supporters, evidence bar not met), contested (supporters and disputers), partial (2 or more supporters, fewer than min_lanes), single (one supporter), unsupported (disputers only, fewer than min_lanes), refuted (>= min_lanes disputers, no supporter). Ordered by that status list, then supporters, disputers and key. Producers may add keys within a schema version; consumers must ignore unknown keys.",
+  "type": "object",
+  "required": ["schema", "lanes", "min_lanes", "counts", "claims", "coverage"],
+  "properties": {
+    "schema": { "const": "herdr-peers/claims-report-v1" },
+    "lanes": { "type": "integer", "minimum": 1 },
+    "min_lanes": { "type": "integer", "minimum": 1, "maximum": 32 },
+    "counts": { "type": "object",
+                "required": ["established", "agreed", "contested", "partial", "single", "unsupported", "refuted"],
+                "additionalProperties": { "type": "integer" } },
+    "claims": { "type": "array",
+                "items": { "type": "object",
+                           "required": ["key", "status", "text", "supporters", "disputers", "distinct_sources",
+                                        "fact_backed", "vendors", "median_confidence", "statements"],
+                           "properties": {
+                             "status": { "enum": ["established", "agreed", "contested", "partial", "single", "unsupported", "refuted"] },
+                             "supporters": { "type": "array", "items": { "type": "string" } },
+                             "disputers": { "type": "array", "items": { "type": "string" } },
+                             "statements": { "type": "array",
+                                             "items": { "type": "object",
+                                                        "required": ["lane", "stance", "evidence", "text", "sources"] } } } } },
+    "coverage": { "type": "array",
+                  "items": { "type": "object", "required": ["lane", "angle", "vendor", "claims", "unique"] } }
+  }
+}

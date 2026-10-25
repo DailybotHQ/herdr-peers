@@ -2699,6 +2699,23 @@ def cmd_debate(args):
                 print('seed %s; key written to %s (keep it away from the panel)'
                       % (result['seed'], result['key']))
             return EXIT_OK
+        if verb == 'claims':
+            aliases = None
+            if args.map:
+                aliases = debate._read_json(args.map)
+                if not isinstance(aliases, dict) or not all(
+                        isinstance(k, str) and isinstance(v, str) and debate.ID_RE.fullmatch(k)
+                        and debate.ID_RE.fullmatch(v) for k, v in aliases.items()):
+                    raise Stop(EXIT_USAGE, '--map must be a JSON object of claim key -> canonical key')
+            if not 1 <= args.min_lanes <= 32:
+                raise Stop(EXIT_USAGE, '--min-lanes must be between 1 and 32')
+            lanes = debate.load_claims(args.paths, aliases)
+            if args.anonymous:
+                lanes = debate.blind_lanes(lanes, args.seed)
+            result = debate.merge_claims(lanes, args.min_lanes)
+            print(json.dumps(result, sort_keys=True, indent=1) if args.json
+                  else debate.render_claims(result))
+            return EXIT_OK
         if verb == 'filings':
             expect = [e for e in args.expect.split(',') if e]
             result = debate.filings(args.dir, expect, args.min_words)
@@ -2732,7 +2749,15 @@ def cmd_debate(args):
                     for a in [rec['lead']] + list(rec.get('lanes') or []):
                         if isinstance(a, str) and a.startswith('local:'):
                             busy.add(a[len('local:'):])
+            # Each pane's last reported capacity (`capacity=` lines in asks,
+            # replies and notices), so the seats with the most quota go first.
+            capacity = {}
+            for rec in Store().records():
+                peer = parse_address(rec.get('target') or '')
+                if isinstance(rec.get('capacity'), dict) and peer and peer[0] == 'local':
+                    capacity[peer[1]] = rec['capacity']
             result = debate.plan_panel(agents, pane, args.seats, kinds, owner, busy=busy,
+                                       capacity=capacity,
                                        all_workspaces=args.all_workspaces,
                                        use_ak=not args.no_ak, cwd=os.getcwd())
             print(json.dumps(result, sort_keys=True, indent=1) if args.json
@@ -2740,7 +2765,7 @@ def cmd_debate(args):
             return EXIT_OK
     except debate.DebateError as exc:
         raise Stop(exc.code, exc.message)
-    raise Stop(EXIT_USAGE, 'debate needs a sub-verb: tally, anon, filings or panel')
+    raise Stop(EXIT_USAGE, 'debate needs a sub-verb: tally, claims, anon, filings or panel')
 
 
 def cmd_skill(_args):
@@ -2861,7 +2886,7 @@ def build_parser():
     x.add_argument('--reason')
     x.add_argument('--pane', help="this session's pane id (w1:p2); wins over HERDR_PANE_ID - needed by agents that run tools from a background server, e.g. Codex")
 
-    d = sub.add_parser('debate', help="a debate lead's tools: tally, anon, filings, panel "
+    d = sub.add_parser('debate', help="a debate lead's tools: tally, claims, anon, filings, panel "
                        '(debate.md)')
     dsub = d.add_subparsers(dest='debate_verb')
     dt = dsub.add_parser('tally', help='Borda, first places, Condorcet winner/loser and item '
@@ -2877,6 +2902,17 @@ def build_parser():
     da.add_argument('--seed', help='shuffle seed to record (default: random)')
     da.add_argument('--redact', action='append', help='another word to redact (repeatable)')
     da.add_argument('--json', action='store_true')
+    dc = dsub.add_parser('claims', help='merge research lanes\' claims ledgers (herdr-peers/claims-v1): '
+                         'established, agreed, contested, single, unsupported, refuted')
+    dc.add_argument('paths', nargs='+', help='*.claims.json files, or directories holding them')
+    dc.add_argument('--map', help='JSON object merging synonym keys: {"key": "canonical-key"}')
+    dc.add_argument('--min-lanes', type=int, default=2,
+                    help='independent lanes needed to agree or establish (default 2)')
+    dc.add_argument('--anonymous', action='store_true',
+                    help='name lanes Lane_A, Lane_B... in a seeded order and drop vendors '
+                    '(for a blind triangulation round)')
+    dc.add_argument('--seed', help='shuffle seed for --anonymous (default: random)')
+    dc.add_argument('--json', action='store_true', help='herdr-peers/claims-report-v1 JSON')
     df = dsub.add_parser('filings', help='which expected filings are on disk, missing or short')
     df.add_argument('dir', help='the round directory')
     df.add_argument('--expect', required=True, help='expected filing names, comma-separated')

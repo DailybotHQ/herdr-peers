@@ -149,6 +149,7 @@ run "$HELPER" debate panel --seats 2 --exclude w1:p2 --no-ak
 assert_contains "--exclude keeps a pane off the panel" "$OUT" "not reused (another plan's lead or lane, or --exclude): w1:p2"
 run "$HELPER" debate panel --seats 3
 assert_contains "without ak, panel says how to start agents" "$OUT" "agentkit (ak) is not installed"
+assert_contains "without ak, panel recommends coding-agents-kit" "$OUT" "recommended: coding-agents-kit"
 
 # Another plan's lead and lanes are busy, even when idle.
 as_pane w2:p1 "$HELPER" lead claim --plan other-plan --lanes local:w1:p2 >/dev/null 2>&1
@@ -165,23 +166,59 @@ echo '[{"profile":"@c1","headroom_pct":70,"verdict":"ok"}]' >"$FAKE_AK_DIR/pick-
 : >"$FAKE_HERDR_DIR/argv.log"
 run env PATH="$ROOT/tests/fakes/agentkit:$PATH" "$HELPER" debate panel --seats 4 --json
 assert_rc "panel with ak proposes new seats" 0
-assert_eq "one idle pane reused, then accounts round-robin over kinds" "w1:p2|claude@work1,codex@c1,claude@work2" \
+assert_eq "seats alternate providers: idle codex pane reused, new seats for the other providers" "w1:p2|claude@work1,claude@work2,codex@c1" \
   "$(printf '%s' "$OUT" | jget '",".join(s["pane"] for s in d["reuse"]) + "|" + ",".join(s["kind"] + s["profile"] for s in d["new"])')"
-assert_eq "the vendor mix is reported" "{'claude': 2, 'codex': 2}" "$(printf '%s' "$OUT" | jget 'd["mix"]')"
+assert_eq "the kind mix is reported" "{'claude': 2, 'codex': 2}" "$(printf '%s' "$OUT" | jget 'd["mix"]')"
+assert_eq "the provider mix is reported" "{'anthropic': 2, 'openai': 2}" "$(printf '%s' "$OUT" | jget 'd["providers"]')"
+assert_eq "two providers are not a diverse panel" "False" "$(printf '%s' "$OUT" | jget 'd["diverse"]')"
+assert_contains "low diversity is noted" "$OUT" "low provider diversity (2 provider(s)"
 assert_contains "a kind with no account is noted" "$OUT" "ak pick grok: no account qualifies"
 cmds=$(printf '%s' "$OUT" | jget '"\n".join(c for s in d["new"] for c in s["commands"] + [s["release"]])')
 assert_contains "each new seat is leased to the lead" "$cmds" "ak lease claude @work1 --owner local:w1:p1 --ttl 12h --purpose debate"
 assert_contains "each new pane knows its briefer" "$cmds" "--env HERDR_PEERS_BRIEFER=local:w1:p1"
-assert_contains "each new seat launches on its account" "$cmds" 'herdr pane run <pane2> "ak codex @c1 --trust-cwd"'
+assert_contains "each new seat launches on its account" "$cmds" 'herdr pane run <pane3> "ak codex @c1 --trust-cwd"'
 assert_contains "each lease is released at close" "$cmds" "ak lease release claude @work2 --owner local:w1:p1"
 assert_not_contains "no permission-bypass flag is proposed" "$cmds" "--auto"
-assert_eq "only ak pick ran, with the lead as owner" "pick claude --count 3 --allow-unknown --json --owner local:w1:p1" \
+assert_eq "only ak pick ran, with the lead as owner" "pick claude --count 4 --allow-unknown --json --owner local:w1:p1" \
   "$(head -1 "$FAKE_AK_DIR/argv.log")"
 assert_eq "nothing but pick reached ak" "0" "$(grep -vc '^pick ' "$FAKE_AK_DIR/argv.log")"
 assert_eq "panel sends, keys, splits and runs nothing in Herdr" "0" \
   "$(grep -cE 'prompt|send-keys|split|"run"|start' "$FAKE_HERDR_DIR/argv.log")"
 run env PATH="$ROOT/tests/fakes/agentkit:$PATH" "$HELPER" debate panel --seats 9
 assert_contains "a panel larger than the accounts says what is unfilled" "$OUT" "left unfilled"
+echo '[{"profile":"@g1","headroom_pct":null,"verdict":"unknown"}]' >"$FAKE_AK_DIR/pick-grok.json"
+run env PATH="$ROOT/tests/fakes/agentkit:$PATH" "$HELPER" debate panel --seats 3 --json
+assert_eq "with a third provider available, 3 seats take one of each" "{'anthropic': 1, 'openai': 1, 'xai': 1} True" \
+  "$(printf '%s' "$OUT" | jget '"%s %s" % (d["providers"], d["diverse"])')"
+assert_eq "a provider's idle pane is reused before a new seat of that provider" "w1:p2" \
+  "$(printf '%s' "$OUT" | jget '",".join(s["pane"] for s in d["reuse"])')"
+echo '[{"profile":"@x1","headroom_pct":50,"verdict":"ok"}]' >"$FAKE_AK_DIR/pick-codex-xai.json"
+run env PATH="$ROOT/tests/fakes/agentkit:$PATH" "$HELPER" debate panel --seats 3 --kinds claude,codex-xai --json
+assert_eq "an agentkit provider kind counts as its provider (codex-xai is xai)" "{'anthropic': 1, 'openai': 1, 'xai': 1}" \
+  "$(printf '%s' "$OUT" | jget 'd["providers"]')"
+assert_eq "successors are the seats with known quota, most first (unknown quota never succeeds)" "local:<pane1>" \
+  "$(env PATH="$ROOT/tests/fakes/agentkit:$PATH" "$HELPER" debate panel --seats 3 --json | jget '",".join(d["succession"])')"
+
+# Reported capacity ranks reused panes: low goes after new accounts, critical is never seated.
+report_capacity() { # report_capacity LINE — w1:p2 replies to an ask with a capacity line
+  local id
+  id=$("$HELPER" ask local:w1:p2 "status?")
+  last_prompt local w1:p2 >"$WORK/cap-ask.txt"
+  as_pane w1:p2 "$HELPER" check "$WORK/cap-ask.txt" >/dev/null
+  as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id" "$(printf 'done\n%s' "$1")" >/dev/null
+  last_prompt local w1:p1 >"$WORK/cap-reply.txt"
+  "$HELPER" check "$WORK/cap-reply.txt" >/dev/null
+}
+report_capacity "capacity=low 20% @c9"
+run env PATH="$ROOT/tests/fakes/agentkit:$PATH" "$HELPER" debate panel --seats 3 --json
+assert_eq "a low-capacity idle pane yields to a new account of its provider" "|codex@c1" \
+  "$(printf '%s' "$OUT" | jget '",".join(s["pane"] for s in d["reuse"]) + "|" + ",".join(s["kind"] + s["profile"] for s in d["new"] if s["provider"] == "openai")')"
+run "$HELPER" debate panel --seats 1 --no-ak --json
+assert_eq "without another account, the low pane is still seated, with its capacity" "w1:p2 low 20" \
+  "$(printf '%s' "$OUT" | jget '"%s %s %s" % (d["reuse"][0]["pane"], d["reuse"][0]["capacity"]["verdict"], d["reuse"][0]["capacity"]["headroom_pct"])')"
+report_capacity "capacity=critical 4% @c9"
+run "$HELPER" debate panel --seats 2 --no-ak
+assert_contains "a critical pane is never seated" "$OUT" "not seated (reported critical capacity): w1:p2"
 unset FAKE_AK_DIR
 
 run "$HELPER" debate panel --seats 0
@@ -192,3 +229,81 @@ run env -u HERDR_ENV "$HELPER" debate panel --seats 2
 assert_rc "panel outside Herdr exits 6" 6
 run "$HELPER" debate
 assert_rc "debate without a sub-verb is a usage error" 2
+
+# --- claims ---
+new_world debate-claims
+CL="$WORK/round2"
+mkdir -p "$CL"
+ledger() { # ledger LANE VENDOR CLAIMS_JSON
+  printf '{"schema":"herdr-peers/claims-v1","lane":"%s","angle":"angle-%s","vendor":"%s","claims":%s}\n' \
+    "$1" "$1" "$2" "$3" >"$CL/$1.claims.json"
+}
+F1='{"key":"est","text":"Established claim","evidence":"FACT","confidence":90,"sources":["https://a.example/x (2026-10-20)"]}'
+ledger p1 anthropic "[$F1,
+ {\"key\":\"agr\",\"text\":\"Agreed, weakly sourced\",\"evidence\":\"INFERENCE\"},
+ {\"key\":\"con\",\"text\":\"Contested claim\",\"evidence\":\"FACT\",\"sources\":[\"s1\"]},
+ {\"key\":\"one\",\"text\":\"Only p1 says this\",\"evidence\":\"FACT\",\"sources\":[\"s2\"]},
+ {\"key\":\"ref\",\"stance\":\"disputes\",\"text\":\"Wrong\"},
+ {\"key\":\"uns\",\"stance\":\"disputes\",\"text\":\"Doubtful\"}]"
+ledger p2 openai '[{"key":"EST","text":"Same, another source","evidence":"FACT","confidence":70,"sources":["https://B.example/y (2026-10-21)"]},
+ {"key":"agr-synonym","text":"Agreed too","evidence":"OPEN"},
+ {"key":"con","stance":"disputes","text":"No","evidence":"FACT","sources":["s3"]},
+ {"key":"ref","stance":"disputes","text":"Also wrong"}]'
+ledger p3 xai '[{"key":"est","text":"Same source as p1","evidence":"INFERENCE","sources":["https://a.example/x/ (2026-10-20)"]}]'
+echo '{"agr-synonym":"agr"}' >"$WORK/keymap.json"
+run "$HELPER" debate claims "$CL" --map "$WORK/keymap.json" --json
+assert_rc "claims merges a directory of ledgers" 0
+status_of() { printf '%s' "$OUT" | jget "{c['key']: c['status'] for c in d['claims']}.get('$1')"; }
+assert_eq "established: 2+ lanes, a sourced FACT, 2 distinct sources" "established" "$(status_of est)"
+assert_eq "keys match case-insensitively; sources de-duplicate (case, trailing slash)" "3 2" \
+  "$(printf '%s' "$OUT" | jget '[("%d %d" % (len(c["supporters"]), c["distinct_sources"])) for c in d["claims"] if c["key"] == "est"][0]')"
+assert_eq "agreed: enough lanes, evidence bar not met (--map merged the synonym)" "agreed" "$(status_of agr)"
+assert_eq "contested: supported and disputed" "contested" "$(status_of con)"
+assert_eq "single: one lane, no dispute" "single" "$(status_of one)"
+assert_eq "refuted: disputed by 2+ lanes, supported by none" "refuted" "$(status_of ref)"
+assert_eq "unsupported: disputed by fewer than --min-lanes" "unsupported" "$(status_of uns)"
+assert_eq "the synonym key no longer appears" "None" "$(status_of agr-synonym)"
+assert_eq "claims --json carries exactly claims-report-v1's required keys" \
+  "$(required_keys "$SCHEMAS/claims-report-v1.json")" "$(printf '%s' "$OUT" | json_keys)"
+assert_eq "claims are ordered established first" "est,agr,con,one,uns,ref" \
+  "$(printf '%s' "$OUT" | jget '",".join(c["key"] for c in d["claims"])')"
+assert_eq "coverage lists what only one lane raised" "['one']" \
+  "$(printf '%s' "$OUT" | jget '[c["unique"] for c in d["coverage"] if c["lane"] == "p1"][0]')"
+assert_eq "vendors of supporters are reported" "['anthropic', 'openai', 'xai']" \
+  "$(printf '%s' "$OUT" | jget '[c["vendors"] for c in d["claims"] if c["key"] == "est"][0]')"
+run "$HELPER" debate claims "$CL" --map "$WORK/keymap.json" --min-lanes 3 --json
+assert_eq "--min-lanes 3: two supporting lanes are partial, not agreed" "partial" "$(status_of agr)"
+run "$HELPER" debate claims "$CL" --map "$WORK/keymap.json"
+assert_contains "the table names the next round's work" "$OUT" "next round: verify or cross-examine"
+run "$HELPER" debate claims "$CL" --anonymous --seed 7 --json
+blind1=$OUT
+assert_not_contains "--anonymous hides lane ids" "$blind1" '"p1"'
+assert_not_contains "--anonymous drops vendors" "$blind1" "anthropic"
+assert_contains "--anonymous names lanes Lane_A..." "$blind1" '"Lane_A"'
+run "$HELPER" debate claims "$CL" --anonymous --seed 7 --json
+assert_eq "--anonymous with a seed repeats" "$blind1" "$OUT"
+run "$HELPER" debate claims "$DEBATE_TPL/claims.json"
+assert_rc "the shipped claims template merges" 0
+
+badc() { mkdir -p "$WORK/bad" && rm -f "$WORK"/bad/*; printf '%s' "$2" >"$WORK/bad/x.claims.json"
+  run "$HELPER" debate claims "$WORK/bad"; assert_rc "$1" "${3:-2}"; }
+badc "a ledger without the claims-v1 schema is refused" '{"lane":"x","claims":[]}'
+badc "a bad stance is refused" '{"schema":"herdr-peers/claims-v1","lane":"x","claims":[{"key":"k","stance":"maybe"}]}'
+badc "a bad evidence level is refused" '{"schema":"herdr-peers/claims-v1","lane":"x","claims":[{"key":"k","evidence":"VIBES"}]}'
+badc "a key twice in one ledger is refused" '{"schema":"herdr-peers/claims-v1","lane":"x","claims":[{"key":"k"},{"key":"K"}]}'
+badc "a confidence outside 0-100 is refused" '{"schema":"herdr-peers/claims-v1","lane":"x","claims":[{"key":"k","confidence":-1}]}'
+badc "a path-like key is refused" '{"schema":"herdr-peers/claims-v1","lane":"x","claims":[{"key":"../k"}]}'
+long=$(python3 -c 'print("x" * 501)')
+badc "text over 500 characters is refused" "{\"schema\":\"herdr-peers/claims-v1\",\"lane\":\"x\",\"claims\":[{\"key\":\"k\",\"text\":\"$long\"}]}"
+badc "more than 20 sources are refused" "{\"schema\":\"herdr-peers/claims-v1\",\"lane\":\"x\",\"claims\":[{\"key\":\"k\",\"sources\":$(python3 -c 'import json; print(json.dumps(["s"] * 21))')}]}"
+cp "$CL/p1.claims.json" "$WORK/dup.claims.json"
+run "$HELPER" debate claims "$CL" "$WORK/dup.claims.json"
+assert_rc "two ledgers for one lane are refused" 2
+ln -s "$CL/p1.claims.json" "$WORK/link.claims.json"
+run "$HELPER" debate claims "$WORK/link.claims.json"
+assert_rc "a symlinked ledger is refused (policy)" 4
+echo '["not", "a", "map"]' >"$WORK/badmap.json"
+run "$HELPER" debate claims "$CL" --map "$WORK/badmap.json"
+assert_rc "a malformed --map is refused" 2
+run "$HELPER" debate claims "$WORK/empty-dir-does-not-exist"
+assert_rc "a missing path is refused" 2

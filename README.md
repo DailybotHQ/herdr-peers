@@ -41,10 +41,13 @@ lives. herdr-peers is that layer, so agents never hand-build it:
 - **Plan leadership.** A plan has a lead record — epochs, an ordered
   succession, fenced handover and takeover, scoped to the claiming
   repository — so a swarm outlives one account's usage limit.
-- **Debates.** A lead runs a panel of peers through rounds — research,
-  assigned advocates and red teams, cross-examination, a counted ballot —
-  and closes with a decision record. `herdr-peers debate` counts ballots
-  (Borda, pairwise, Condorcet winner and loser), anonymizes filings, finds
+- **Debates, for any purpose.** A lead runs a panel of peers through
+  rounds to **decide** (advocates, red teams, cross-examination, a counted
+  ballot), **research the state of the art** (one angle per lane, then
+  triangulation), **stress-test** an idea, **verify** an earlier result with
+  a fresh panel, or **generate** options. `herdr-peers debate` counts
+  ballots (Borda, pairwise, Condorcet winner and loser), merges research
+  claims (established, contested, single-lane), anonymizes filings, finds
   missing ones on disk, and proposes a panel from idle panes and, with
   agentkit (`ak`), from the accounts with the most headroom.
 - **A record of every delegation.** An append-only, machine-scoped log of
@@ -83,6 +86,17 @@ bin/herdr-peers --version        # herdr-peers 1.1.0 (protocol 1)
 Requirements: Herdr ≥ 0.9.1, `bash`, `python3` ≥ 3.9 (standard library
 only). The official-skill pin above is for Herdr 0.9.3; for another version
 use `herdr --skill`.
+
+Recommended: [coding-agents-kit](https://github.com/DailybotHQ/coding-agents-kit)
+(`ak`) — optional, but lanes and debates work much better with it: account
+quota (`ak usage`, `ak pick`), leases, and one-command launches on a chosen
+account and provider (`ak claude @work1`). `herdr-peers debate panel`
+suggests it when it is missing.
+
+```bash
+git clone --branch v1.0.1 https://github.com/DailybotHQ/coding-agents-kit
+./coding-agents-kit/install.sh
+```
 
 ## Quickstart
 
@@ -163,7 +177,7 @@ next (folder trust only, on a pane you launched yourself, under the user's stand
 | `status <machine>:<pane> [--json]` | A lane's state (`working`, `idle`, `blocked`, `done`, `unknown`, `no_agent`, `unreachable`) and the class of a waiting screen — `folder_trust`, `bypass_ack` (Claude's bypass acknowledgement), `usage_limit` (hand off; also on idle lanes), `login`, `permission`, `unknown` — with the documented next step. Read-only: never sends keys, never prints screen text. |
 | `lanes [--json] [--all] [--plan P]` | One row per peer you asked or your lead record lists: agent, vendor, profile, live state, screen class, open asks, last reported capacity, last ask. `--json` is the contract [`herdr-peers/lanes-v1`](docs/schema/lanes-v1.json) (0.3.0 adds `plan`, `lead`, `epoch`, `capacity`); consumers ignore unknown keys. |
 | `lead claim\|show\|handover\|takeover\|release` | A plan's lead record [`herdr-peers/lead-v1`](docs/schema/lead-v1.json): who leads, the epoch, the ordered succession, the lanes notified on every change. Only the highest epoch leads; a stale lead steps down. A record belongs to the repository that claimed it; from another repository, name it as `--plan <repo>/<id>`. |
-| `debate tally\|anon\|filings\|panel` | A debate lead's tools ([debate.md](skills/herdr-peers/debate.md)): count a [`ballots-v1`](docs/schema/ballots-v1.json) file into [`tally-v1`](docs/schema/tally-v1.json); copy filings to anonymized `Filing_A.md`… with the key kept apart; list missing or short filings (exit 5); propose a panel ([`panel-v1`](docs/schema/panel-v1.json)) from idle panes and `ak pick` — read-only, it runs nothing. |
+| `debate tally\|claims\|anon\|filings\|panel` | A debate lead's tools ([debate.md](skills/herdr-peers/debate.md)) — decide, research, stress-test, verify, generate: count a [`ballots-v1`](docs/schema/ballots-v1.json) file into [`tally-v1`](docs/schema/tally-v1.json); merge research lanes' [`claims-v1`](docs/schema/claims-v1.json) ledgers into a [`claims-report-v1`](docs/schema/claims-report-v1.json) (established, agreed, contested, partial, single, unsupported, refuted, with coverage); copy filings to anonymized `Filing_A.md`… with the key kept apart; list missing or short filings (exit 5); propose a panel ([`panel-v1`](docs/schema/panel-v1.json)) from idle panes and `ak pick` — read-only, it runs nothing. |
 | `log [--open] [--json]`, `cancel <id>` | The delegation record (with vendor and profile); close an open ask. |
 | `--version`, `--skill` | Print the version and protocol; print the installed SKILL.md. |
 

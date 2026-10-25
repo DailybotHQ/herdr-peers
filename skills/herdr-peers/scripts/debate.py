@@ -7,6 +7,9 @@ Sub-verbs of `herdr-peers debate` (see ../debate.md):
   anon    Copy round filings to Filing_A.md, Filing_B.md, ... in a seeded
           random order with pane ids, addresses and model names redacted; the
           mapping goes to a key file outside both directories.
+  claims  Merge the claims ledgers of a research panel (herdr-peers/claims-v1):
+          which claims several independent lanes back with evidence, which
+          are contested, which rest on too few lanes, which are refuted.
   filings Which expected filings are on disk, missing or short.
   panel   A read-only seating proposal: idle panes to reuse, then accounts
           with headroom from `ak pick` (when agentkit is installed), with the
@@ -29,6 +32,13 @@ BALLOTS_SCHEMA = 'herdr-peers/ballots-v1'
 TALLY_SCHEMA = 'herdr-peers/tally-v1'
 PANEL_SCHEMA = 'herdr-peers/panel-v1'
 FILINGS_SCHEMA = 'herdr-peers/filings-v1'
+CLAIMS_SCHEMA = 'herdr-peers/claims-v1'
+CLAIMS_REPORT_SCHEMA = 'herdr-peers/claims-report-v1'
+STANCES = ('supports', 'disputes')
+EVIDENCE = ('FACT', 'INFERENCE', 'OPEN')
+# Report order: settled first, then what needs work.
+STATUS_ORDER = ('established', 'agreed', 'contested', 'partial', 'single', 'unsupported', 'refuted')
+MAX_CLAIMS, MAX_TEXT, MAX_SOURCES, MAX_SOURCE = 500, 500, 20, 300
 ID_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}')
 VERDICT_RE = re.compile(r'[A-Z][A-Z_-]{0,15}')
 KIND_RE = re.compile(r'[a-z][a-z0-9-]{0,31}')
@@ -284,6 +294,176 @@ def anonymize(src, dst, key, seed=None, redact=(), addr_re=None):
     return {'seed': seed, 'filings': report, 'out': dst, 'key': key}
 
 
+# --- claims -----------------------------------------------------------------
+
+def _claim_files(paths):
+    files = []
+    for path in paths:
+        if os.path.islink(path):
+            raise DebateError(4, '%s is a symlink; refusing to read it' % path)
+        if os.path.isdir(path):
+            for n in sorted(os.listdir(path)):
+                full = os.path.join(path, n)
+                if n.endswith('.claims.json') and os.path.isfile(full) and not os.path.islink(full):
+                    files.append(full)
+        elif os.path.isfile(path):
+            files.append(path)
+        else:
+            raise DebateError(2, '%s is neither a claims file nor a directory' % path)
+    if not files:
+        raise DebateError(2, 'no claims ledgers found (*.claims.json)')
+    return files
+
+
+def _norm_source(src):
+    """A source's identity: its URL or path (the first word, when it is one),
+    lowercased, without trailing slashes or a fragment; any other source is
+    compared as whole lowercased text. "(read 2026-10-25)" notes do not count."""
+    words = src.split()
+    head = words[0] if words else ''
+    if '://' in head or '/' in head:
+        return re.sub(r'/+$', '', head.split('#')[0].lower())
+    return ' '.join(words).lower()
+
+
+def load_claims(paths, aliases=None):
+    """Read every lane's ledger; returns {lane: {...}} keyed by canonical claim key."""
+    aliases = dict((k.lower(), v.lower()) for k, v in (aliases or {}).items())
+    lanes = {}
+    for path in _claim_files(paths):
+        data = _read_json(path)
+        where = os.path.basename(path)
+        if not isinstance(data, dict) or data.get('schema') != CLAIMS_SCHEMA:
+            raise DebateError(2, '%s: not a %s ledger' % (where, CLAIMS_SCHEMA))
+        lane = data.get('lane')
+        if not (isinstance(lane, str) and ID_RE.fullmatch(lane.replace(':', '-'))):
+            raise DebateError(2, '%s: "lane" must be a lane id' % where)
+        if lane in lanes:
+            raise DebateError(2, 'lane %s has two ledgers' % lane)
+        claims = data.get('claims')
+        if not isinstance(claims, list) or len(claims) > MAX_CLAIMS:
+            raise DebateError(2, '%s: "claims" must be a list of at most %d' % (where, MAX_CLAIMS))
+        vendor = data.get('vendor') if isinstance(data.get('vendor'), str) and \
+            ID_RE.fullmatch(data['vendor']) else None
+        angle = data.get('angle') if isinstance(data.get('angle'), str) else None
+        seen = {}
+        for c in claims:
+            if not isinstance(c, dict) or not isinstance(c.get('key'), str) \
+                    or not ID_RE.fullmatch(c['key']):
+                raise DebateError(2, '%s: every claim needs a "key" ([A-Za-z0-9._-])' % where)
+            key = c['key'].lower()
+            key = aliases.get(key, key)
+            if key in seen:
+                raise DebateError(2, '%s: claim %s appears twice (after --map)' % (where, key))
+            stance = c.get('stance', 'supports')
+            if stance not in STANCES:
+                raise DebateError(2, '%s: claim %s: "stance" must be supports or disputes' % (where, key))
+            evidence = c.get('evidence', 'OPEN')
+            if evidence not in EVIDENCE:
+                raise DebateError(2, '%s: claim %s: "evidence" must be FACT, INFERENCE or OPEN' % (where, key))
+            text = c.get('text', '')
+            if not isinstance(text, str) or len(text) > MAX_TEXT:
+                raise DebateError(2, '%s: claim %s: "text" must be at most %d characters' % (where, key, MAX_TEXT))
+            sources = c.get('sources', [])
+            if not isinstance(sources, list) or len(sources) > MAX_SOURCES or not all(
+                    isinstance(x, str) and 0 < len(x) <= MAX_SOURCE for x in sources):
+                raise DebateError(2, '%s: claim %s: "sources" must be at most %d strings of %d characters'
+                                  % (where, key, MAX_SOURCES, MAX_SOURCE))
+            conf = c.get('confidence')
+            if conf is not None and not (isinstance(conf, (int, float)) and not isinstance(conf, bool)
+                                         and 0 <= conf <= 100):
+                raise DebateError(2, '%s: claim %s: "confidence" must be 0-100' % (where, key))
+            seen[key] = {'stance': stance, 'evidence': evidence, 'text': ' '.join(text.split()),
+                         'sources': sources, 'confidence': conf}
+        lanes[lane] = {'vendor': vendor, 'angle': angle, 'claims': seen}
+    return lanes
+
+
+def blind_lanes(lanes, seed=None):
+    """Rename lanes Lane_A, Lane_B, ... in a seeded random order and drop their
+    vendor, so a triangulation round judges claims, not authors."""
+    order = sorted(lanes)
+    random.Random(seed if seed is not None else random.SystemRandom().random()).shuffle(order)
+    return dict(('Lane_%s' % letters(i), dict(lanes[lane], vendor=None))
+                for i, lane in enumerate(order))
+
+
+def merge_claims(lanes, min_lanes=2):
+    keys = sorted(set(k for l in lanes.values() for k in l['claims']))
+    rows = []
+    for key in keys:
+        sup, dis, srcs, facts, confs, vendors, statements = [], [], set(), 0, [], set(), []
+        for lane in sorted(lanes):
+            c = lanes[lane]['claims'].get(key)
+            if c is None:
+                continue
+            statements.append({'lane': lane, 'stance': c['stance'], 'evidence': c['evidence'],
+                               'text': c['text'], 'sources': c['sources']})
+            if c['stance'] == 'disputes':
+                dis.append(lane)
+                continue
+            sup.append(lane)
+            srcs.update(_norm_source(x) for x in c['sources'])
+            if c['evidence'] == 'FACT' and c['sources']:
+                facts += 1
+            if c['confidence'] is not None:
+                confs.append(c['confidence'])
+            if lanes[lane]['vendor']:
+                vendors.add(lanes[lane]['vendor'])
+        if sup and dis:
+            status = 'contested'
+        elif not sup:
+            status = 'refuted' if len(dis) >= min_lanes else 'unsupported'
+        elif len(sup) >= min_lanes:
+            status = 'established' if facts >= 1 and len(srcs) >= 2 else 'agreed'
+        else:
+            status = 'partial' if len(sup) > 1 else 'single'
+        text = next((s['text'] for s in statements if s['stance'] == 'supports' and s['text']),
+                    next((s['text'] for s in statements if s['text']), ''))
+        rows.append({'key': key, 'status': status, 'text': text, 'supporters': sup,
+                     'disputers': dis, 'distinct_sources': len(srcs), 'fact_backed': facts,
+                     'vendors': sorted(vendors), 'median_confidence': _median(confs),
+                     'statements': statements})
+    rows.sort(key=lambda r: (STATUS_ORDER.index(r['status']), -len(r['supporters']),
+                             -len(r['disputers']), r['key']))
+    counts = dict((st, sum(1 for r in rows if r['status'] == st)) for st in STATUS_ORDER)
+    coverage = []
+    for lane in sorted(lanes):
+        mine = lanes[lane]['claims']
+        unique = sorted(k for k in mine if mine[k]['stance'] == 'supports' and all(
+            k not in lanes[o]['claims'] for o in lanes if o != lane))
+        coverage.append({'lane': lane, 'angle': lanes[lane]['angle'], 'vendor': lanes[lane]['vendor'],
+                         'claims': len(mine), 'unique': unique})
+    return {'schema': CLAIMS_REPORT_SCHEMA, 'lanes': len(lanes), 'min_lanes': min_lanes,
+            'counts': counts, 'claims': rows, 'coverage': coverage}
+
+
+def render_claims(r):
+    lines = ['%d lanes, %d claims (established needs >= %d lanes, a FACT with a source and '
+             '>= 2 distinct sources)' % (r['lanes'], len(r['claims']), r['min_lanes']),
+             '  ' + '  '.join('%s %d' % (st, r['counts'][st]) for st in STATUS_ORDER), '',
+             '%-28s %-12s %4s %4s %4s %5s  %s' % ('CLAIM', 'STATUS', '+', '-', 'SRC', 'CONF', 'TEXT')]
+    for c in r['claims']:
+        text = c['text'] if len(c['text']) <= 60 else c['text'][:59] + '…'
+        lines.append('%-28s %-12s %4d %4d %4d %5s  %s' % (
+            c['key'][:28], c['status'], len(c['supporters']), len(c['disputers']),
+            c['distinct_sources'], '-' if c['median_confidence'] is None else c['median_confidence'],
+            text))
+    lines.append('')
+    lines.append('coverage:')
+    for cv in r['coverage']:
+        lines.append('  %-16s %-18s %3d claims, %d only here%s' % (
+            cv['lane'], (cv['angle'] or '-')[:18], cv['claims'], len(cv['unique']),
+            ' (%s)' % ', '.join(cv['unique'][:5]) + (' …' if len(cv['unique']) > 5 else '')
+            if cv['unique'] else ''))
+    todo = [c['key'] for c in r['claims'] if c['status'] in ('contested', 'partial', 'single', 'agreed')]
+    if todo:
+        lines.append('')
+        lines.append('next round: verify or cross-examine %s' % ', '.join(todo[:12])
+                     + (' …' if len(todo) > 12 else ''))
+    return '\n'.join(lines)
+
+
 # --- filings ----------------------------------------------------------------
 
 def filings(directory, expect, min_words=0):
@@ -360,10 +540,49 @@ def reset_commands(kind, pane):
     return cmds
 
 
+# Model provider per agent kind; an agentkit kind like codex-xai runs another
+# provider's models through that CLI, so its suffix wins.
+PROVIDERS = {'claude': 'anthropic', 'codex': 'openai', 'grok': 'xai', 'gemini': 'google',
+             'antigravity': 'google', 'cursor': 'cursor', 'opencode': 'opencode', 'pi': 'pi',
+             'cline': 'cline'}
+PROVIDER_SUFFIXES = {'xai': 'xai', 'glm': 'zhipu', 'azure': 'azure-openai'}
+
+
+def provider_of(kind):
+    base, _, suffix = kind.partition('-')
+    return PROVIDER_SUFFIXES.get(suffix) or PROVIDERS.get(base, kind)
+
+
+def _new_seat(kind, acct, owner, n, cwd):
+    launch = 'ak %s %s --trust-cwd' % (kind, acct['profile'])
+    return {
+        'source': 'new', 'kind': kind, 'provider': provider_of(kind), 'profile': acct['profile'],
+        'headroom_pct': acct['headroom_pct'], 'verdict': acct['verdict'],
+        'commands': [
+            'ak lease %s %s --owner %s --ttl 12h --purpose debate' % (kind, acct['profile'], owner),
+            'herdr pane split --current --direction right --cwd %s --no-focus '
+            '--env HERDR_PEERS_BRIEFER=%s   # -> new pane id <pane%d>' % (shlex.quote(cwd), owner, n),
+            'herdr pane run <pane%d> "%s"' % (n, launch),
+        ],
+        'release': 'ak lease release %s %s --owner %s' % (kind, acct['profile'], owner),
+    }
+
+
+def _pct(cap):
+    return cap.get('headroom_pct') if isinstance(cap, dict) and \
+        isinstance(cap.get('headroom_pct'), (int, float)) else None
+
+
 def plan_panel(agents, me, seats, kinds, owner, busy=(), all_workspaces=False, use_ak=True,
-               pick=None, cwd='.'):
-    """Seat a panel: idle panes first (vendors interleaved), then new panes on
-    the accounts `ak pick` ranks highest, round-robin over KINDS."""
+               pick=None, cwd='.', capacity=None):
+    """Seat a panel with as many model providers as are available: seats go
+    round-robin over providers (in --kinds order, then any other idle kind);
+    within a provider the seat with the most quota goes first: idle panes
+    whose last reported capacity is ok or unknown (most headroom first), then
+    new panes on the accounts `ak pick` ranks highest, then idle panes that
+    reported low capacity. A pane that reported critical is never seated.
+    CAPACITY maps a pane id to its last `capacity=` report."""
+    capacity = capacity or {}
     workspace = me.split(':')[0]
     idle, skipped = [], []
     for a in agents:
@@ -377,75 +596,115 @@ def plan_panel(agents, me, seats, kinds, owner, busy=(), all_workspaces=False, u
             continue
         kind = a.get('agent') if isinstance(a.get('agent'), str) and KIND_RE.fullmatch(a['agent']) else 'unknown'
         idle.append((kind, pane))
-    by_kind = {}
-    for kind, pane in idle:
-        by_kind.setdefault(kind, []).append(pane)
-    reuse = []
-    while len(reuse) < seats and any(by_kind.values()):
-        for kind in sorted(by_kind):
-            if by_kind[kind] and len(reuse) < seats:
-                reuse.append({'kind': kind, 'pane': by_kind[kind].pop(0)})
-    for s in reuse:
-        s['source'] = 'reuse'
-        s['address'] = 'local:%s' % s['pane']
-        s['reset'] = reset_commands(s['kind'], s['pane'])
-    need = seats - len(reuse)
-    new, notes = [], []
+    notes, exhausted = [], []
+    verdict = lambda pane: (capacity.get(pane) or {}).get('verdict')
+    exhausted = sorted(p_ for _, p_ in idle if verdict(p_) == 'critical')
+    idle = [(k, p_) for k, p_ in idle if verdict(p_) != 'critical']
+    # Most reported headroom first; unknown after any known ok; low last.
+    idle.sort(key=lambda kp: (verdict(kp[1]) == 'low', _pct(capacity.get(kp[1])) is None,
+                              -(_pct(capacity.get(kp[1])) or 0)))
+    if exhausted:
+        notes.append('not seated (reported critical capacity): %s' % ', '.join(exhausted))
     if skipped:
         notes.append('not reused (another plan\'s lead or lane, or --exclude): %s'
                      % ', '.join(sorted(skipped)))
+    # Per provider: a queue of idle panes, then (lazily) accounts from ak pick.
+    order = []
+    for kind in list(kinds) + sorted(set(k for k, _ in idle)):
+        prov = provider_of(kind)
+        if prov not in order:
+            order.append(prov)
+    panes = dict((p, [(k, pane) for k, pane in idle
+                      if provider_of(k) == p and verdict(pane) != 'low']) for p in order)
+    low = dict((p, [(k, pane) for k, pane in idle
+                    if provider_of(k) == p and verdict(pane) == 'low']) for p in order)
     ak = use_ak and (pick is not None or shutil.which('ak'))
-    if need > 0 and not ak:
-        notes.append('agentkit (ak) is not installed: start %d more agent(s) with '
-                     '`herdr agent start <name> --kind <kind> --pane <id>` (launcher.md), '
-                     'or seat fewer panes' % need if use_ak else
-                     '%d seat(s) left unfilled (--no-ak)' % need)
-    elif need > 0:
-        pools = {}
+    accounts, picked = dict((p, []) for p in order), set()
+
+    def fetch(prov):
         for kind in kinds:
-            chosen, note = (pick or ak_pick)(kind, need, owner)
-            pools[kind] = chosen
-            if note:
-                notes.append(note)
-        while len(new) < need and any(pools.values()):
-            for kind in kinds:
-                if pools.get(kind) and len(new) < need:
-                    acct = pools[kind].pop(0)
-                    n = len(new) + 1
-                    launch = 'ak %s %s --trust-cwd' % (kind, acct['profile'])
-                    new.append({
-                        'source': 'new', 'kind': kind, 'profile': acct['profile'],
-                        'headroom_pct': acct['headroom_pct'], 'verdict': acct['verdict'],
-                        'commands': [
-                            'ak lease %s %s --owner %s --ttl 12h --purpose debate' % (
-                                kind, acct['profile'], owner),
-                            'herdr pane split --current --direction right --cwd %s --no-focus '
-                            '--env HERDR_PEERS_BRIEFER=%s   # -> new pane id <pane%d>' % (shlex.quote(cwd), owner, n),
-                            'herdr pane run <pane%d> "%s"' % (n, launch),
-                        ],
-                        'release': 'ak lease release %s %s --owner %s' % (kind, acct['profile'], owner),
-                    })
-        if len(new) < need:
-            notes.append('%d seat(s) left unfilled: no more accounts with headroom' % (need - len(new)))
+            if provider_of(kind) == prov and kind not in picked:
+                picked.add(kind)
+                chosen, note = (pick or ak_pick)(kind, seats, owner)
+                accounts[prov].extend((kind, c) for c in chosen)
+                if note:
+                    notes.append(note)
+
+    reuse, new = [], []
+    while len(reuse) + len(new) < seats:
+        progressed = False
+        for prov in order:
+            if len(reuse) + len(new) >= seats:
+                break
+            if panes[prov]:
+                kind, pane = panes[prov].pop(0)
+            else:
+                if ak and not accounts[prov]:
+                    fetch(prov)
+                if accounts[prov]:
+                    kind, acct = accounts[prov].pop(0)
+                    new.append(_new_seat(kind, acct, owner, len(new) + 1, cwd))
+                    progressed = True
+                    continue
+                if not low[prov]:
+                    continue
+                kind, pane = low[prov].pop(0)
+            reuse.append({'source': 'reuse', 'kind': kind, 'provider': prov, 'pane': pane,
+                          'address': 'local:%s' % pane, 'reset': reset_commands(kind, pane),
+                          'capacity': capacity.get(pane)})
+            progressed = True
+        if not progressed:
+            break
+    unfilled = seats - len(reuse) - len(new)
+    if unfilled and not ak:
+        notes.append('agentkit (ak) is not installed — recommended: coding-agents-kit (v1.0.1 or later) adds account quota (ak usage, ak pick), leases and one-command launches per account, so a panel gets more providers and the seats with the most quota. Without it, start %d more agent(s) with '
+                     '`herdr agent start <name> --kind <kind> --pane <id>` (launcher.md), '
+                     'or seat fewer panes' % unfilled if use_ak else
+                     '%d seat(s) left unfilled (--no-ak)' % unfilled)
+    elif unfilled:
+        notes.append('%d seat(s) left unfilled: no more idle panes or accounts with headroom'
+                     % unfilled)
     seated = reuse + new
-    mix = {}
-    for s in seated:
-        mix[s['kind']] = mix.get(s['kind'], 0) + 1
+    mix, providers = {}, {}
+    for s_ in seated:
+        mix[s_['kind']] = mix.get(s_['kind'], 0) + 1
+        providers[s_['provider']] = providers.get(s_['provider'], 0) + 1
+    largest = max(providers.values()) if providers else 0
+    diverse = len(seated) < 2 or (len(providers) >= min(3, len(seated))
+                                  and largest * 2 <= len(seated))
+    if seated and not diverse:
+        notes.append('low provider diversity (%d provider(s), largest share %d of %d): add '
+                     'another provider\'s agents if any are available, or say so in the '
+                     'deliverable' % (len(providers), largest, len(seated)))
+    # Successors: the seats with the most known headroom, other providers
+    # preferred when the headroom ties, so the debate outlives its lead.
+    ranked = sorted(
+        [(_pct(s_.get('capacity')), s_['address']) for s_ in reuse] +
+        [(s_['headroom_pct'], 'local:<pane%d>' % (i + 1)) for i, s_ in enumerate(new)],
+        key=lambda t: -(t[0] if isinstance(t[0], (int, float)) else -1))
+    succession = [addr for pct, addr in ranked if isinstance(pct, (int, float))][:2]
     return {'schema': PANEL_SCHEMA, 'lead': owner, 'seats': seats, 'filled': len(seated),
-            'reuse': reuse, 'new': new, 'mix': dict(sorted(mix.items())), 'notes': notes,
-            'executed': False}
+            'reuse': reuse, 'new': new, 'mix': dict(sorted(mix.items())),
+            'providers': dict(sorted(providers.items())), 'diverse': diverse,
+            'succession': succession, 'notes': notes, 'executed': False}
 
 
 def render_panel(p):
-    lines = ['panel for %s: %d of %d seats (mix: %s)' % (
+    lines = ['panel for %s: %d of %d seats (providers: %s; kinds: %s)' % (
         p['lead'], p['filled'], p['seats'],
+        ', '.join('%s %d' % kv for kv in p['providers'].items()) or 'none',
         ', '.join('%s %d' % kv for kv in p['mix'].items()) or 'none')]
     if p['reuse']:
         lines.append('')
         lines.append('reuse idle panes (idle is not free: confirm each with the human, '
                      'then clear its context before the brief):')
         for s in p['reuse']:
-            lines.append('  %-16s %-8s %s' % (s['address'], s['kind'], ' ; '.join(s['reset'])))
+            cap = s.get('capacity') or {}
+            lines.append('  %-16s %-8s %-14s %s' % (
+                s['address'], s['kind'],
+                '%s %s%%' % (cap.get('verdict'), cap.get('headroom_pct'))
+                if cap.get('headroom_pct') is not None else (cap.get('verdict') or 'quota unknown'),
+                ' ; '.join(s['reset'])))
     if p['new']:
         lines.append('')
         lines.append('new panes (only with the human\'s go-ahead):')
@@ -456,6 +715,10 @@ def render_panel(p):
             for c in s['commands']:
                 lines.append('    %s' % c)
             lines.append('    at close: %s' % s['release'])
+    if p['succession']:
+        lines.append('')
+        lines.append('successors (most quota): herdr-peers lead claim --plan <id> --lanes <seats> '
+                     '--succession %s' % ','.join(p['succession']))
     for n in p['notes']:
         lines.append('note: %s' % n)
     lines.append('')

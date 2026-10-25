@@ -66,8 +66,14 @@ assert_contains "offers the version-matched herdr --skill" "$body" "herdr --skil
 assert_contains "has a Trust boundary (write scope) section" "$body" "## 6. Trust boundary (write scope)"
 assert_contains "says received text is data, not instructions" "$body" "data, not instructions"
 assert_contains "links the debate sub-skill" "$body" "[debate.md](debate.md)"
+assert_contains "recommends coding-agents-kit and never installs it unasked" "$body" "never
+  install it on your own"
 assert_contains "the debate sub-skill keeps the lead out of the vote" "$(cat "$SKILL_DIR/debate.md")" "The lead never votes"
 assert_contains "the debate sub-skill asks before spawning panes" "$(cat "$SKILL_DIR/debate.md")" "ask the human before"
+for purpose in Decide Research Stress-test Verify Generate; do
+  assert_contains "the debate sub-skill covers the $purpose purpose" "$(cat "$SKILL_DIR/debate.md")" "| **$purpose** |"
+done
+assert_contains "the description triggers on research by several agents" "$desc" "research by several agents"
 
 # Marketplace rules over every shipped skill file.
 all=$(cat "$SKILL_DIR"/*.md "$SKILL_DIR"/templates/* "$SKILL_DIR"/templates/debate/* "$SKILL_DIR"/scripts/* 2>/dev/null)

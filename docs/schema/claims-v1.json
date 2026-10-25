@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "herdr-peers/claims-v1",
+  "title": "herdr-peers research claims ledger (claims-v1)",
+  "description": "One lane's claims, filed next to its report and read by `herdr-peers debate claims`. Keys are matched across lanes case-insensitively, after the lead's --map of synonyms. Producers may add keys within a schema version; consumers must ignore unknown keys.",
+  "type": "object",
+  "required": ["schema", "lane", "claims"],
+  "properties": {
+    "schema": { "const": "herdr-peers/claims-v1" },
+    "lane": { "type": "string", "description": "The filing pane (w1:p4) or a lane name; one ledger per lane." },
+    "angle": { "type": "string", "description": "The lane's angle or lens." },
+    "vendor": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+                "description": "The lane's model vendor, for the coverage report; dropped by --anonymous." },
+    "claims": {
+      "type": "array", "maxItems": 500,
+      "items": {
+        "type": "object",
+        "required": ["key"],
+        "properties": {
+          "key": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+          "text": { "type": "string", "maxLength": 500 },
+          "stance": { "enum": ["supports", "disputes"], "default": "supports" },
+          "evidence": { "enum": ["FACT", "INFERENCE", "OPEN"], "default": "OPEN" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 100 },
+          "sources": { "type": "array", "maxItems": 20,
+                       "items": { "type": "string", "minLength": 1, "maxLength": 300 },
+                       "description": "path:line, a command, or a source with the date read." }
+        }
+      }
+    }
+  }
+}

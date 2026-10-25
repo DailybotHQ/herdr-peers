@@ -11,12 +11,15 @@ VALIDATE="$ROOT/tests/tools/validate_records.py"
 for f in grant.md ask.md reply.md notice.md delegation-record.json; do
   check "template $f exists" test -s "$TPL/$f"
 done
-for f in HUMAN_NOTE.md DEBATE_BRIEF.md ROUND_BRIEF.md ROUND_SYNTHESIS.md LEAD_CHECKS.md \
-  ballots.json DECISION.md FIXLOG.md TEAM_BRIEF.md; do
+for f in HUMAN_NOTE.md DEBATE_BRIEF.md RESEARCH_BRIEF.md ROUND_BRIEF.md ROUND_SYNTHESIS.md \
+  LEAD_CHECKS.md ballots.json claims.json DECISION.md STATE_OF_THE_ART.md STRESS_TEST.md \
+  REPLICATION.md FIXLOG.md TEAM_BRIEF.md; do
   check "debate template $f exists" test -s "$TPL/debate/$f"
 done
 assert_contains "the debate brief forbids external actions" "$(cat "$TPL/debate/DEBATE_BRIEF.md")" "No external actions"
 assert_contains "the debate brief fixes a one-line reply" "$(cat "$TPL/debate/DEBATE_BRIEF.md")" "reply with exactly one line"
+assert_contains "the research brief forbids external actions" "$(cat "$TPL/debate/RESEARCH_BRIEF.md")" "No external actions"
+assert_contains "the research brief asks for a claims ledger" "$(cat "$TPL/debate/RESEARCH_BRIEF.md")" "herdr-peers/claims-v1"
 
 fields=$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(" ".join(sorted(s["required"])))' "$SCHEMA")
 for k in server_id task transport via kind profile target worktree prompt_digest state result_path; do

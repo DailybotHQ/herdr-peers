@@ -17,20 +17,27 @@ exit code and JSON contract are unchanged. The release is additive.
 
 ### Added
 
-- **Debates, a native sub-skill** ([`debate.md`](skills/herdr-peers/debate.md)).
-  A lead runs a panel of peers through rounds and closes with a decision
-  record: the lead's contract (never votes, the human's words verbatim, one
-  channel, filings on disk with one-line replies, no external actions);
-  eight formats (lane research, classic rounds, claim-by-claim cross-exam,
-  blind fresh-context challenge with a sealed proposal, devil's-advocate
-  trial with role reversal, steelman then judge, replication panel, naming
-  round) with three rounds and a forced verdict space as the default; brief
-  design (decided vs. not decided, premise ledger and dead-objection rule,
-  Q-ids with options, weighted criteria, lanes with red teams and a forced
-  advocate, FACT / INFERENCE / OPEN evidence, forbidden sources); bias
-  control (context resets, anonymized filings, rotated sides, vendor mix,
-  recusal); lead checks; counting; operating and recovering a panel; closing
-  with cross-review and a fix log; optional outputs for the team.
+- **Debates for any purpose, a native sub-skill**
+  ([`debate.md`](skills/herdr-peers/debate.md)). A lead runs a panel of
+  peers through rounds and closes with one trustworthy result. The lead
+  chooses the **purpose** first — **decide**, **research** the state of the
+  art, **stress-test**, **verify**, **generate** — and each purpose has its
+  formats, its counting and its deliverable; purposes chain (research →
+  decide, decide → verify). Also: sizes (quick, standard, deep); the lead's
+  contract (never votes, the human's words verbatim, one channel, filings on
+  disk with one-line replies, no external actions); nine formats (angle
+  research, classic rounds, draft package, claim-by-claim cross-exam, red
+  team then defenders, steelman then judge, blind fresh-context challenge,
+  replication panel, divergent proposals) with a forced verdict space for
+  decisions; brief design (scope, settled results, premise ledger and
+  dead-objection rule, questions or per-angle sub-questions, weighted
+  criteria); a lane and angle catalog per purpose (for research: literature,
+  industry, open source, vendors, practitioners, history, standards,
+  economics, risks, frontier, skeptic, contrarian); evidence levels and
+  dated sources; bias control (context resets, anonymized filings, sealed
+  proposals, rotated sides, independence before triangulation, recusal);
+  counting; operating and recovering a panel; closing with cross-review and
+  a fix log; optional outputs for the team.
 - **`herdr-peers debate`**, the lead's tools (`scripts/debate.py`, standard
   library only):
   - `tally FILE` counts a [`herdr-peers/ballots-v1`](docs/schema/ballots-v1.json)
@@ -39,6 +46,17 @@ exit code and JSON contract are unchanged. The release is additive.
     ABSTAIN) and the median confidence; `--json` prints
     [`herdr-peers/tally-v1`](docs/schema/tally-v1.json). A voter named `lead`
     is always left out, as is every `--exclude`.
+  - `claims DIR… [--map M] [--min-lanes N] [--anonymous [--seed S]]` merges
+    research lanes' [`herdr-peers/claims-v1`](docs/schema/claims-v1.json)
+    ledgers: each claim is `established` (enough independent lanes, a FACT
+    with a source, two distinct sources), `agreed` (evidence bar not met),
+    `contested`, `partial` (several lanes, fewer than `--min-lanes`), `single`
+    (one lane), `unsupported` or `refuted`, with the
+    supporters, disputers, sources, vendors and median confidence, plus
+    coverage per lane and the claims only one lane raised. `--map` merges
+    synonym keys; `--anonymous` names lanes `Lane_A`… and drops vendors for
+    a blind triangulation round; `--json` prints
+    [`herdr-peers/claims-report-v1`](docs/schema/claims-report-v1.json).
   - `anon SRC DST --key K [--seed S] [--redact W]` copies filings to
     `Filing_A.md`, `Filing_B.md`… in a seeded order with pane ids, Herdr
     addresses, filename stems and model names redacted; the mapping goes to a
@@ -47,18 +65,34 @@ exit code and JSON contract are unchanged. The release is additive.
     short filings, exiting 5 while the round is incomplete — recover from disk
     and re-ask only the missing panes.
   - `panel --seats N [--kinds …] [--owner A] [--exclude …] [--all-workspaces]
-    [--no-ak]` proposes a panel and runs nothing: idle panes first (vendors
-    interleaved, panes in another plan's lead record skipped), with the
-    per-kind context reset (`/clear`; `/new` and Enter for Codex), then — when
-    agentkit (`ak`) is installed — new panes on the accounts `ak pick <kind>
-    --owner <lead>` ranks highest, round-robin over kinds, each with its
-    `ak lease`, pane split (`HERDR_PEERS_BRIEFER` set), `ak <kind> @<profile>
-    --trust-cwd` launch and the `ak lease release` for the close;
+    [--no-ak]` proposes a panel and runs nothing. Seats go round-robin over
+    model **providers** (`codex-xai` counts as xai) for diverse
+    perspectives; within a provider the seat with the **most quota** goes
+    first: idle panes by their last reported capacity, then — when agentkit
+    (`ak`) is installed — new panes on the accounts `ak pick <kind> --owner
+    <lead>` ranks highest, then idle panes that reported `low`; `critical`
+    panes and panes in another plan's lead record are never seated. Each
+    reused pane gets its context reset (`/clear`; `/new` and Enter for
+    Codex); each new seat its `ak lease`, pane split (`HERDR_PEERS_BRIEFER`
+    set), `ak <kind> @<profile> --trust-cwd` launch and `ak lease release`.
+    It reports the provider mix, whether it meets the diversity bar (three
+    providers, none above half), and the two seats with the most quota as
+    the lead's successors; without `ak` it recommends coding-agents-kit.
     [`herdr-peers/panel-v1`](docs/schema/panel-v1.json) with `--json`.
-- Nine debate templates under `skills/herdr-peers/templates/debate/`:
-  `HUMAN_NOTE.md`, `DEBATE_BRIEF.md`, `ROUND_BRIEF.md`, `ROUND_SYNTHESIS.md`,
-  `LEAD_CHECKS.md`, `ballots.json`, `DECISION.md`, `FIXLOG.md`,
-  `TEAM_BRIEF.md` (with an audio-script outline).
+- **Standing preferences in every debate** (`debate.md` §3): mix model
+  providers (at least three when available, none above half the panel,
+  roles spread across providers), seat the agents with the most quota, and
+  let the lead **hand over before it runs dry** — successors chosen by quota
+  at claim time, `ak capacity --self` at every round boundary, a handoff
+  packet and `lead handover` at `critical`. Every one-line reply ends with
+  the pane's `capacity=` line.
+- SKILL.md and the README recommend coding-agents-kit (`ak`, v1.0.1 or
+  later) as an optional companion, never installed by an agent.
+- Fourteen debate templates under `skills/herdr-peers/templates/debate/`:
+  `HUMAN_NOTE.md`, `DEBATE_BRIEF.md`, `RESEARCH_BRIEF.md`, `ROUND_BRIEF.md`,
+  `ROUND_SYNTHESIS.md`, `LEAD_CHECKS.md`, `ballots.json`, `claims.json`,
+  `DECISION.md`, `STATE_OF_THE_ART.md`, `STRESS_TEST.md`, `REPLICATION.md`,
+  `FIXLOG.md` and `TEAM_BRIEF.md` (with an audio-script outline).
 - A `debate` test scope with a fake `ak` (`tests/fakes/agentkit/ak`), and
   threat-model rows T23–T25 (hostile debate inputs, un-blinding, panel
   provisioning).

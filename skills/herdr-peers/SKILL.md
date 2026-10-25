@@ -1,6 +1,6 @@
 ---
 name: herdr-peers
-description: "Ask another coding agent in a Herdr pane — on this machine or another one — and get exactly one authorized reply back, with a loop guard, depth limit 1, a fan-out cap and a record of every delegation; send one-way notices; keep a plan's lead with epochs and succession; lead a multi-agent debate (rounds, red teams, counted ballots, a panel seated from idle panes or agentkit accounts). Use only when the user mentions Herdr, peers, a debate or panel of agents, or another agent, pane or machine, or when a plan you are executing delegates a task through Herdr. Do not use merely because parallel work could help. Requires HERDR_ENV=1 and Herdr's official herdr skill."
+description: "Ask another coding agent in a Herdr pane — on this machine or another one — and get exactly one authorized reply back, with a loop guard, depth limit 1, a fan-out cap and a record of every delegation; send one-way notices; keep a plan's lead with epochs and succession; lead a multi-agent debate to decide, research the state of the art, stress-test or verify (rounds, angles, red teams, counted ballots and claims, a panel seated from idle panes or agentkit accounts). Use only when the user mentions Herdr, peers, a debate, panel or research by several agents, or another agent, pane or machine, or when a plan you are executing delegates a task through Herdr. Do not use merely because parallel work could help. Requires HERDR_ENV=1 and Herdr's official herdr skill."
 version: "1.1.0"
 license: MIT
 allowed-tools: Bash, Read
@@ -35,6 +35,15 @@ protocol on top of Herdr; it does not replace Herdr's own skill.
   human asks you to.
 - Every peer you talk to needs this skill too: the reply is sent with the
   helper on the peer's side.
+- **Recommended, optional: coding-agents-kit** (the `ak` command, v1.0.1 or
+  later, with its own `agentkit` skill). It is not needed for asks, replies
+  or leads, but it makes lanes and debates much better: `ak usage` and `ak
+  pick` show which accounts have quota, `ak lease` keeps two leads from
+  double-booking an account, and `ak claude @work1` / `ak codex @work2`
+  launch an agent on a chosen account and provider. Check with `command -v
+  ak`; when it is missing and the human wants lanes or a debate, suggest
+  installing it (from its own repository, pinned to a release tag) — never
+  install it on your own.
 
 ## 1. When to use — and when not
 
@@ -64,7 +73,7 @@ opinion nobody asked for, or to avoid doing the work yourself.
 | `lead takeover --plan P [--reason R]` | The first reachable successor takes over a lead that is gone (unreachable, no agent, usage limit) — or, with a recorded `--reason`, one whose asks timed out twice (epoch+1). |
 | `lead release --plan P` | The current lead leaves the plan without a lead (epoch+1). |
 | `cancel <id> [--reason R]` | Closes an open ask (yours, or one you decline). |
-| `debate tally\|anon\|filings\|panel` | A debate lead's tools ([debate.md](debate.md)): `tally FILE` counts a `herdr-peers/ballots-v1` file (Borda, first places, pairwise, Condorcet winner and loser, item verdicts; the lead never votes); `anon SRC DST --key K` copies filings to `Filing_A.md`… with identities redacted; `filings DIR --expect a,b` lists missing or short filings (exit 5 when incomplete); `panel --seats N` proposes a panel — idle panes, then accounts from `ak pick` — and runs nothing. |
+| `debate tally\|claims\|anon\|filings\|panel` | A debate lead's tools ([debate.md](debate.md)) for every purpose — decide, research, stress-test, verify, generate: `tally FILE` counts a `herdr-peers/ballots-v1` file (Borda, first places, pairwise, Condorcet winner and loser, item verdicts; the lead never votes); `claims DIR…` merges research lanes' `herdr-peers/claims-v1` ledgers into established / agreed / contested / partial / single / unsupported / refuted claims with coverage (`--map` merges synonyms, `--anonymous` blinds lanes); `anon SRC DST --key K` copies filings to `Filing_A.md`… with identities redacted; `filings DIR --expect a,b` lists missing or short filings (exit 5 when incomplete); `panel --seats N` proposes a panel and runs nothing: seats round-robin over model providers, most quota first (idle panes by reported capacity, then accounts from `ak pick`), with the provider mix and two successors for the lead. |
 
 `ask`, `notify`, `reply`, `check`, `wait`, `status`, `lanes`, `cancel` and the `lead`
 verbs (including `lead show`) take `--pane <pane_id>`:
@@ -162,8 +171,9 @@ writing peer, fan-out and join, cleanup, layout — is in
 [launcher.md](launcher.md). Running many lanes as a lead — `status`,
 `lanes`, blocked screens, accounts and vendors, containers — is in
 [orchestra.md](orchestra.md), with lane ↔ lane asks, succession and
-handoff. Running a debate — formats, briefs, bias control, counting,
-seating a panel with agentkit — is in [debate.md](debate.md), with its
+handoff. Running a debate — to decide, research the state of the art, stress-test,
+verify or generate: purposes, formats, angles, briefs, bias control,
+counting, seating a panel with agentkit — is in [debate.md](debate.md), with its
 templates in [templates/debate/](templates/debate/). Message templates and the delegation-record
 schema are in [templates/](templates/).
 
@@ -197,8 +207,8 @@ named here) and `Read`.
 - Panes, only when the human or the plan asked for a new peer
   ([launcher.md](launcher.md)); you close only panes you created.
 - `debate anon` writes only the new output directory and the new key
-  file it is given (`0600`, never overwritten). `debate tally`, `filings`
-  and `panel` only read; `panel` prints commands and runs none of them
+  file it is given (`0600`, never overwritten). `debate tally`, `claims`,
+  `filings` and `panel` only read; `panel` prints commands and runs none of them
   ([debate.md](debate.md) §10).
 
 **Reads only:** `status` and `lanes` read Herdr's agent state and a waiting
