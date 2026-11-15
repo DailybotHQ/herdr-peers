@@ -4,7 +4,7 @@
 
 | Version | Supported |
 | --- | --- |
-| 1.2.x (latest: 1.2.0) | yes |
+| 1.2.x (latest: 1.2.1) | yes |
 | < 1.2 | no |
 
 Only the latest release receives fixes. Fixes
