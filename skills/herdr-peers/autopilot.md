@@ -23,18 +23,65 @@ every lead: they still key only folder trust, on panes they launched.
 
 ## 2. Running it
 
+### In the background (recommended)
+
 ```bash
-herdr-peers autopilot                 # run until stopped (a pass every 60 s)
+herdr-peers autopilot start           # start it in the background (alias: on)
+herdr-peers autopilot status          # running? since when, how, its options, last actions
+herdr-peers autopilot logs -f         # watch it live (Ctrl-C stops watching, not autopilot)
+herdr-peers autopilot stop            # stop it and wait until it exits (alias: off)
+```
+
+`start` takes the options below (except `--once` and `--passes`), from inside
+any Herdr pane: the `herdr` CLI needs the pane's environment to reach the
+server. It refuses when an autopilot already runs on this server (exit `4`),
+then starts itself as a detached process — its own session, no terminal,
+standard input from `/dev/null`, its working directory the state directory —
+and waits up to 5 seconds until that process holds the lock. It prints the
+pid, the options and the log path and exits `0`; if the process died, it
+prints the tail of the log and exits non-zero.
+
+The background autopilot does not depend on the pane that started it: close
+that pane, or the whole tab, and it keeps running. It asks Herdr which pane
+it is only at start; after that it skips the starting pane only while that
+pane id still belongs to the same terminal, so a new pane that reuses the id
+is watched like any other.
+
+Its files, all in the server's state directory (`herdr-peers log --path`
+names the directory), private (`0600`) and never opened through a symlink:
+
+| File | What |
+| --- | --- |
+| `autopilot.out` | Its output: one line per action, a line per pass that acted (and every tenth idle pass, so you can see it is alive), warnings. Rotated to `autopilot.out.1` at 1 MB, so the two together stay under about 2 MB. |
+| `autopilot.json` | The options it was started with, the starting pane, the mode and the start time; `status` shows them. Removed when it stops. |
+| `autopilot.pid`, `autopilot.lock` | Its pid, and the lock that allows one autopilot per server. |
+
+`herdr-peers autopilot logs` prints the last 50 lines (`--lines N`); with
+`-f` / `--follow` it keeps printing new lines until Ctrl-C, across a
+rotation. It is read-only, works from any pane, and shows the log whether
+autopilot runs or not (it says `not running` on standard error). Every line
+passes through the same filter as `status`, so a hostile pane title in the
+log cannot drive your terminal. A truncation is noticed when the file shrinks
+between two looks; autopilot itself never truncates, it rotates.
+
+**After a reboot or a Herdr restart** the background autopilot is gone (it
+needs the Herdr server it was started for). Start it again with the same
+command; `status` showed its options while it ran. herdr-peers installs no
+login item or system service on purpose: autopilot needs a Herdr pane's
+environment, and only a human starts it.
+
+### In the foreground
+
+```bash
+herdr-peers autopilot                 # run in this pane until stopped (a pass every 60 s)
 herdr-peers autopilot --dry-run       # decide and record; send nothing
 herdr-peers autopilot --once          # one pass, then exit
-herdr-peers autopilot status          # is it running, and its last actions
-herdr-peers autopilot stop            # stop the running one
 ```
 
 Run it in a pane of its own (it needs `HERDR_ENV=1`); it prints one line per
-action and nothing else. One autopilot runs per Herdr server: a second one is
-refused (exit `4`). It stops on `autopilot stop`, on Ctrl-C, or when its pane
-closes.
+action and the pass lines described above. One autopilot runs per Herdr
+server, in either mode: a second one is refused (exit `4`). It stops on
+`autopilot stop`, on Ctrl-C, or when its pane closes.
 
 | Option | Effect |
 | --- | --- |
@@ -132,7 +179,8 @@ Every action is one line in the delegation log (`herdr-peers log`), with
 `role: autopilot` and a state: `keyed`, `nudged`, `left` (recognised and not
 touched) or `gave_up`. `reason` is the screen class; `note` carries the keys
 and the option number, and `dry_run` when nothing was sent.
-`herdr-peers autopilot status` prints the last ten.
+`herdr-peers autopilot status` prints the last ten; `autopilot logs` shows
+the background output.
 
 ## 7. What you are accepting
 
@@ -163,6 +211,7 @@ agent's own terminal and nothing more. It runs no text from a screen.
 
 ```bash
 herdr-peers autopilot --loop                     # screens, and every open plan to its end
+herdr-peers autopilot start --loop               # the same, in the background (stop: autopilot stop)
 herdr-peers autopilot --loop --dry-run --once    # what it would do; sends nothing
 herdr-peers plans                                # this machine's plans and their state
 herdr-peers fleet                                # every machine, agent, repository and plan

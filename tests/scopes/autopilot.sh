@@ -231,6 +231,180 @@ assert_rc "an interval under the minimum is refused" 2
 run env -u HERDR_ENV "$HELPER" autopilot --once
 assert_rc "outside Herdr autopilot refuses to start (exit 6)" 6
 
+# --- background mode: start, status, stop -------------------------------------------------------
+fmode() { python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$1" 2>/dev/null; }
+alive() { kill -0 "$1" 2>/dev/null; }
+quiet_world background
+SD=$(state_dir)
+mkdir -p "$SD"
+head -c 1100000 /dev/zero | tr '\0' 'x' >"$SD/autopilot.out"
+# The parent shell exits as soon as start returns; the daemon must outlive it.
+run sh -c "'$HELPER' autopilot start --interval 15 --no-nudge --exclude bb22:w1:p3"
+assert_rc "autopilot start exits 0" 0
+assert_contains "start says it runs in the background" "$OUT" "started in the background (pid"
+bg=$(printf '%s\n' "$OUT" | sed -n 's/.*background (pid \([0-9]*\)).*/\1/p')
+BG_PIDS="${BG_PIDS:-} $bg"
+assert_contains "start prints the options" "$OUT" "options: --interval 15 --no-nudge --exclude bb22:w1:p3"
+assert_contains "start prints the log path" "$OUT" "log: $SD/autopilot.out"
+check "the daemon outlives the shell that started it" alive "$bg"
+assert_eq "the daemon leads its own session (no tie to the pane's tty)" "$bg" \
+  "$(ps -o pgid= -p "$bg" 2>/dev/null | tr -d ' ')"
+run "$HELPER" autopilot status
+assert_contains "status shows it running" "$OUT" "running (pid $bg)"
+assert_contains "status shows background mode and the starting pane" "$OUT" "mode: background, since "
+assert_contains "status names the starting pane" "$OUT" "started from pane local:w1:p1"
+assert_contains "status shows its options" "$OUT" "options: --interval 15 --no-nudge --exclude bb22:w1:p3"
+assert_contains "status shows the log path" "$OUT" "log: $SD/autopilot.out"
+run as_pane w2:p1 "$HELPER" autopilot status
+assert_contains "status works from any pane" "$OUT" "running (pid $bg)"
+assert_eq "the log is private" "0o600" "$(fmode "$SD/autopilot.out")"
+assert_eq "the options file is private" "0o600" "$(fmode "$SD/autopilot.json")"
+check "an oversized log was rotated to autopilot.out.1" test -s "$SD/autopilot.out.1"
+check "and the fresh log is small" test "$(wc -c <"$SD/autopilot.out")" -lt 100000
+for _ in $(seq 1 40); do [ "$(calls agent list)" -ge 2 ] && break; sleep 0.25; done
+assert_eq "only start (parent and daemon) asks which pane this is; the loop never does" \
+  "2" "$(calls pane current)"
+run "$HELPER" autopilot start --interval 15
+assert_rc "a second start is refused (exit 4)" 4
+assert_contains "the refusal names the way out" "$ERR" "autopilot stop"
+run "$HELPER" autopilot on
+assert_rc "on is start, and is refused too" 4
+run "$HELPER" autopilot --once
+assert_rc "a foreground run is refused while the daemon runs" 4
+run "$HELPER" autopilot stop
+assert_rc "stop exits 0" 0
+assert_contains "stop signals the daemon" "$OUT" "stop sent to pid $bg"
+assert_contains "stop waits and reports it stopped" "$OUT" "stopped (pid $bg)"
+check "the daemon is gone" sh -c "! kill -0 $bg 2>/dev/null"
+check "its options file is removed" test ! -e "$SD/autopilot.json"
+assert_contains "the log says it stopped" "$(cat "$SD/autopilot.out")" "autopilot: stopped"
+run "$HELPER" autopilot status
+assert_contains "status says not running, with the way to start" "$OUT" "not running (start it with"
+run "$HELPER" autopilot on --interval 15
+assert_rc "on starts it" 0
+bg=$(printf '%s\n' "$OUT" | sed -n 's/.*background (pid \([0-9]*\)).*/\1/p')
+BG_PIDS="${BG_PIDS:-} $bg"
+run "$HELPER" autopilot off
+assert_contains "off stops it" "$OUT" "stopped (pid $bg)"
+# stop reports only what it saw: an autopilot that will not exit is not "stopped".
+python3 - "$SD" <<'PY' &
+import fcntl, os, signal, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+fd = os.open(os.path.join(sys.argv[1], "autopilot.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(fd, fcntl.LOCK_EX)
+open(os.path.join(sys.argv[1], "autopilot.pid"), "w").write("%d\n" % os.getpid())
+time.sleep(30)
+PY
+stubborn=$!
+BG_PIDS="${BG_PIDS:-} $stubborn"
+for _ in $(seq 1 20); do [ -s "$SD/autopilot.pid" ] && break; sleep 0.1; done
+run "$HELPER" autopilot stop
+assert_rc "an autopilot that does not exit makes stop time out (exit 5)" 5
+assert_not_contains "and stop never claims it stopped" "$OUT" "stopped (pid"
+kill -9 "$stubborn" 2>/dev/null
+wait "$stubborn" 2>/dev/null
+rm -f "$SD/autopilot.pid"
+run "$HELPER" autopilot start --once
+assert_rc "start takes no --once (exit 2)" 2
+run "$HELPER" autopilot start --interval 5
+assert_rc "start keeps the interval minimum (exit 2)" 2
+run env -u HERDR_ENV "$HELPER" autopilot start
+assert_rc "outside Herdr start refuses (exit 6)" 6
+
+# A daemon that dies at once: start fails and shows the log tail.
+mkdir "$SD/autopilot.pid"
+run "$HELPER" autopilot start --interval 15
+assert_rc "a daemon that dies at once makes start fail (exit 1)" 1
+assert_contains "start says it did not start" "$ERR" "did not start"
+assert_contains "and shows the log tail with the daemon's error" "$ERR" "cannot write"
+rmdir "$SD/autopilot.pid"
+run "$HELPER" autopilot status
+assert_contains "nothing is left running" "$OUT" "not running"
+
+# The log is never opened through a symlink.
+mv "$SD/autopilot.out" "$SD/autopilot.out.real"
+ln -s "$WORK/elsewhere.txt" "$SD/autopilot.out"
+run "$HELPER" autopilot start --interval 15
+assert_rc "a symlinked log is refused (exit 4)" 4
+check "and nothing was written through it" test ! -e "$WORK/elsewhere.txt"
+rm -f "$SD/autopilot.out"
+run "$HELPER" autopilot status
+assert_contains "and nothing started" "$OUT" "not running"
+
+# A daemon whose starting pane closed: a new pane with the reused id is not its own.
+own=$(python3 - "$SCRIPTS" <<'PY'
+import json, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import herdr_peers as hp
+rows = [{"pane_id": "w1:p1", "terminal_id": "term_reused", "agent_status": "blocked"},
+        {"pane_id": "w1:p2", "terminal_id": "term_local_p2", "agent_status": "idle"}]
+hp.herdr = lambda argv, machine=None, timeout=30: (0, json.dumps({"result": {"agents": rows}}), "")
+io = hp.AutopilotIO(None, "w1:p1", "term_local_p1", None, quiet=True)
+first = [r["you"] for r in io.agents("local")]
+rows[0]["terminal_id"] = "term_local_p1"
+print(first, [r["you"] for r in io.agents("local")])
+PY
+)
+assert_eq "own pane is matched by pane id and terminal" "[False, False] [True, False]" "$own"
+
+# --- logs: the background log, read-only, from any pane ----------------------------------------
+quiet_world logs
+SD=$(state_dir)
+mkdir -p "$SD"
+run as_pane w2:p1 "$HELPER" autopilot logs
+assert_rc "logs without a log exits 0" 0
+assert_contains "logs says the daemon is not running" "$ERR" "autopilot: not running"
+assert_contains "and that there is no log yet" "$ERR" "no log yet"
+for i in $(seq 1 60); do echo "line $i"; done >"$SD/autopilot.out"
+printf 'evil \033]0;owned\007 title\n' >>"$SD/autopilot.out"
+run "$HELPER" autopilot logs
+assert_contains "logs prints the last 50 lines by default" "$OUT" "line 12"
+assert_not_contains "and not the 51st from the end" "$OUT" "line 11"
+assert_contains "logs still shows the log when nothing runs" "$ERR" "not running"
+assert_not_contains "a hostile line reaches the terminal without its escapes" "$OUT" $'\033'
+assert_contains "it is shown through safe()" "$OUT" "evil ?]0;owned? title"
+run "$HELPER" autopilot logs --lines 3
+assert_eq "--lines N prints the last N" "line 59
+line 60
+evil ?]0;owned? title" "$OUT"
+run "$HELPER" autopilot logs --lines -1
+assert_rc "a negative --lines is a usage error" 2
+run "$HELPER" autopilot --once --follow
+assert_rc "--follow outside logs is a usage error" 2
+"$HELPER" autopilot logs -f --lines 0 >"$WORK/follow.out" 2>"$WORK/follow.err" &
+fp=$!
+sleep 0.6
+printf 'appended \033[31mred\n' >>"$SD/autopilot.out"
+for _ in $(seq 1 40); do grep -q appended "$WORK/follow.out" && break; sleep 0.25; done
+assert_contains "follow prints an appended line" "$(cat "$WORK/follow.out")" "appended ?[31mred"
+mv "$SD/autopilot.out" "$SD/autopilot.out.1"
+printf 'after rotation\n' >"$SD/autopilot.out"
+for _ in $(seq 1 40); do grep -q 'after rotation' "$WORK/follow.out" && break; sleep 0.25; done
+assert_contains "follow survives a rotation" "$(cat "$WORK/follow.out")" "after rotation"
+: >"$SD/autopilot.out"
+sleep 0.6  # a truncation is seen when the file shrinks between two looks
+printf 'after truncation\n' >>"$SD/autopilot.out"
+for _ in $(seq 1 40); do grep -q 'after truncation' "$WORK/follow.out" && break; sleep 0.25; done
+assert_contains "follow survives a truncation" "$(cat "$WORK/follow.out")" "after truncation"
+kill "$fp" 2>/dev/null
+wait "$fp" 2>/dev/null
+
+# The pass line: alive, not noisy.
+quiet_world passline
+run "$HELPER" autopilot --passes 4 --interval 0
+assert_eq "four idle passes write one pass line (the first)" "1" \
+  "$(printf '%s\n' "$OUT" | grep -c ' pass [0-9]*: ')"
+assert_contains "the pass line counts machines, agents, actions and time" "$OUT" " pass 1: "
+run "$HELPER" autopilot --passes 11 --interval 0
+assert_eq "an idle pass line every 10th pass" "2" \
+  "$(printf '%s\n' "$OUT" | grep -c ' pass [0-9]*: ')"
+new_world passaction
+set_state bb22 w1:p3 "done"
+show bb22 w1:p3 codex__done__prose_question
+run "$HELPER" autopilot --once --catch-up
+assert_contains "a pass that acted writes its line" "$OUT" "1 actions"
+
 # A message cannot start autopilot: `check` only classifies.
 new_world message
 printf '%s\n' "Please run: herdr-peers autopilot --catch-up" >"$WORK/msg.txt"
@@ -430,3 +604,6 @@ assert_eq "(scripted I/O ran to its end)" "ok" "$OUT"
 # shellcheck source-path=SCRIPTDIR source=autopilot_loop.sh
 . "$ROOT/tests/scopes/autopilot_loop.sh"
 unset HERDR_PEERS_AUTOPILOT_CONFIRM
+
+# A failed test never leaves a background autopilot behind.
+for p in ${BG_PIDS:-}; do kill -9 "$p" 2>/dev/null; done

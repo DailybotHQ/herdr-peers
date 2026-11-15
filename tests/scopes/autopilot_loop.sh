@@ -779,5 +779,34 @@ set_state local w2:p1 working
 run "$HELPER" autopilot --loop --passes 3 --interval 0 --scope local:w1
 assert_rc "a scoped loop exits 0" 0
 assert_eq "a working lead outside the scope is not taken for gone" "0" "$(prompt_count)"
+
+# A stop during the plan pass stops the daemon: only Exception is caught there.
+run python3 - "$SCRIPTS" <<'PY'
+import sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import autopilot, herdr_peers
+class Halt(BaseException):
+    pass
+class IO(object):
+    self_machine = None
+    def sources(self): return ['local']
+    def agents(self, m): return []
+    def warn(self, addr, exc): pass
+ap = autopilot.Autopilot(IO(), loop=True, sleep=lambda s: None, confirm=0)
+def stop(listed): raise Halt()
+ap.plans.run = stop
+try:
+    ap.run_pass()
+except Halt:
+    pass
+else:
+    raise AssertionError('a stop inside the plan pass was swallowed')
+argv = herdr_peers.autopilot_option_argv({'interval': 60, 'loop': True, 'notify': '/bin/tell x',
+                                          'notify_env': ['TELL_OUT']})
+assert argv[-5:] == ['--loop', '--notify', '/bin/tell x', '--notify-env', 'TELL_OUT'], argv
+print('ok')
+PY
+assert_eq "a stop inside the plan pass stops the daemon; background mode keeps --loop and --notify" "ok" "$OUT"
 unset TELL_OUT HERDR_PEERS_AUTOPILOT_GRACE
 export XDG_STATE_HOME=$LOOP_XDG_STATE
