@@ -937,8 +937,13 @@ class PlanLoop(object):
             agents = []
             for row in [r for r in rows or [] if r.get('in_scope', True)]:  # never map what is out of scope
                 repo = repos.get(row['pane']) or {}
+                pmemo = self.ap.panes.get('%s:%s' % (machine, row['pane']))
+                since = pmemo.since if pmemo is not None else None
                 agents.append({'pane': row['pane'], 'kind': row.get('agent'),
                                'state': row.get('state'), 'cwd': row.get('cwd'),
+                               'title': clean_title(row.get('title')),
+                               'state_since': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(since))
+                               if since else None,
                                'repo_root': repo.get('repo_root'), 'branch': repo.get('branch'),
                                'plans': roles.get(row['pane'], [])})
             plans = []
@@ -948,6 +953,10 @@ class PlanLoop(object):
                               'epoch': plan['epoch'], 'succession': plan['succession'],
                               'lanes': plan['lanes'], 'repo_root': plan['repo_root'],
                               'blocker_class': plan['blocker_class'],
+                              'tasks_done': plan.get('tasks_done'),
+                              'tasks_total': plan.get('tasks_total'),
+                              'current_task': plan.get('current_task'),
+                              'detail': plan.get('detail'),
                               'situation': memo.situation if memo else None})
             machines.append({'machine': machine, 'label': self.io.label(machine),
                              'agents_state': 'unknown' if rows is None else 'ok',
@@ -961,6 +970,17 @@ class PlanLoop(object):
             self.fleet_text = json.dumps(body, sort_keys=True)
         if not self.ap.dry_run:
             self.io.save_fleet(self.fleet_text)
+
+
+def clean_title(value, limit=120):
+    """An agent's session title, single line, safe to show and cut."""
+    if not isinstance(value, str):
+        return None
+    text = ' '.join(''.join(' ' if (ord(c) < 32 or ord(c) == 127 or 0x80 <= ord(c) <= 0x9f
+                                    or 0x200b <= ord(c) <= 0x200f or 0x202a <= ord(c) <= 0x202e
+                                    or 0x2066 <= ord(c) <= 0x2069 or ord(c) == 0xfeff) else c
+                            for c in value[:limit * 4]).split())
+    return text[:limit] or None
 
 
 def local_pane(addr):

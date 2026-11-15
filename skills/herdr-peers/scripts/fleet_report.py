@@ -48,6 +48,13 @@ SERVER_DIR_RE = re.compile(r'[0-9a-f]{64}')
 BRANCH_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._/@+-]{0,199}')
 BLOCK_CLASS_RE = re.compile(r'\bC[1-7]\b')
 TASK_STATUSES = ('pending', 'in_progress', 'completed', 'blocked', 'skipped')
+TITLE_MAX = 120
+SUMMARY_LINES = 14        # lines of the plan's PROGRESS.md shown as its summary
+SUMMARY_LINE_MAX = 200
+MAX_DETAIL_TASKS = 64
+MAX_SIDE_BYTES = 256 * 1024  # PROGRESS.md, contract.json, manifest.json
+STATUS_KEYS = ('pending', 'in_progress', 'completed', 'blocked', 'skipped')
+TASK_ID_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}')
 NOFOLLOW = getattr(os, 'O_NOFOLLOW', 0)
 
 
@@ -187,6 +194,115 @@ def newest_per_plan(found):
         if cur is None or (rec['epoch'], rec['updated_at']) > (cur[1]['epoch'], cur[1]['updated_at']):
             best[key] = (server, rec)
     return [best[k] for k in sorted(best)][:MAX_PLANS]
+
+
+def clean_text(value, limit=TITLE_MAX):
+    """A short single-line text safe to show: control and format characters
+    become spaces, runs of spaces collapse, the result is cut to `limit`."""
+    if not isinstance(value, str):
+        return None
+    out = []
+    for ch in value[:limit * 4]:
+        code = ord(ch)
+        if code < 32 or code == 127 or 0x80 <= code <= 0x9f or 0x200b <= code <= 0x200f \
+                or 0x202a <= code <= 0x202e or 0x2066 <= code <= 0x2069 or code == 0xfeff:
+            out.append(' ')
+        else:
+            out.append(ch)
+    text = ' '.join(''.join(out).split())
+    return text[:limit] or None
+
+
+def task_progress(state):
+    """(done, total, current task) of a parsed state with a valid task list:
+    the current task is the first in progress, else the first pending, as
+    {'id', 'title'}; None when every task is settled."""
+    tasks = state.get('tasks') if isinstance(state, dict) else None
+    if not isinstance(tasks, list) or not tasks:
+        return None, None, None
+    done = sum(1 for t in tasks if isinstance(t, dict) and t.get('status') in ('completed', 'skipped'))
+    current = None
+    for wanted in ('in_progress', 'blocked', 'pending'):
+        for task in tasks:
+            if isinstance(task, dict) and task.get('status') == wanted:
+                ident = str(task.get('id'))
+                current = {'id': ident if TASK_ID_RE.fullmatch(ident) else None,
+                           'title': clean_text(task.get('title') or task.get('file'))}
+                break
+        if current:
+            break
+    return done, len(tasks), current
+
+
+def plan_title(plan_dir):
+    """The plan's title from its contract (v6/v7) or manifest, else None."""
+    for name in ('contract.json', 'manifest.json'):
+        data = load_json(os.path.join(plan_dir, name), MAX_SIDE_BYTES)
+        if isinstance(data, dict) and isinstance(data.get('title'), str):
+            return clean_text(data['title'])
+    return None
+
+
+def plan_summary(plan_dir):
+    """(lines, written at) of the plan's own PROGRESS.md — the working index
+    its agents keep: goal, active task, next action, blockers. Shown as the
+    plan's summary, as text; None when there is none."""
+    path = os.path.join(plan_dir, 'PROGRESS.md')
+    data = read_small(path, MAX_SIDE_BYTES)
+    if data is None:
+        return None, None
+    lines = []
+    fenced = False
+    for raw in data.decode('utf-8', 'replace').splitlines():
+        text = raw.strip()
+        if text.startswith('```') or text.startswith('~~~'):
+            fenced = not fenced
+            continue
+        if fenced or not text or set(text) <= set('-=|:#* ') \
+                or (text.startswith('# ') and not lines):
+            continue  # blank, a rule, a fence, or the file's own title
+        text = text.lstrip('#').strip()
+        text = clean_text(text, SUMMARY_LINE_MAX)
+        if text:
+            lines.append(text)
+        if len(lines) >= SUMMARY_LINES:
+            break
+    try:
+        stamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(os.stat(path).st_mtime))
+    except OSError:
+        stamp = None
+    return lines or None, stamp
+
+
+def plan_detail(state, plan_dir):
+    """What a reader needs to follow one plan without asking its agents: its
+    title, every task with its status, the blocker as recorded, and the
+    summary its agents keep in PROGRESS.md. Text only, cleaned and bounded."""
+    every = [t for t in (state.get('tasks') or []) if isinstance(t, dict)]
+    start = 0
+    if len(every) > MAX_DETAIL_TASKS:
+        # A long plan: show a window that keeps the current task in view.
+        live = [i for i, t in enumerate(every) if t.get('status') in ('in_progress', 'blocked', 'pending')]
+        at = live[0] if live else len(every) - 1
+        start = max(0, min(at - 16, len(every) - MAX_DETAIL_TASKS))
+    tasks = []
+    for task in every[start:start + MAX_DETAIL_TASKS]:
+        if not isinstance(task, dict):
+            continue
+        ident = str(task.get('id'))
+        tasks.append({'id': ident if TASK_ID_RE.fullmatch(ident) else None,
+                      'title': clean_text(task.get('title') or task.get('file')),
+                      'status': task.get('status') if task.get('status') in STATUS_KEYS else None})
+    blocker = state.get('blocked') if 'blocked' in state else state.get('blocker')
+    block = None
+    if isinstance(blocker, dict):
+        block = {'reason': clean_text(blocker.get('reason') if isinstance(blocker.get('reason'), str)
+                                      else None, SUMMARY_LINE_MAX),
+                 'needs': clean_text(blocker.get('needs') if isinstance(blocker.get('needs'), str)
+                                     else None, SUMMARY_LINE_MAX)}
+    summary, written = plan_summary(plan_dir)
+    return {'title': plan_title(plan_dir), 'tasks': tasks, 'tasks_from': start, 'blocker': block,
+            'summary': summary, 'summary_at': written}
 
 
 def classify(state):
@@ -422,9 +538,14 @@ def describe_plan(root, server, rec, panes, git, now=None, logs=None):
         else:
             lead_in_repo = lead_top == found_at or lead_top == rec.get('repo_root')
     cls, block_class, progress, updated = 'unreadable', None, None, None
+    done = total = current = detail = None
     if path:
         state = load_json(path, MAX_STATE_BYTES)
         cls, block_class, progress = classify(state)
+        if cls != 'unreadable':
+            done, total, current = task_progress(state)
+        if cls in ('open', 'blocked'):  # a finished plan needs no detail on the map
+            detail = plan_detail(state, os.path.dirname(path))
         if isinstance(state, dict) and isinstance(state.get('updated_at'), str) \
                 and TS_RE.fullmatch(state['updated_at']):
             updated = state['updated_at']
@@ -434,6 +555,7 @@ def describe_plan(root, server, rec, panes, git, now=None, logs=None):
         'plan_dir': os.path.dirname(path) if path else None, 'class': cls,
         'blocker_class': block_class, 'progress': progress, 'state_updated_at': updated,
         'updated_at': rec['updated_at'], 'lead_in_repo': lead_in_repo,
+        'tasks_done': done, 'tasks_total': total, 'current_task': current, 'detail': detail,
         'open_asks': open_asks(root, server, lead_pane, now, logs) if lead_local else None,
     }
 
@@ -503,7 +625,8 @@ def read_fleet(root=None):
 
 PLAN_KEYS = frozenset(('plan', 'server', 'lead', 'epoch', 'succession', 'lanes', 'repo_root',
                        'plan_dir', 'class', 'blocker_class', 'progress', 'state_updated_at',
-                       'updated_at', 'lead_in_repo', 'open_asks'))
+                       'updated_at', 'lead_in_repo', 'open_asks', 'tasks_done', 'tasks_total',
+                       'current_task', 'detail'))
 AGENT_KEYS = frozenset(('pane', 'cwd', 'repo_root', 'branch'))
 
 
@@ -543,6 +666,21 @@ def valid_report(doc):
         block = plan.get('blocker_class')
         if block is not None and not (isinstance(block, str) and re.fullmatch(r'C[1-7]', block)):
             return False
+        for key in ('tasks_done', 'tasks_total'):
+            value = plan.get(key)
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool)
+                                      or not 0 <= value <= 4096):
+                return False
+        current = plan.get('current_task')
+        if current is not None and not (
+                isinstance(current, dict) and set(current) == {'id', 'title'}
+                and (current['id'] is None or (isinstance(current['id'], str)
+                                               and TASK_ID_RE.fullmatch(current['id'])))
+                and (current['title'] is None or (isinstance(current['title'], str)
+                                                  and clean_text(current['title']) == current['title']))):
+            return False
+        if not valid_detail(plan.get('detail')):
+            return False
         asks = plan.get('open_asks')
         if asks is not None and (not isinstance(asks, int) or isinstance(asks, bool) or asks < 0):
             return False
@@ -565,6 +703,45 @@ def valid_report(doc):
         if branch is not None and not (isinstance(branch, str) and BRANCH_RE.fullmatch(branch)):
             return False
     return True
+
+
+def valid_line(value, limit):
+    return value is None or (isinstance(value, str) and len(value) <= limit
+                             and clean_text(value, limit) == value)
+
+
+def valid_detail(detail):
+    """A plan detail as `plan_detail` builds it, or None."""
+    if detail is None:
+        return True
+    if not isinstance(detail, dict) or set(detail) != {'title', 'tasks', 'tasks_from', 'blocker',
+                                                       'summary', 'summary_at'}:
+        return False
+    first = detail['tasks_from']
+    if not isinstance(first, int) or isinstance(first, bool) or not 0 <= first <= 4096:
+        return False
+    if not valid_line(detail['title'], TITLE_MAX):
+        return False
+    tasks = detail['tasks']
+    if not isinstance(tasks, list) or len(tasks) > MAX_DETAIL_TASKS:
+        return False
+    for task in tasks:
+        if not (isinstance(task, dict) and set(task) == {'id', 'title', 'status'}
+                and (task['id'] is None or (isinstance(task['id'], str) and TASK_ID_RE.fullmatch(task['id'])))
+                and valid_line(task['title'], TITLE_MAX)
+                and (task['status'] is None or task['status'] in STATUS_KEYS)):
+            return False
+    block = detail['blocker']
+    if block is not None and not (isinstance(block, dict) and set(block) == {'reason', 'needs'}
+                                  and valid_line(block['reason'], SUMMARY_LINE_MAX)
+                                  and valid_line(block['needs'], SUMMARY_LINE_MAX)):
+        return False
+    summary = detail['summary']
+    if summary is not None and not (isinstance(summary, list) and len(summary) <= SUMMARY_LINES
+                                    and all(valid_line(l, SUMMARY_LINE_MAX) and l for l in summary)):
+        return False
+    stamp = detail['summary_at']
+    return stamp is None or (isinstance(stamp, str) and TS_RE.fullmatch(stamp) is not None)
 
 
 def report(panes=None, root=None, now=None, servers=None):

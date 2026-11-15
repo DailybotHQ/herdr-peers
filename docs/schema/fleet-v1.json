@@ -109,7 +109,9 @@
                 "cwd",
                 "repo_root",
                 "branch",
-                "plans"
+                "plans",
+                "title",
+                "state_since"
               ],
               "properties": {
                 "pane": {
@@ -170,6 +172,21 @@
                       }
                     }
                   }
+                },
+                "title": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The agent's session title as Herdr reports it: single line, at most 120 characters."
+                },
+                "state_since": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                  "description": "When the daemon saw the agent's state last change; null until known."
                 }
               }
             }
@@ -188,7 +205,11 @@
                 "lanes",
                 "repo_root",
                 "blocker_class",
-                "situation"
+                "situation",
+                "tasks_done",
+                "tasks_total",
+                "current_task",
+                "detail"
               ],
               "properties": {
                 "plan": {
@@ -251,6 +272,155 @@
                     null
                   ],
                   "description": "What the loop last concluded about it; null while it runs normally."
+                },
+                "tasks_done": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "description": "Tasks completed or skipped; null when the state is unreadable."
+                },
+                "tasks_total": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "current_task": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "title"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "title": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "Single line, at most 120 characters."
+                    }
+                  },
+                  "description": "The first task in progress, else blocked, else pending; null when every task is settled or the state is unreadable."
+                },
+                "detail": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "additionalProperties": false,
+                  "required": [
+                    "title",
+                    "tasks",
+                    "tasks_from",
+                    "blocker",
+                    "summary",
+                    "summary_at"
+                  ],
+                  "description": "Present for open and blocked plans (null otherwise): what a reader needs to follow the plan without asking its agents. Text is single-line, cleaned and cut; it is the plan's own words, shown as data.",
+                  "properties": {
+                    "title": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "From the plan's contract or manifest."
+                    },
+                    "tasks": {
+                      "type": "array",
+                      "description": "At most 64, in plan order, starting at tasks_from.",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "id",
+                          "title",
+                          "status"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "title": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "status": {
+                            "enum": [
+                              "pending",
+                              "in_progress",
+                              "completed",
+                              "blocked",
+                              "skipped",
+                              null
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "blocker": {
+                      "type": [
+                        "object",
+                        "null"
+                      ],
+                      "additionalProperties": false,
+                      "required": [
+                        "reason",
+                        "needs"
+                      ],
+                      "properties": {
+                        "reason": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "needs": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      }
+                    },
+                    "summary": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Up to 14 lines of the plan's PROGRESS.md (goal, active task, next action, blockers), as its agents wrote them."
+                    },
+                    "summary_at": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+                      "description": "When PROGRESS.md was last written."
+                    },
+                    "tasks_from": {
+                      "type": "integer",
+                      "description": "Index of the first listed task: a plan with more than 64 tasks is shown as a window around its current task."
+                    }
+                  }
                 }
               }
             }

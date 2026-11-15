@@ -71,6 +71,12 @@ assert_eq "a plan directory that is a symlink out of the repository is unreadabl
 assert_eq "a qualified plan id resolves by its last component" "open" "$(plan_field "$R" repo/PLAN_910_qualified class)"
 assert_eq "a released plan has no lead" "null" "$(plan_field "$R" PLAN_911_released lead)"
 assert_eq "the lead holds no open ask" "0" "$(plan_field "$R" PLAN_901_open open_asks)"
+assert_eq "a v5 plan reports its tasks done" "1" "$(plan_field "$R" PLAN_901_open tasks_done)"
+assert_eq "and its total" "2" "$(plan_field "$R" PLAN_901_open tasks_total)"
+assert_eq "and its current task" '{"id": "2", "title": null}' "$(plan_field "$R" PLAN_901_open current_task)"
+assert_eq "a v7 snapshot reports its current task with its id" '{"id": "T-b", "title": null}' "$(plan_field "$R" PLAN_904_v7open current_task)"
+assert_eq "a completed plan has no current task" "null" "$(plan_field "$R" PLAN_902_done current_task)"
+assert_eq "an unreadable plan has no progress" "null" "$(plan_field "$R" PLAN_906_broken tasks_total)"
 
 # The progress digest changes on progress and only on progress.
 D1=$(plan_field "$R" PLAN_904_v7open progress)
@@ -291,9 +297,14 @@ assert_contains "and the plan on the other machine" "$F" "PLAN_931_there"
 assert_contains "an agent carries its role in a plan" "$F" '"role": "lead"'
 assert_contains "and a successor its role" "$F" '"role": "successor"'
 assert_contains "a machine that did not answer is listed as unknown, not dropped" "$F" '"machine": "dd44"'
+assert_contains "an agent carries its session title" "$F" '"title": "box worker"'
+assert_contains "and when its state last changed" "$F" '"state_since": "20'
+assert_contains "a plan carries its progress" "$F" '"tasks_total": 2'
 assert_contains "an agent's repository comes from its machine's report" "$F" "\"repo_root\": \"$(cd "$REPO" && pwd -P)\""
 run "$HELPER" fleet
 assert_contains "the human view names machines, plans and agents" "$OUT" "plan  PLAN_931_there"
+assert_contains "the human view shows a plan's progress" "$OUT" "1/2 tasks"
+assert_contains "and an agent's title" "$OUT" '"box worker"'
 python3 - "$SCRIPTS" "$(fleet_file)" <<'PY'
 import sys
 sys.dont_write_bytecode = True
@@ -736,6 +747,8 @@ PY
 assert_eq "a machine report missing any key is refused" "ok" "$OUT"
 
 # A dry run never hands a machine the map, also on a later report.
+
+# --- titles and task titles are neutralised and cut -------------------------------------------------
 run python3 - "$SCRIPTS" <<'PY'
 import sys
 sys.dont_write_bytecode = True
@@ -845,5 +858,76 @@ assert_contains "(an in-scope agent is on the map)" "$(cat "$(fleet_file)")" '"p
 assert_not_contains "an agent outside the scope is not on the map" "$(cat "$(fleet_file)")" '"pane": "w2:p1"'
 run "$HELPER" autopilot --loop --once --scope local:w1,bb22
 assert_not_contains "nor on the copy left on another machine" "$(cat "$(box_home)/.local/state/herdr-peers/fleet.json" 2>/dev/null)" '"pane": "w2:p1"'
+
+import autopilot, fleet_report
+hostile = 'x\x1b[31mred\x07‮' + 'y' * 500
+t = autopilot.clean_title(hostile)
+assert t is not None and len(t) <= 120 and not any(ord(c) < 32 or c == '‮' for c in t), repr(t)
+state = {'tasks': [{'id': 'T-1', 'status': 'in_progress', 'title': hostile},
+                   {'id': '$(rm -rf /)', 'status': 'pending'}]}
+done, total, cur = fleet_report.task_progress(state)
+assert (done, total) == (0, 2) and len(cur['title']) <= 120 and '\x1b' not in cur['title'], cur
+state['tasks'][0]['status'] = 'completed'
+assert fleet_report.task_progress(state)[2]['id'] is None, 'a task id outside the pattern is dropped'
+report = {'schema': 'herdr-peers/plans-v1', 'state': 'ok', 'agents': [], 'plans': [{
+    'plan': 'P1', 'lead': None, 'epoch': 1, 'succession': [], 'lanes': [], 'class': 'open',
+    'progress': None, 'blocker_class': None, 'open_asks': None, 'repo_root': None, 'plan_dir': None,
+    'state_updated_at': None, 'tasks_done': 1, 'tasks_total': 2,
+    'current_task': {'id': 'T-1', 'title': 'bad\x1b[0m'}}]}
+assert not fleet_report.valid_report(report), 'a raw control character in a task title is refused'
+report['plans'][0]['current_task']['title'] = 'fine'
+assert fleet_report.valid_report(report)
+report['plans'][0]['tasks_total'] = -1
+assert not fleet_report.valid_report(report)
+print('ok')
+PY
+assert_eq "titles and task titles are neutralised, cut and validated" "ok" "$OUT"
+
+# --- a plan's detail: title, tasks, blocker and the summary its agents keep ---------------------------
+iso_world detail
+REPO="$WORK/repo"; mkrepo "$REPO"
+mkstate "$REPO" PLAN_940_detail '{"status":"blocked","completed_count":1,"checkpoint":null,"blocked":{"task":2,"reason":"needs \u001b[31mthe staging key","since":"2026-01-01T00:00:00Z","needs":"C1 approval"},"tasks":[{"id":1,"status":"completed","title":"Write the parser"},{"id":2,"status":"blocked","file":"2.task_deploy.md"}]}'
+printf '{"title": "Ship the parser"}\n' >"$REPO/.dwp/plans/PLAN_940_detail/manifest.json"
+cat >"$REPO/.dwp/plans/PLAN_940_detail/PROGRESS.md" <<'MD'
+# PROGRESS — PLAN_940_detail
+
+## Goal
+
+- Ship the parser.
+
+~~~
+ignored fence
+~~~
+---
+- Next action: wait for the staging key.
+MD
+claim "$REPO" PLAN_940_detail
+mkstate "$REPO" PLAN_941_done "$V5_DONE"; claim "$REPO" PLAN_941_done
+python3 - "$REPO/.dwp/plans" <<'PY'
+import json, sys
+tasks = [{'id': i, 'status': 'completed' if i < 80 else 'pending', 'title': 'task %d' % i} for i in range(100)]
+import os
+os.makedirs(sys.argv[1] + '/PLAN_942_long', exist_ok=True)
+json.dump({'status': 'in_progress', 'blocked': None, 'checkpoint': None, 'tasks': tasks},
+          open(sys.argv[1] + '/PLAN_942_long/state.json', 'w'))
+PY
+claim "$REPO" PLAN_942_long
+run env -u HERDR_ENV "$HELPER" plans --json
+R=$OUT
+printf '%s\n' "$R" >"$WORK/plans.json"
+run python3 "$VALIDATE" --doc "$PLANS_SCHEMA" "$WORK/plans.json"
+assert_rc "a report with plan details validates against plans-v1" 0
+D=$(plan_field "$R" PLAN_940_detail detail)
+assert_contains "the detail carries the plan's title" "$D" '"title": "Ship the parser"'
+assert_contains "every task with its status" "$D" '"status": "blocked", "title": "2.task_deploy.md"'
+assert_contains "the blocker as recorded, neutralised" "$D" '"reason": "needs [31mthe staging key"'
+assert_contains "and what it needs" "$D" '"needs": "C1 approval"'
+assert_contains "the summary its agents keep" "$D" 'Next action: wait for the staging key.'
+assert_not_contains "without the file's own title" "$D" 'PROGRESS — PLAN_940'
+assert_not_contains "or fenced text" "$D" 'ignored fence'
+assert_eq "a finished plan carries no detail" "null" "$(plan_field "$R" PLAN_941_done detail)"
+L=$(plan_field "$R" PLAN_942_long detail)
+assert_contains "a long plan is shown as a window around its current task" "$L" '"tasks_from": 36'
+assert_contains "(the current task is in the window)" "$L" '"title": "task 80"'
 unset TELL_OUT HERDR_PEERS_AUTOPILOT_GRACE
 export XDG_STATE_HOME=$LOOP_XDG_STATE

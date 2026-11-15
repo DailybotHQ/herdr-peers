@@ -2971,17 +2971,23 @@ def cmd_fleet(args):
             safe(machine.get('machine')), safe(machine.get('label') or ''),
             safe(machine.get('agents_state')), safe(machine.get('plans_state'))))
         for plan in machine.get('plans') or []:
-            print('  plan  %-40s %-10s lead %s%s' % (
+            done, total = plan.get('tasks_done'), plan.get('tasks_total')
+            current = plan.get('current_task') or {}
+            print('  plan  %-40s %-10s lead %s%s%s%s' % (
                 safe(plan.get('plan'))[:40], safe(plan.get('class')), safe(plan.get('lead') or '-'),
+                ('  %s/%s tasks' % (done, total)) if isinstance(done, int) and isinstance(total, int) else '',
+                ('  now: %s' % safe(current.get('title') or current.get('id'))[:60])
+                if (current.get('title') or current.get('id')) else '',
                 ('  [%s]' % safe(plan['situation'])) if plan.get('situation') else ''))
         for agent in machine.get('agents') or []:
             roles = ', '.join('%s of %s' % (safe(r.get('role')), safe(r.get('plan')))
                               for r in agent.get('plans') or [])
-            print('  agent %-10s %-8s %-8s %s%s%s' % (
+            print('  agent %-10s %-8s %-8s %s%s%s%s' % (
                 safe(agent.get('pane')), safe(agent.get('kind') or '-'), safe(agent.get('state') or '-'),
                 safe(agent.get('repo_root') or agent.get('cwd') or '-'),
                 (' @' + safe(agent['branch'])) if agent.get('branch') else '',
-                ('  (%s)' % roles) if roles else ''))
+                ('  (%s)' % roles) if roles else '',
+                ('  "%s"' % safe(agent['title'])[:60]) if agent.get('title') else ''))
     return EXIT_TIMEOUT if stale else EXIT_OK
 
 
@@ -3133,6 +3139,8 @@ class AutopilotIO(object):
             rows.append({'pane': pane, 'in_scope': in_scope((machine, pane), self.scope),
                          'state': a.get('agent_status'), 'agent': kind_of(a),
                          'cwd': a.get('cwd') if isinstance(a.get('cwd'), str) else None,
+                         'title': a.get('terminal_title_stripped')
+                         if isinstance(a.get('terminal_title_stripped'), str) else None,
                          'seq': a.get('state_change_seq'), 'turn': a.get('completion_seq'),
                          'you': machine == 'local' and pane == self.pane and
                          (not self.terminal or a.get('terminal_id') in (None, self.terminal))})
