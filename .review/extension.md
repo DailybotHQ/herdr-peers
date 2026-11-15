@@ -16,6 +16,14 @@ is in `docs/SECURITY.md`; the rules for agents are in `AGENTS.md`.
   string that is executed, or the argv of anything except a literal
   `herdr` subcommand. `herdr()` / `herdr_json()` take argv lists; any
   `shell=True` or string-built command is a defect.
+- **Always `critical`:** in the plan loop (`autopilot --loop`), anything a
+  machine reported, a lead record or a plan state reaching the `ssh` argv,
+  a prompt's text beyond the validated plan id, or the notify argv; a
+  remote command other than the fixed `ssh … -- <target> python3 -`; a
+  target used without `SSH_TARGET_RE` and `--`; `fleet_report.py`
+  importing the helper or executing anything it read; the loop writing a
+  lead record or prompting an address a report did not call `local:`
+  (T34–T38).
 - **Always `critical`:** a change that lets the helper answer a reply, answer
   twice, answer an id this pane originated, or answer at depth ≥ 1 — the
   loop guard in `_classify()` and the exactly-once checks in `cmd_reply`

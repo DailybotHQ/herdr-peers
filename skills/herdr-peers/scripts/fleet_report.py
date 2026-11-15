@@ -233,7 +233,8 @@ def classify(state):
 
 
 def plan_state_path(base, plan_id):
-    """<base>/.dwp/plans/<id>/state.json when it stays inside <base>, else None."""
+    """The plan's state.json under <base> (the `.dwp`, `plans`, <id> path
+    components) when it stays inside <base>, else None."""
     if not base:
         return None
     path = os.path.join(base, '.dwp', 'plans', plan_id, 'state.json')

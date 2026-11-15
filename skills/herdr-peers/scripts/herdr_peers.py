@@ -31,7 +31,7 @@ import subprocess
 import sys
 import time
 
-VERSION = '1.2.2'
+VERSION = '1.3.0'
 PROTOCOL = 1
 MARKER = '[herdr-peers]'
 DEFAULT_MAX_BYTES = 16384
