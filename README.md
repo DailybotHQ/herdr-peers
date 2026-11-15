@@ -187,6 +187,7 @@ next (folder trust only, on a pane you launched yourself, under the user's stand
 | `autopilot [run\|start\|stop\|status\|logs]` | **You start it; no agent or message can.** `start` / `stop` (aliases `on` / `off`) run it in the background, `status` and `logs -f` watch it. Accepts the recommended option for every waiting agent on every enabled machine, follows multi-step dialogs, continues agents that stopped to ask, retries a usage limit every 30 minutes; never a login. `--dry-run`, `--once`, `--interval S`, `--exclude`, `--scope`, `--no-nudge`, `--catch-up` ([autopilot.md](skills/herdr-peers/autopilot.md)). |
 | `autopilot --loop [--notify "<command>"]` | The same daemon also keeps **every open plan running to its end**, on every enabled machine: it asks the idle lead of a plan that is not finished to continue it, leaves a blocked plan, stops after three prompts without progress, asks a successor to take over a lead that is gone, and can run a command of yours when a plan needs you. |
 | `plans [--json]`, `fleet [--json]` | This machine's plans and their state ([`plans-v1`](docs/schema/plans-v1.json)); the loop's map of every machine, agent, repository and plan ([`fleet-v1`](docs/schema/fleet-v1.json)), readable on any machine. |
+| `fleet ui` | A live terminal watcher of your whole fleet: how old the picture is, counts by state, agents grouped by plan (with each plan's progress, current task and summary), by repository or by machine, the agents doing nothing; open a plan or an agent with Enter or a click. Read-only. |
 | `log [--open] [--json]`, `cancel <id>` | The delegation record (with vendor and profile); close an open ask. |
 | `--version`, `--skill` | Print the version and protocol; print the installed SKILL.md. |
 
@@ -202,6 +203,7 @@ herdr-peers autopilot stop              # alias: off
 herdr-peers autopilot                   # or in the foreground of a pane of its own
 herdr-peers autopilot --loop      # also keep every open plan running to its end
 herdr-peers fleet                 # who is where, on which plan
+herdr-peers fleet ui              # the same, live, in your terminal
 ```
 
 The background autopilot survives the pane that started it, not a reboot or

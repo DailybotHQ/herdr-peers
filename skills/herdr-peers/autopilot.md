@@ -297,9 +297,52 @@ in `<state root>/herdr-peers/fleet.json` (`0600`) and, in the same
 connection in which it collects a machine's report, leaves that machine a
 copy. `herdr-peers fleet [--json]` ([`fleet-v1`](../../docs/schema/fleet-v1.json))
 prints the copy of the machine it runs on, in or out of a pane, with its
-age; it exits `7` when there is none and `5` when nobody has synced it for
+age, and `herdr-peers fleet ui` shows it live (see below); it exits `7` when there is none and `5` when nobody has synced it for
 15 minutes. A machine's copy is as recent as the daemon's last report from
 it (at most about 5 minutes).
+
+Each agent on the map carries its session title and how long it has been in
+its state; each plan its progress (tasks done of the total, the current
+task) and, while open or blocked, its detail: title, its tasks with status,
+the blocker as recorded, and up to 14 lines of the plan's own `PROGRESS.md`
+— the summary its agents keep — so nobody has to ask a lead how a plan is
+going.
+
+Plan content stays on the daemon's machine. The map there carries each
+open plan's detail; the copies the daemon leaves on other machines carry,
+per plan, its identity, class, blocker class, progress, task counts and
+current task, addresses, epoch and repository root — never the summary,
+the task list or the blocker text — and no agent session title or working
+directory. Every free-text field (titles, summary, blocker) is cleaned and
+token shapes (keys, tokens, private-key blocks, and the values of secret-
+named environment variables) are replaced by `[redacted]` before it is
+written. Above 2 MB the map drops plan details first and records
+`fleet_too_large` once.
+
+`herdr-peers fleet ui` is a live watcher over that map, in any terminal:
+
+```
+ ◉ herdr-peers fleet   updated 40 s ago                     54 agents · 14 machines (13 answering)
+ ● 8 working   ◆ 1 waiting   ○ 45 idle   ? 0 unknown   │ plans: 1 need you · 5 running · 14 done
+  p Plans   r Repos   m Machines
+──────────────────────────────────────────────────────────────────────────────────────────────────
+▌ STALLED  PLAN_009_billing  Billing v2                         ████░░░░░░░░ 12/37  32%  API · WS brain
+    ▶ now: Webhook retries
+  ★ ○ claude idle 12m    w2:p1    app @feature/billing   API · WS brain   Billing lead
+▌ OPEN  PLAN_001_prototypes  Rebuild all of v4                  ███████░░░░░ 56/97  57%  Mac
+  ★ ● claude working 3m  wG:p16   protoyard @dev          Mac              Protoyard lead
+  · ○ codex  done        wG:p20   protoyard @dev          Mac              Judge the prototypes
+▌ ○ Doing nothing — free to take work (31)
+    ○ codex  idle        w4:p1    open-source             Mac Air
+```
+
+It redraws by itself when the map changes, keeps your selection, and ticks
+the age every second (amber after 3 minutes, STALE after 15). Keys: `p`, `r`,
+`m` group by plan, repository or machine; `/` filters; `↑↓` and the mouse
+move; Enter or a click opens a plan or an agent; `f` focuses the agent's
+pane; `?` help; `q` quit. It only reads: the map, and an open agent's screen
+(at most every 2 s, on the machine where that pane lives, when this
+machine's Herdr can reach it). `--snapshot` prints the view once as text.
 
 ### 9.5 Cost
 

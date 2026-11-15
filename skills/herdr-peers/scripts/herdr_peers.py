@@ -2950,9 +2950,41 @@ def cmd_plans(args):
     return EXIT_OK
 
 
+def load_fleet_ui():
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.dont_write_bytecode = True
+    import fleet_ui
+    return fleet_ui
+
+
+def cmd_fleet_ui(args):
+    """The live watcher (or one text snapshot of it). Read-only."""
+    fleet_ui = load_fleet_ui()
+    path = os.path.join(load_fleet_report().state_root(), load_fleet_report().FLEET_FILE)
+    grouping = args.group or 'plan'
+    if os.environ.get('HERDR_ENV') == '1':
+        # Lets the watcher tell whether it runs on the daemon's own Herdr server.
+        os.environ['HERDR_PEERS_UI_SERVER'] = state_key(Store().server_id)[:24]
+    interactive = sys.stdout.isatty() and sys.stdin.isatty() and not args.snapshot
+    if not interactive:
+        width = args.width or shutil.get_terminal_size((100, 40)).columns
+        if not 40 <= width <= 400:
+            raise Stop(EXIT_USAGE, '--width must be between 40 and 400')
+        sys.stdout.write(fleet_ui.snapshot(fleet_ui.FileSource(path), time.time(), width, grouping))
+        return EXIT_OK
+    try:
+        return fleet_ui.run_curses(path, grouping)
+    except Exception as exc:  # no curses, a dumb terminal: say so and print the text view
+        warn('fleet ui: cannot start the live view (%s); printing a snapshot' % safe(type(exc).__name__))
+        sys.stdout.write(fleet_ui.snapshot(fleet_ui.FileSource(path), time.time(), 100, grouping))
+        return EXIT_OK
+
+
 def cmd_fleet(args):
     """The map the autopilot loop keeps: read-only, from this machine's
     copy, and usable outside a pane. Stale or missing is said, not hidden."""
+    if getattr(args, 'fleet_verb', None) == 'ui':
+        return cmd_fleet_ui(args)
     fleet, age = load_fleet_report().read_fleet()
     if fleet is None:
         raise Stop(EXIT_NONE, 'no map on this machine: no `herdr-peers autopilot --loop` has '
@@ -2971,17 +3003,23 @@ def cmd_fleet(args):
             safe(machine.get('machine')), safe(machine.get('label') or ''),
             safe(machine.get('agents_state')), safe(machine.get('plans_state'))))
         for plan in machine.get('plans') or []:
-            print('  plan  %-40s %-10s lead %s%s' % (
+            done, total = plan.get('tasks_done'), plan.get('tasks_total')
+            current = plan.get('current_task') or {}
+            print('  plan  %-40s %-10s lead %s%s%s%s' % (
                 safe(plan.get('plan'))[:40], safe(plan.get('class')), safe(plan.get('lead') or '-'),
+                ('  %s/%s tasks' % (done, total)) if isinstance(done, int) and isinstance(total, int) else '',
+                ('  now: %s' % safe(current.get('title') or current.get('id'))[:60])
+                if (current.get('title') or current.get('id')) else '',
                 ('  [%s]' % safe(plan['situation'])) if plan.get('situation') else ''))
         for agent in machine.get('agents') or []:
             roles = ', '.join('%s of %s' % (safe(r.get('role')), safe(r.get('plan')))
                               for r in agent.get('plans') or [])
-            print('  agent %-10s %-8s %-8s %s%s%s' % (
+            print('  agent %-10s %-8s %-8s %s%s%s%s' % (
                 safe(agent.get('pane')), safe(agent.get('kind') or '-'), safe(agent.get('state') or '-'),
                 safe(agent.get('repo_root') or agent.get('cwd') or '-'),
                 (' @' + safe(agent['branch'])) if agent.get('branch') else '',
-                ('  (%s)' % roles) if roles else ''))
+                ('  (%s)' % roles) if roles else '',
+                ('  "%s"' % safe(agent['title'])[:60]) if agent.get('title') else ''))
     return EXIT_TIMEOUT if stale else EXIT_OK
 
 
@@ -3133,6 +3171,8 @@ class AutopilotIO(object):
             rows.append({'pane': pane, 'in_scope': in_scope((machine, pane), self.scope),
                          'state': a.get('agent_status'), 'agent': kind_of(a),
                          'cwd': a.get('cwd') if isinstance(a.get('cwd'), str) else None,
+                         'title': a.get('terminal_title_stripped')
+                         if isinstance(a.get('terminal_title_stripped'), str) else None,
                          'seq': a.get('state_change_seq'), 'turn': a.get('completion_seq'),
                          'you': machine == 'local' and pane == self.pane and
                          (not self.terminal or a.get('terminal_id') in (None, self.terminal))})
@@ -3207,6 +3247,10 @@ class AutopilotIO(object):
         if not fleet_report.valid_report(report) or report['state'] != 'ok':
             return 'unknown', None
         return 'ok', report
+
+    def load_fleet(self):
+        """This machine's last map, or None."""
+        return load_fleet_report().read_fleet()[0]
 
     def save_fleet(self, text):
         """Keep this machine's copy of the map current (see `plans`)."""
@@ -3924,7 +3968,14 @@ def build_parser():
                     'directories, never tokens or keys')
     fl = sub.add_parser('fleet', help='every machine, agent, repository and plan the autopilot '
                         'loop knows, from this machine\'s copy of its map (read-only)')
+    fl.add_argument('fleet_verb', nargs='?', choices=['ui'],
+                    help='ui: a live watcher of every agent and plan (read-only)')
     fl.add_argument('--json', action='store_true', help='herdr-peers/fleet-v1 JSON')
+    fl.add_argument('--snapshot', action='store_true',
+                    help='with ui: draw the view once as text and exit')
+    fl.add_argument('--group', choices=['plan', 'repo', 'machine'],
+                    help='with ui: how agents are grouped first (default plan)')
+    fl.add_argument('--width', type=int, help='with ui --snapshot: columns (40-400)')
     pl = sub.add_parser('plans', help='the plans led on this machine, with each plan\'s state '
                         '(read-only; works outside a Herdr pane)')
     pl.add_argument('--json', action='store_true', help='herdr-peers/plans-v1 JSON')
