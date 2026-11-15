@@ -319,6 +319,8 @@ assert_eq "(scripted app checks ran to their end)" "ok" "$OUT"
 
 # --- through the helper -------------------------------------------------------------------------
 new_world fleet_ui
+UI_XDG_STATE=$XDG_STATE_HOME
+export XDG_STATE_HOME="$WORLD/xdg-state"   # a state root of its own: no map from other scopes
 run "$HELPER" fleet ui --snapshot
 assert_rc "fleet ui --snapshot without a map exits 0" 0
 assert_contains "and says how to get one" "$OUT" "no map on this machine yet"
@@ -339,3 +341,4 @@ run "$HELPER" fleet ui --snapshot --width 10
 assert_rc "an absurd width is a usage error" 2
 run "$HELPER" fleet ui --snapshot --group machine
 assert_contains "--group machine groups by machine" "$OUT" "▣ Mac"
+export XDG_STATE_HOME=$UI_XDG_STATE

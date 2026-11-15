@@ -741,7 +741,8 @@ good = {'schema': 'herdr-peers/plans-v1', 'state': 'ok', 'agents': [
     {'pane': 'w1:p1', 'cwd': '/a', 'repo_root': None, 'branch': None}], 'plans': [{
     'plan': 'P1', 'lead': None, 'epoch': 1, 'succession': [], 'lanes': [], 'class': 'open',
     'progress': None, 'blocker_class': None, 'open_asks': None, 'repo_root': None, 'plan_dir': None,
-    'state_updated_at': None, 'server': 'a' * 64, 'updated_at': '2026-01-01T00:00:00Z', 'lead_in_repo': None}]}
+    'state_updated_at': None, 'server': 'a' * 64, 'updated_at': '2026-01-01T00:00:00Z', 'lead_in_repo': None,
+    'tasks_done': None, 'tasks_total': None, 'current_task': None, 'detail': None}]}
 assert fleet_report.valid_report(good)
 for key in sorted(fleet_report.PLAN_KEYS):
     broken = json.loads(json.dumps(good)); del broken['plans'][0][key]
