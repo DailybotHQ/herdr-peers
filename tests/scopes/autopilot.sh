@@ -98,7 +98,7 @@ assert_not_contains "screen text never reaches the log" "$(cat "$(state_log)")" 
 assert_not_contains "screen text never reaches the output" "$OUT" "curl"
 run python3 "$ROOT/tests/tools/validate_records.py" "$ROOT/skills/herdr-peers/templates/delegation-record.json" "$(state_log)"
 assert_rc "autopilot records validate against the delegation-record schema" 0
-assert_eq "the log stays private" "600" "$(stat -f %Lp "$(state_log)" 2>/dev/null || stat -c %a "$(state_log)")"
+assert_eq "the log stays private" "600" "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$(state_log)")"
 
 # --- a dialog of several steps is followed to its end ---------------------------------
 new_world steps

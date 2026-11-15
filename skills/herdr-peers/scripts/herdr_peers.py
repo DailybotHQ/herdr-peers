@@ -856,12 +856,13 @@ class Store(object):
         self.replies = os.path.join(self.dir, 'replies')
 
     def ensure(self):
-        if not os.path.isdir(self.dir):
-            os.makedirs(self.dir, 0o700)
+        # exist_ok: two commands starting together (a daemon and a `status`)
+        # may both find the directory missing.
+        os.makedirs(self.dir, 0o700, exist_ok=True)
         if not self.owned_dir:
             parent = os.path.dirname(self.path)
-            if parent and not os.path.isdir(parent):
-                os.makedirs(parent, 0o700)
+            if parent:
+                os.makedirs(parent, 0o700, exist_ok=True)
         # XDG state is outside the checkout, so no repository .gitignore is
         # needed.
 
