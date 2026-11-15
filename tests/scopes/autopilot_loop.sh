@@ -867,6 +867,11 @@ assert_not_contains "an agent outside the scope is not on the map" "$(cat "$(fle
 run "$HELPER" autopilot --loop --once --scope local:w1,bb22
 assert_not_contains "nor on the copy left on another machine" "$(cat "$(box_home)/.local/state/herdr-peers/fleet.json" 2>/dev/null)" '"pane": "w2:p1"'
 
+# --- titles and task titles are neutralised and cut -------------------------------------------------
+run python3 - "$SCRIPTS" <<'PY'
+import json, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
 import autopilot, fleet_report
 hostile = 'x\x1b[31mred\x07‮' + 'y' * 500
 t = autopilot.clean_title(hostile)
