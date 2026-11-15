@@ -34,6 +34,7 @@ NUDGE_WINDOW = 3600      # seconds; a pane that keeps asking is left after MAX_N
 LIMIT_RETRY = 1800       # seconds between two tries on a pane at its usage limit
 CONFIRM_DELAY = 1.5      # seconds between keys and the confirming re-read
 TAIL = 40                # screen lines a decision looks at
+DESCRIPTION_MAX = 12     # lines an option's description may take before the next row
 BACKOFF_MAX = 8          # passes an unreachable machine is skipped, at most
 
 NUDGE_TEXT = (
@@ -215,10 +216,14 @@ def _collect(lines, at, style, column=None):
         return None
 
     span = [at, at]
+    # Lines between two rows: a wrapped label or an option's description. A
+    # numbered or radio row is unmistakable, so its description may be long;
+    # an unnumbered row is told from other text only by its column.
+    gap = DESCRIPTION_MAX if style != 'plain' else 3
 
     def walk(step):
         found, index, misses = [], at + step, 0
-        while 0 <= index < len(lines) and misses <= 3:
+        while 0 <= index < len(lines) and misses <= gap:
             line = lines[index]
             if not line.strip() or RULE.match(line):
                 if style != 'numbered' or not line.strip():

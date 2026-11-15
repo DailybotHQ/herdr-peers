@@ -1,0 +1,18 @@
+
+❯ 1. Run it and keep the output local (Recommended)
+     Run it on this machine. Send the lead only the identifiers
+     and the names. Write the rest to a git-ignored file with
+     mode 600 for the lead to read here, so that nothing
+     sensitive travels in a message, and say in the reply
+     where that file is.
+  2. Run it and send everything
+     Run it on this machine and send every printed value to the
+     lead, including the ones a message may refuse to carry.
+  3. Don't run it
+     Hand over the validated script and its notes only. The
+     lead or you run it.
+  4. Type something.
+────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel

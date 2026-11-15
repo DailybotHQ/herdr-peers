@@ -110,6 +110,14 @@
   ],
   "option": 1
  },
+ "claude__blocked__question_long_descriptions": {
+  "action": "keys",
+  "class": "question",
+  "keys": [
+   "enter"
+  ],
+  "option": 1
+ },
  "claude__blocked__question_multiselect": {
   "action": "keys",
   "class": "question",

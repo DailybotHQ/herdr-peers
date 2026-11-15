@@ -9,6 +9,19 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-15
+
+### Fixed
+
+- **Autopilot left a question whose options have long descriptions.** A
+  numbered option followed by more than three description lines ended the
+  menu early, so the block had one row and the pane was recorded as
+  `unknown` and never answered. Found on a real pane within the first hour
+  of 1.2.0. A numbered or radio option may now carry up to 12 lines before
+  the next row; unnumbered blocks keep the short limit, because they are
+  told from other text only by their column. Fixture
+  `claude__blocked__question_long_descriptions`.
+
 ## [1.2.0] - 2026-11-15
 
 Protocol stays **1**: no stamp, grant, rule, verb, flag, exit code or JSON
