@@ -194,6 +194,14 @@
           }
         }
       }
+    },
+    "fleet": {
+      "enum": [
+        "stored",
+        "unchanged",
+        "failed"
+      ],
+      "description": "Present only when the daemon sent its snapshot along: what happened to this machine's copy."
     }
   }
 }

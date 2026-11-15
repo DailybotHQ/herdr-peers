@@ -24,6 +24,9 @@ import sys
 import time
 
 SCHEMA = 'herdr-peers/plans-v1'
+FLEET_SCHEMA = 'herdr-peers/fleet-v1'
+FLEET_FILE = 'fleet.json'
+MAX_FLEET_BYTES = 2 * 1024 * 1024
 REPORT_VERSION = 1
 LEAD_SCHEMA = 'herdr-peers/lead-v1'
 MAX_LEAD_BYTES = 64 * 1024
@@ -132,15 +135,35 @@ def lead_record(data):
     return rec
 
 
-def lead_records(root):
-    """Every valid lead record under the state root, as (server dir, record).
-    Raises OSError when the root exists and cannot be listed."""
+def default_server_dir():
+    """The state directory name of the Herdr server at the default socket
+    path. Outside a pane there is no socket in the environment, so this is
+    how the report tells the current server's records from those an older
+    server left behind."""
+    config = os.environ.get('XDG_CONFIG_HOME') or os.path.join(os.path.expanduser('~'), '.config')
+    socket_path = os.environ.get('HERDR_SOCKET_PATH') or os.path.join(config, 'herdr', 'herdr.sock')
+    server_id = 'sha256:' + hashlib.sha256(('socket:' + socket_path).encode('utf-8')).hexdigest()
+    return hashlib.sha256(server_id.encode('utf-8')).hexdigest()
+
+
+def server_dirs(root, servers=None):
+    """The server directories to read: those named by the caller (the helper
+    knows its own); else the default socket's, when it exists; else every
+    one — a machine with a single server keeps its records in one anyway."""
+    names = [n for n in sorted(os.listdir(root)) if SERVER_DIR_RE.fullmatch(n)]
+    if servers is not None:
+        return [n for n in names if n in servers]
+    default = default_server_dir()
+    return [default] if default in names else names
+
+
+def lead_records(root, servers=None):
+    """Every valid lead record of the chosen server directories, as (server
+    dir, record). Raises OSError when the root exists and cannot be listed."""
     out = []
     if not os.path.isdir(root):
         return out
-    for server in sorted(os.listdir(root)):
-        if not SERVER_DIR_RE.fullmatch(server):
-            continue
+    for server in server_dirs(root, servers):
         leads = os.path.join(root, server, 'leads')
         try:
             names = sorted(os.listdir(leads))
@@ -344,7 +367,108 @@ def clean_panes(panes):
     return out
 
 
-def report(panes=None, root=None, now=None):
+def store_fleet(root, text):
+    """Keep the daemon's merged snapshot where `herdr-peers fleet` reads it:
+    <state root>/fleet.json, 0600, replaced atomically. The text must be one
+    fleet-v1 JSON object; it is stored as data and never executed. Returns
+    `stored`, `unchanged` or `failed`."""
+    try:
+        if not isinstance(text, str) or len(text.encode('utf-8')) > MAX_FLEET_BYTES:
+            return 'failed'
+        doc = json.loads(text)
+        if not isinstance(doc, dict) or doc.get('schema') != FLEET_SCHEMA:
+            return 'failed'
+        os.makedirs(root, 0o700, exist_ok=True)
+        path = os.path.join(root, FLEET_FILE)
+        if os.path.islink(path):
+            return 'failed'
+        old = read_small(path, MAX_FLEET_BYTES)
+        if old is not None and old.decode('utf-8', 'replace') == text:
+            os.utime(path, None)  # still current: only its age is refreshed
+            return 'unchanged'
+        tmp = '%s.%d.tmp' % (path, os.getpid())
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600)
+        try:
+            os.write(fd, text.encode('utf-8'))
+        finally:
+            os.close(fd)
+        os.replace(tmp, path)
+        return 'stored'
+    except (OSError, ValueError, RecursionError):
+        return 'failed'
+
+
+def read_fleet(root=None):
+    """(snapshot dict, age in seconds) of the stored fleet file, or (None, None)."""
+    path = os.path.join(root or state_root(), FLEET_FILE)
+    doc = load_json(path, MAX_FLEET_BYTES)
+    if not isinstance(doc, dict) or doc.get('schema') != FLEET_SCHEMA:
+        return None, None
+    try:
+        return doc, max(0, int(time.time() - os.stat(path).st_mtime))
+    except OSError:
+        return None, None
+
+
+def valid_report(doc):
+    """True when `doc` is a well-formed plans-v1 report. The daemon checks
+    every answer with this before using a single field of it."""
+    if not isinstance(doc, dict) or doc.get('schema') != SCHEMA:
+        return False
+    if doc.get('state') not in ('ok', 'unknown'):
+        return False
+    plans, agents = doc.get('plans'), doc.get('agents')
+    if not isinstance(plans, list) or not isinstance(agents, list):
+        return False
+    if len(plans) > MAX_PLANS or len(agents) > MAX_PANES:
+        return False
+    for plan in plans:
+        if not isinstance(plan, dict):
+            return False
+        if not isinstance(plan.get('plan'), str) or not PLAN_RE.fullmatch(plan['plan']):
+            return False
+        lead = plan.get('lead')
+        if lead is not None and not (isinstance(lead, str) and ADDR_RE.match(lead)):
+            return False
+        epoch = plan.get('epoch')
+        if not isinstance(epoch, int) or isinstance(epoch, bool) or not 1 <= epoch <= MAX_EPOCH:
+            return False
+        if not valid_addresses(plan.get('succession')) or not valid_addresses(plan.get('lanes')):
+            return False
+        if plan.get('class') not in ('open', 'blocked', 'completed', 'unreadable'):
+            return False
+        progress = plan.get('progress')
+        if progress is not None and not (isinstance(progress, str)
+                                         and re.fullmatch(r'[0-9a-f]{16}', progress)):
+            return False
+        block = plan.get('blocker_class')
+        if block is not None and not (isinstance(block, str) and re.fullmatch(r'C[1-7]', block)):
+            return False
+        asks = plan.get('open_asks')
+        if asks is not None and (not isinstance(asks, int) or isinstance(asks, bool) or asks < 0):
+            return False
+        for key in ('repo_root', 'plan_dir'):
+            if plan.get(key) is not None and clean_path(plan[key]) is None:
+                return False
+        stamp = plan.get('state_updated_at')
+        if stamp is not None and not (isinstance(stamp, str) and TS_RE.fullmatch(stamp)):
+            return False
+    for agent in agents:
+        if not isinstance(agent, dict):
+            return False
+        if not isinstance(agent.get('pane'), str) or not re.fullmatch(PANE_RE, agent['pane']):
+            return False
+        if clean_path(agent.get('cwd')) is None:
+            return False
+        if agent.get('repo_root') is not None and clean_path(agent['repo_root']) is None:
+            return False
+        branch = agent.get('branch')
+        if branch is not None and not (isinstance(branch, str) and BRANCH_RE.fullmatch(branch)):
+            return False
+    return True
+
+
+def report(panes=None, root=None, now=None, servers=None):
     """The plans-v1 report of this machine. `panes` maps a pane id to its
     working directory, as Herdr lists them; it lets the report resolve each
     agent's repository and a plan kept in a linked worktree."""
@@ -355,7 +479,7 @@ def report(panes=None, root=None, now=None):
            'generated_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now)),
            'state': 'ok', 'reason': None, 'plans': [], 'agents': []}
     try:
-        found = lead_records(root)
+        found = lead_records(root, servers)
     except OSError as exc:
         out['state'], out['reason'] = 'unknown', 'state root unreadable (%s)' % type(exc).__name__
         found = []
@@ -367,20 +491,37 @@ def report(panes=None, root=None, now=None):
     return out
 
 
-def main(encoded=None):
+def decoded(encoded):
+    """The text behind a base64 string, or None. Data only."""
+    if not encoded:
+        return None
+    try:
+        return base64.b64decode(encoded.encode('ascii'), validate=True).decode('utf-8')
+    except (ValueError, UnicodeError):
+        return None
+
+
+def main(encoded=None, fleet=None):
     """Print the report as one JSON line. `encoded` is base64 of the JSON
-    {pane: cwd} map; it is decoded as data and nothing in it is executed."""
+    {pane: cwd} map and `fleet` base64 of the daemon's snapshot to keep on
+    this machine; both are decoded as data and nothing in them is executed."""
     panes = None
-    if encoded:
+    text = decoded(encoded)
+    if text is not None:
         try:
-            panes = json.loads(base64.b64decode(encoded.encode('ascii'), validate=True).decode('utf-8'))
-        except (ValueError, UnicodeError):
+            panes = json.loads(text)
+        except (ValueError, RecursionError):
             panes = None
-    sys.stdout.write(json.dumps(report(panes), sort_keys=True) + '\n')
+    out = report(panes)
+    snapshot = decoded(fleet)
+    if snapshot is not None:
+        out['fleet'] = store_fleet(state_root(), snapshot)
+    sys.stdout.write(json.dumps(out, sort_keys=True) + '\n')
     return 0
 
 
 PANES_B64 = None  # replaced by the daemon when it sends this file to another machine
+FLEET_B64 = None  # replaced by the daemon when it sends this file to another machine
 
 if __name__ == '__main__':
-    sys.exit(main(PANES_B64 or (sys.argv[1] if len(sys.argv) > 1 else None)))
+    sys.exit(main(PANES_B64 or (sys.argv[1] if len(sys.argv) > 1 else None), FLEET_B64))

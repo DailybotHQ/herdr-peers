@@ -16,6 +16,7 @@ text. Secret values are never printed — refusals name the variable only.
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import datetime
 import fcntl
@@ -23,6 +24,8 @@ import hashlib
 import json
 import os
 import re
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -2867,10 +2870,20 @@ def local_pane_dirs():
     return panes
 
 
+def own_server_dirs():
+    """This Herdr server's state directory when the helper can tell which
+    server it is on; None outside Herdr (the report then picks the default
+    socket's directory)."""
+    if os.environ.get('HERDR_ENV') != '1' and not os.environ.get('HERDR_SERVER_ID') \
+            and not os.environ.get('HERDR_SOCKET_PATH'):
+        return None
+    return [os.path.basename(Store().state_dir)]
+
+
 def cmd_plans(args):
     """The plans led on this machine: read-only, and usable outside a pane
     (the autopilot daemon asks every machine the same question)."""
-    report = load_fleet_report().report(local_pane_dirs())
+    report = load_fleet_report().report(local_pane_dirs(), servers=own_server_dirs())
     if args.json:
         print(json.dumps(report, sort_keys=True, indent=1))
         return EXIT_OK if report['state'] == 'ok' else EXIT_HERDR
@@ -2887,18 +2900,79 @@ def cmd_plans(args):
     return EXIT_OK
 
 
+def cmd_fleet(args):
+    """The map the autopilot loop keeps: read-only, from this machine's
+    copy, and usable outside a pane. Stale or missing is said, not hidden."""
+    fleet, age = load_fleet_report().read_fleet()
+    if fleet is None:
+        raise Stop(EXIT_NONE, 'no map on this machine: no `herdr-peers autopilot --loop` has '
+                   'reported here yet')
+    stale = age > FLEET_STALE
+    if args.json:
+        print(json.dumps(dict(fleet, age_seconds=age, stale=stale), sort_keys=True, indent=1))
+        return EXIT_TIMEOUT if stale else EXIT_OK
+    print('map as of %s (synced %ds ago%s)' % (safe(fleet.get('generated_at')), age,
+                                              '; STALE: no autopilot loop is syncing this '
+                                              'machine' if stale else ''))
+    for machine in fleet.get('machines') or []:
+        if not isinstance(machine, dict):
+            continue
+        print('%s  %s  agents: %s, plans: %s' % (
+            safe(machine.get('machine')), safe(machine.get('label') or ''),
+            safe(machine.get('agents_state')), safe(machine.get('plans_state'))))
+        for plan in machine.get('plans') or []:
+            print('  plan  %-40s %-10s lead %s%s' % (
+                safe(plan.get('plan'))[:40], safe(plan.get('class')), safe(plan.get('lead') or '-'),
+                ('  [%s]' % safe(plan['situation'])) if plan.get('situation') else ''))
+        for agent in machine.get('agents') or []:
+            roles = ', '.join('%s of %s' % (safe(r.get('role')), safe(r.get('plan')))
+                              for r in agent.get('plans') or [])
+            print('  agent %-10s %-8s %-8s %s%s%s' % (
+                safe(agent.get('pane')), safe(agent.get('kind') or '-'), safe(agent.get('state') or '-'),
+                safe(agent.get('repo_root') or agent.get('cwd') or '-'),
+                (' @' + safe(agent['branch'])) if agent.get('branch') else '',
+                ('  (%s)' % roles) if roles else ''))
+    return EXIT_TIMEOUT if stale else EXIT_OK
+
+
 # ---------------------------------------------------------------- autopilot
+
+# The one command autopilot runs that is not `herdr`: the machine report over
+# a saved machine's own SSH target. Fixed argv; the target must match.
+SSH_ARGV = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8']
+SSH_TARGET_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._@-]{0,127}')
+SSH_TIMEOUT = 25
+MAX_REPORT_BYTES = 2 * 1024 * 1024
+NOTIFY_TIMEOUT = 20
+
+
+def ssh_timeout():
+    """Seconds one machine report may take (HERDR_PEERS_AUTOPILOT_SSH_TIMEOUT, 1-120)."""
+    try:
+        value = float(os.environ.get('HERDR_PEERS_AUTOPILOT_SSH_TIMEOUT') or SSH_TIMEOUT)
+    except ValueError:
+        return SSH_TIMEOUT
+    return value if 1 <= value <= 120 else SSH_TIMEOUT
+FLEET_STALE = 900  # seconds after which a machine's copy of the map is called stale
+
 
 class AutopilotIO(object):
     """Herdr and the record writer, as the autopilot loop needs them."""
 
-    def __init__(self, store, pane, terminal, scope, quiet=False):
+    def __init__(self, store, pane, terminal, scope, quiet=False, notify=None):
         self.store, self.pane, self.terminal, self.scope = store, pane, terminal, scope
         self.quiet = quiet
         self.self_machine = None
+        self.notify = notify        # argv of the human's notify command, or None
+        self.notify_failed = False
+        self.saved = {}             # machine id -> {'label', 'target'} (enabled machines)
+        self.report_source = None
 
     def sources(self):
-        out = ['local'] + [m['id'] for m in enabled_machines()]
+        machines = enabled_machines()
+        self.saved = dict((m['id'], {'label': m.get('label'), 'target': m.get('target')})
+                          for m in machines)
+        out = ['local'] + [m['id'] for m in machines]
         if self.scope is not None:
             out = [m for m in out if any(s[0] == m for s in self.scope)]
         return [m for m in out if m != self.self_machine]
@@ -2923,6 +2997,7 @@ class AutopilotIO(object):
             if not in_scope((machine, pane), self.scope):
                 continue
             rows.append({'pane': pane, 'state': a.get('agent_status'), 'agent': kind_of(a),
+                         'cwd': a.get('cwd') if isinstance(a.get('cwd'), str) else None,
                          'seq': a.get('state_change_seq'), 'turn': a.get('completion_seq'),
                          'you': machine == 'local' and pane == self.pane})
         return rows
@@ -2948,14 +3023,98 @@ class AutopilotIO(object):
     def warn(self, addr, exc):
         warn('autopilot: skipped %s this pass (%s)' % (addr, safe(type(exc).__name__)))
 
-    def record(self, addr, kind, choice, outcome, dry_run):
+    # -- the plan loop (autopilot --loop) -----------------------------------
+    def label(self, machine):
+        label = (self.saved.get(machine) or {}).get('label')
+        return safe(label)[:80] if isinstance(label, str) else None
+
+    def identity(self):
+        """Where the daemon runs, for readers of the map on other machines."""
+        return {'pane': self.pane, 'local_is': self.self_machine}
+
+    def plans(self, machine, panes, fleet_text):
+        """(state, report) for one machine: `ok` with a validated plans-v1
+        report, `unknown` (no answer this time), `unsupported` (no python3
+        there) or `bad_target` (a saved target this helper will not pass to
+        ssh). The local machine is read in-process; another machine runs the
+        same module, sent on standard input over its saved SSH target."""
+        fleet_report = load_fleet_report()
+        if machine == 'local':
+            report = fleet_report.report(panes, servers=[os.path.basename(self.store.state_dir)])
+            if fleet_text:
+                report['fleet'] = fleet_report.store_fleet(fleet_report.state_root(), fleet_text)
+            return ('ok' if report['state'] == 'ok' else 'unknown'), report
+        target = (self.saved.get(machine) or {}).get('target')
+        if not isinstance(target, str) or not SSH_TARGET_RE.fullmatch(target):
+            return 'bad_target', None
+        if self.report_source is None:
+            with open(fleet_report.__file__, 'r', encoding='utf-8') as fh:
+                self.report_source = fh.read()
+        script = self.report_source
+        for name, value in (('PANES_B64', json.dumps(panes)), ('FLEET_B64', fleet_text)):
+            line = '%s = None  # replaced by the daemon' % name
+            if value is None or line not in script:
+                continue
+            encoded = base64.b64encode(value.encode('utf-8')).decode('ascii')
+            script = script.replace(line, "%s = '%s'  #" % (name, encoded), 1)
+        try:
+            proc = subprocess.run(SSH_ARGV + ['--', target, 'python3', '-'],
+                                  input=script.encode('utf-8'), stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, timeout=ssh_timeout())
+        except (OSError, subprocess.TimeoutExpired):
+            return 'unknown', None
+        if proc.returncode == 127:
+            return 'unsupported', None
+        if proc.returncode != 0 or len(proc.stdout) > MAX_REPORT_BYTES:
+            return 'unknown', None
+        try:
+            report = json.loads(proc.stdout.decode('utf-8'))
+        except (ValueError, UnicodeDecodeError, RecursionError):
+            return 'unknown', None
+        if not fleet_report.valid_report(report) or report['state'] != 'ok':
+            return 'unknown', None
+        return 'ok', report
+
+    def save_fleet(self, text):
+        """Keep this machine's copy of the map current (see `plans`)."""
+        if text:
+            fleet_report = load_fleet_report()
+            fleet_report.store_fleet(fleet_report.state_root(), text)
+
+    def event(self, event, dry_run):
+        """Tell the developer through the command they gave with --notify:
+        one JSON object on its standard input, no shell, a timeout. A failure
+        is recorded once and never stops the pass."""
+        if not self.notify:
+            return
+        event = dict(event, at=now_iso())
+        if not self.quiet:
+            print('%s %s notify %s %s' % (now_iso(), 'would' if dry_run else 'did',
+                                         safe(event['event']), safe(event['plan'])))
+            sys.stdout.flush()
+        if dry_run:
+            return
+        try:
+            proc = subprocess.run(self.notify, input=(json.dumps(event, sort_keys=True) + '\n')
+                                  .encode('utf-8'), stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL, timeout=NOTIFY_TIMEOUT)
+            failed = proc.returncode != 0
+        except (OSError, subprocess.TimeoutExpired):
+            failed = True
+        if failed and not self.notify_failed:
+            self.notify_failed = True
+            self.store.append(make_record('left', 'autopilot', new_ulid(), 'local:%s' % self.pane,
+                                          'local:%s' % self.pane, reason='notify_failed',
+                                          note='the notify command failed or timed out'))
+
+    def record(self, addr, kind, choice, outcome, dry_run, plan=None):
         note = ' '.join(filter(None, [
             'keys=%s' % ','.join(choice.keys) if choice.keys else None,
             'option=%d' % choice.option if choice.option is not None else None,
             'action=%s' % choice.action, 'dry_run' if dry_run else None]))
         self.store.append(make_record(outcome, 'autopilot', new_ulid(), addr,
                                       'local:%s' % self.pane, kind=kind, reason=choice.cls,
-                                      note=note))
+                                      note=note, plan=plan))
         if not self.quiet:
             print('%s %s %s %s %s' % (now_iso(), 'would' if dry_run else 'did', outcome,
                                       addr, safe(note + ' class=' + choice.cls)))
@@ -3028,6 +3187,12 @@ def cmd_autopilot(args):
         raise Stop(EXIT_USAGE, 'HERDR_PEERS_AUTOPILOT_CONFIRM must be a number of seconds')
     if not 0 <= confirm <= 30:
         raise Stop(EXIT_USAGE, 'HERDR_PEERS_AUTOPILOT_CONFIRM must be between 0 and 30 seconds')
+    try:
+        grace = float(os.environ.get('HERDR_PEERS_AUTOPILOT_GRACE') or autopilot.LEAD_GRACE)
+    except ValueError:
+        raise Stop(EXIT_USAGE, 'HERDR_PEERS_AUTOPILOT_GRACE must be a number of seconds')
+    if not 0 <= grace <= 86400:
+        raise Stop(EXIT_USAGE, 'HERDR_PEERS_AUTOPILOT_GRACE must be between 0 and 86400 seconds')
     if interval < autopilot.MIN_INTERVAL and passes is None:
         raise Stop(EXIT_USAGE, '--interval is at least %d seconds' % autopilot.MIN_INTERVAL)
     exclude = set()
@@ -3040,21 +3205,38 @@ def cmd_autopilot(args):
     me = ((current.get('result') or {}).get('pane') or {})
     if not (isinstance(me.get('pane_id'), str) and re.fullmatch(PANE_RE, me['pane_id'])):
         raise Stop(EXIT_ENV, 'cannot tell which pane this is; run autopilot inside a Herdr pane')
-    io = AutopilotIO(store, me.get('pane_id'), me.get('terminal_id'), scope_from(args))
-    lock_path, pid_path = autopilot_paths(store)
-    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600)
-    for attempt in (1, 2):
+    notify = None
+    if args.notify is not None:
+        if not args.loop:
+            raise Stop(EXIT_USAGE, '--notify needs --loop: it reports what the plan loop finds')
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            break
-        except OSError:
-            if attempt == 1:
-                time.sleep(0.3)  # a `status` or `stop` probing the lock holds it for an instant
-                continue
-            os.close(fd)
-            raise Stop(EXIT_POLICY, 'autopilot is already running on this server '
-                       '(`herdr-peers autopilot status`, `herdr-peers autopilot stop`)')
-    write_private(pid_path, '%d\n' % os.getpid())  # at once: `stop` reads it while the lock is held
+            notify = shlex.split(args.notify)
+        except ValueError:
+            raise Stop(EXIT_USAGE, '--notify: unbalanced quotes in the command')
+        if not notify or not shutil.which(notify[0]):
+            raise Stop(EXIT_USAGE, '--notify needs a command whose program exists '
+                       '(it is run without a shell)')
+    io = AutopilotIO(store, me.get('pane_id'), me.get('terminal_id'), scope_from(args),
+                     notify=notify)
+    lock_path, pid_path = autopilot_paths(store)
+    # A bounded dry run sends nothing and keeps no state: it may run beside
+    # the developer's own autopilot, so it takes no lock and writes no pid.
+    probe = args.dry_run and passes is not None
+    fd = None
+    if not probe:
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600)
+        for attempt in (1, 2):
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if attempt == 1:
+                    time.sleep(0.3)  # a `status` or `stop` probing the lock holds it for an instant
+                    continue
+                os.close(fd)
+                raise Stop(EXIT_POLICY, 'autopilot is already running on this server '
+                           '(`herdr-peers autopilot status`, `herdr-peers autopilot stop`)')
+        write_private(pid_path, '%d\n' % os.getpid())  # at once: `stop` reads it while the lock is held
 
     class Halt(Exception):
         pass
@@ -3063,7 +3245,8 @@ def cmd_autopilot(args):
         raise Halt()
 
     loop = autopilot.Autopilot(io, dry_run=args.dry_run, nudge=not args.no_nudge,
-                               catch_up=args.catch_up, exclude=exclude, confirm=confirm)
+                               catch_up=args.catch_up, exclude=exclude, confirm=confirm,
+                               loop=args.loop, grace=grace)
     previous = signal.signal(signal.SIGTERM, halt)
     try:
         if passes is None:
@@ -3089,12 +3272,13 @@ def cmd_autopilot(args):
         print('autopilot: stopped')
     finally:
         signal.signal(signal.SIGTERM, previous)
-        try:
-            os.unlink(pid_path)
-        except OSError:
-            pass
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
+        if fd is not None:
+            try:
+                os.unlink(pid_path)
+            except OSError:
+                pass
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
     if passes is not None:
         print('autopilot: %d pass(es), %d action(s)%s' % (
             passes, loop.actions, ' (dry run: nothing was sent)' if args.dry_run else ''))
@@ -3297,6 +3481,15 @@ def build_parser():
                     'started')
     ap.add_argument('--scope', help='allow-list: *, <machine>, <machine>:<workspace>, '
                     'comma-separated (default: every enabled machine)')
+    ap.add_argument('--loop', action='store_true',
+                    help='also keep every open plan running: ask the idle lead of a plan that '
+                    'is not finished to continue it, on every enabled machine')
+    ap.add_argument('--notify', metavar='COMMAND',
+                    help='with --loop: a command run (no shell) with a plan-event-v1 JSON object '
+                    'on standard input when a plan stalls, is blocked, loses its lead or completes')
+    fl = sub.add_parser('fleet', help='every machine, agent, repository and plan the autopilot '
+                        'loop knows, from this machine\'s copy of its map (read-only)')
+    fl.add_argument('--json', action='store_true', help='herdr-peers/fleet-v1 JSON')
     pl = sub.add_parser('plans', help='the plans led on this machine, with each plan\'s state '
                         '(read-only; works outside a Herdr pane)')
     pl.add_argument('--json', action='store_true', help='herdr-peers/plans-v1 JSON')
@@ -3309,7 +3502,8 @@ def build_parser():
 VERBS = {'ask': cmd_ask, 'reply': cmd_reply, 'check': cmd_check, 'wait': cmd_wait,
          'list': cmd_list, 'log': cmd_log, 'cancel': cmd_cancel, 'status': cmd_status,
          'lanes': cmd_lanes, 'notify': cmd_notify, 'lead': cmd_lead,
-         'debate': cmd_debate, 'autopilot': cmd_autopilot, 'plans': cmd_plans}
+         'debate': cmd_debate, 'autopilot': cmd_autopilot, 'plans': cmd_plans,
+         'fleet': cmd_fleet}
 
 
 def main(argv=None):
