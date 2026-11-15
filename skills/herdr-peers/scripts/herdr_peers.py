@@ -2950,9 +2950,41 @@ def cmd_plans(args):
     return EXIT_OK
 
 
+def load_fleet_ui():
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.dont_write_bytecode = True
+    import fleet_ui
+    return fleet_ui
+
+
+def cmd_fleet_ui(args):
+    """The live watcher (or one text snapshot of it). Read-only."""
+    fleet_ui = load_fleet_ui()
+    path = os.path.join(load_fleet_report().state_root(), load_fleet_report().FLEET_FILE)
+    grouping = args.group or 'plan'
+    if os.environ.get('HERDR_ENV') == '1':
+        # Lets the watcher tell whether it runs on the daemon's own Herdr server.
+        os.environ['HERDR_PEERS_UI_SERVER'] = state_key(Store().server_id)[:24]
+    interactive = sys.stdout.isatty() and sys.stdin.isatty() and not args.snapshot
+    if not interactive:
+        width = args.width or shutil.get_terminal_size((100, 40)).columns
+        if not 40 <= width <= 400:
+            raise Stop(EXIT_USAGE, '--width must be between 40 and 400')
+        sys.stdout.write(fleet_ui.snapshot(fleet_ui.FileSource(path), time.time(), width, grouping))
+        return EXIT_OK
+    try:
+        return fleet_ui.run_curses(path, grouping)
+    except Exception as exc:  # no curses, a dumb terminal: say so and print the text view
+        warn('fleet ui: cannot start the live view (%s); printing a snapshot' % safe(type(exc).__name__))
+        sys.stdout.write(fleet_ui.snapshot(fleet_ui.FileSource(path), time.time(), 100, grouping))
+        return EXIT_OK
+
+
 def cmd_fleet(args):
     """The map the autopilot loop keeps: read-only, from this machine's
     copy, and usable outside a pane. Stale or missing is said, not hidden."""
+    if getattr(args, 'fleet_verb', None) == 'ui':
+        return cmd_fleet_ui(args)
     fleet, age = load_fleet_report().read_fleet()
     if fleet is None:
         raise Stop(EXIT_NONE, 'no map on this machine: no `herdr-peers autopilot --loop` has '
@@ -3932,7 +3964,14 @@ def build_parser():
                     'directories, never tokens or keys')
     fl = sub.add_parser('fleet', help='every machine, agent, repository and plan the autopilot '
                         'loop knows, from this machine\'s copy of its map (read-only)')
+    fl.add_argument('fleet_verb', nargs='?', choices=['ui'],
+                    help='ui: a live watcher of every agent and plan (read-only)')
     fl.add_argument('--json', action='store_true', help='herdr-peers/fleet-v1 JSON')
+    fl.add_argument('--snapshot', action='store_true',
+                    help='with ui: draw the view once as text and exit')
+    fl.add_argument('--group', choices=['plan', 'repo', 'machine'],
+                    help='with ui: how agents are grouped first (default plan)')
+    fl.add_argument('--width', type=int, help='with ui --snapshot: columns (40-400)')
     pl = sub.add_parser('plans', help='the plans led on this machine, with each plan\'s state '
                         '(read-only; works outside a Herdr pane)')
     pl.add_argument('--json', action='store_true', help='herdr-peers/plans-v1 JSON')
