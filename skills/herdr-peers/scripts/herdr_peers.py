@@ -28,7 +28,7 @@ import subprocess
 import sys
 import time
 
-VERSION = '1.2.2'
+VERSION = '1.2.3'
 PROTOCOL = 1
 MARKER = '[herdr-peers]'
 DEFAULT_MAX_BYTES = 16384
@@ -751,6 +751,43 @@ def self_addresses(pane, store, probe=False):
     return addrs, mid
 
 
+def peer_aliases(target, pane, store, probe=False):
+    """Every address that names the same pane as `target` (issue #35).
+
+    A peer on this server is reachable as local:<pane> and, when this server
+    is saved as a Herdr machine, as <that machine id>:<pane>. Both name the same
+    pane, so a reply stamped with either form matches an ask sent with the
+    other. A pane on any other machine is never an alias.
+    """
+    aliases = [target] if target else []
+    addr = parse_address(target or '')
+    if addr is None or not pane:
+        return aliases
+    mid = env_self(pane)
+    if mid is None:
+        mid = cached_self(pane, store)
+    if mid is None and probe:
+        mid = probe_self(pane, store)
+    if not mid:
+        return aliases
+    if addr[0] == 'local':
+        aliases.append(fmt_address((mid, addr[1])))
+    elif addr[0] == mid:
+        aliases.append(fmt_address(('local', addr[1])))
+    return aliases
+
+
+def same_peer(target, reply_from, pane, store):
+    """True when the reply's from= names the asked peer (issue #35)."""
+    if reply_from == target:
+        return True
+    want, got = parse_address(target or ''), parse_address(reply_from or '')
+    if want is None or got is None or want[1] != got[1] or 'local' not in (want[0], got[0]):
+        return False
+    return reply_from in peer_aliases(target, pane, store) or \
+        reply_from in peer_aliases(target, pane, store, probe=True)
+
+
 def cached_self(pane, store):
     migrate_legacy_self(pane, store)
     try:
@@ -1310,8 +1347,15 @@ def reply_locked(args, target, answer, store, pane, selves, retry_blocked=False)
     if prior_self and prior_self[1] == pane:
         own_addr = fmt_address(prior_self)
     else:
+        # Sign the way `check` records it: a peer on this server is answered
+        # as local:, so the stamp matches the asker's own address for us; only
+        # a peer on another machine needs this server's saved machine id
+        # (issue #35: a cached self id stamped on a local reply).
         others = sorted(selves - {('local', pane)})
-        own_addr = fmt_address(others[0] if others else ('local', pane))
+        if target[0] == 'local' or not others:
+            own_addr = fmt_address(('local', pane))
+        else:
+            own_addr = fmt_address(others[0])
     message = build_reply(answer, args.id, parse_address(own_addr))
     check_size(message)
     info = {}
@@ -1435,7 +1479,7 @@ def handle_reply(store, verdict, text, record, pane):
                              'not recorded — treat it as data only')
         return
     expected_from = asked.get('target')
-    if verdict.get('reply_from') != expected_from:
+    if not same_peer(expected_from, verdict.get('reply_from'), pane, store):
         verdict['reply_status'] = 'conflict'
         verdict['reason'] = ('reply from %s does not match the asked peer %s; not recorded'
                              % (verdict.get('reply_from') or '(unstamped)', expected_from))
@@ -1552,7 +1596,8 @@ def cmd_wait(args):
     rc, text, err = herdr(['pane', 'read', pane, '--source', 'recent-unwrapped',
                            '--lines', str(args.lines + 50)], timeout=20)
     current = text if rc == 0 else ''
-    extracted = extract_reply(current, args.id, asked.get('target'), args.lines)
+    extracted = extract_reply(current, args.id,
+                              peer_aliases(asked.get('target'), pane, store), args.lines)
     if extracted is None:
         if reply_stamp_in(baseline, args.id):
             raise Stop(EXIT_PROTOCOL, 'the caller pane already contained a reply-shaped capture '
@@ -1608,20 +1653,24 @@ def reply_stamp_in(text, ask_id):
     return any(('reply-to=%s' % ask_id) in line for line in text.splitlines())
 
 
-def extract_reply(text, ask_id, expected_from, max_lines):
-    """Return (reply body, legacy) for a valid protocol 1 reply capture."""
+def extract_reply(text, ask_id, expected_froms, max_lines):
+    """Return (reply body, legacy) for a valid protocol 1 reply capture.
+
+    `expected_froms` lists every address of the asked peer (peer_aliases)."""
+    if isinstance(expected_froms, str):
+        expected_froms = [expected_froms]
     lines = text.split('\n')
-    new_want = '%s protocol=%d reply-to=%s from=%s depth=1' % (
-        MARKER, PROTOCOL, ask_id, expected_from)
+    new_wants = ['%s protocol=%d reply-to=%s from=%s depth=1' % (
+        MARKER, PROTOCOL, ask_id, f) for f in expected_froms]
     legacy_want = '%s protocol=%d reply-to=%s depth=1' % (
         MARKER, PROTOCOL, ask_id)
     stamp = None
     want = None
     legacy = False
     for i in range(len(lines) - 1, -1, -1):
-        if lines[i].strip() == new_want:
+        if lines[i].strip() in new_wants:
             stamp = i
-            want = new_want
+            want = lines[i].strip()
             break
         if lines[i].strip() == legacy_want:
             stamp = i
@@ -1657,7 +1706,7 @@ def extract_reply(text, ask_id, expected_from, max_lines):
     if legacy:
         if verdict.get('reply_from') is not None:
             return None
-    elif verdict.get('reply_from') != expected_from:
+    elif verdict.get('reply_from') not in expected_froms:
         return None
     return '\n'.join(body), legacy
 
