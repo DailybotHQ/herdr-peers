@@ -250,6 +250,7 @@ for mode in down garbage wrong big hostile nopython; do
   run "$HELPER" autopilot --loop --passes 2 --interval 0
   assert_rc "a machine answering '$mode' does not fail the pass" 0
   assert_eq "and nobody there is prompted" "0" "$(prompt_count)"
+  assert_eq "and no plan of that machine is acted on" "0" "$(ap_records | grep -c 'plan_')"
 done
 assert_eq "a machine without python3 is recorded once" "1" "$(ap_records | grep -c 'left bb22:- machine_unsupported')"
 loop_world loop_slow
