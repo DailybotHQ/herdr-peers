@@ -282,6 +282,12 @@ assert_contains "and is recorded" "$(ap_records)" "left bb22:- machine_target"
 # --- the other machine keeps a copy of the map ----------------------------------------------------
 loop_world fleet
 mkstate "$REPO" PLAN_930_here "$V5_OPEN";  pane_claim w2:p1 "$REPO" PLAN_930_here --succession local:w1:p2
+python3 - "$FAKE_HERDR_DIR/local/agents.json" <<'PY'
+import json, sys
+agents = json.load(open(sys.argv[1]))
+agents[1]['terminal_title_stripped'] = 'evil\x1b]0;x\x07 title'
+json.dump(agents, open(sys.argv[1], 'w'))
+PY
 mkstate "$REPO" PLAN_931_there "$V7_OPEN"; box_claim "$REPO" PLAN_931_there
 run "$HELPER" fleet
 assert_rc "fleet with no map exits 7" 7
@@ -298,6 +304,7 @@ assert_contains "an agent carries its role in a plan" "$F" '"role": "lead"'
 assert_contains "and a successor its role" "$F" '"role": "successor"'
 assert_contains "a machine that did not answer is listed as unknown, not dropped" "$F" '"machine": "dd44"'
 assert_contains "an agent carries its session title" "$F" '"title": "box worker"'
+assert_contains "a hostile session title is neutralised on the map" "$F" '"title": "evil ]0;x title"'
 assert_contains "and when its state last changed" "$F" '"state_since": "20'
 assert_contains "a plan carries its progress" "$F" '"tasks_total": 2'
 assert_contains "an agent's repository comes from its machine's report" "$F" "\"repo_root\": \"$(cd "$REPO" && pwd -P)\""
@@ -887,7 +894,7 @@ assert_eq "titles and task titles are neutralised, cut and validated" "ok" "$OUT
 # --- a plan's detail: title, tasks, blocker and the summary its agents keep ---------------------------
 iso_world detail
 REPO="$WORK/repo"; mkrepo "$REPO"
-mkstate "$REPO" PLAN_940_detail '{"status":"blocked","completed_count":1,"checkpoint":null,"blocked":{"task":2,"reason":"needs \u001b[31mthe staging key","since":"2026-01-01T00:00:00Z","needs":"C1 approval"},"tasks":[{"id":1,"status":"completed","title":"Write the parser"},{"id":2,"status":"blocked","file":"2.task_deploy.md"}]}'
+mkstate "$REPO" PLAN_940_detail '{"status":"blocked","completed_count":1,"checkpoint":null,"blocked":{"task":2,"reason":"needs \u001b[31mthe staging key","since":"2026-01-01T00:00:00Z","needs":"C1 approval"},"tasks":[{"id":1,"status":"completed","title":"Write the \u001b]0;pwn\u0007parser"},{"id":2,"status":"blocked","file":"2.task_deploy.md"}]}'
 printf '{"title": "Ship the parser"}\n' >"$REPO/.dwp/plans/PLAN_940_detail/manifest.json"
 cat >"$REPO/.dwp/plans/PLAN_940_detail/PROGRESS.md" <<'MD'
 # PROGRESS — PLAN_940_detail
@@ -921,6 +928,7 @@ assert_rc "a report with plan details validates against plans-v1" 0
 D=$(plan_field "$R" PLAN_940_detail detail)
 assert_contains "the detail carries the plan's title" "$D" '"title": "Ship the parser"'
 assert_contains "every task with its status" "$D" '"status": "blocked", "title": "2.task_deploy.md"'
+assert_contains "a task title is neutralised on the map" "$D" '"title": "Write the ]0;pwn parser"'
 assert_contains "the blocker as recorded, neutralised" "$D" '"reason": "needs [31mthe staging key"'
 assert_contains "and what it needs" "$D" '"needs": "C1 approval"'
 assert_contains "the summary its agents keep" "$D" 'Next action: wait for the staging key.'

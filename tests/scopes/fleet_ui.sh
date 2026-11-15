@@ -264,12 +264,17 @@ assert 'make test' in t.screen() or a.mode == 'list'
 # a changed map redraws and keeps the selection on the same agent
 p2 = map_file(fleet())
 def change():
-    json.dump(fleet(extra_agent=True, title='Now on the docs'), open(p2, 'w'))
+    new = fleet(extra_agent=True, title='Now on the docs')
+    # A plan that needs the developer arrives: it sorts first and shifts every row.
+    new['machines'][0]['plans'].insert(0, dict(new['machines'][0]['plans'][0], plan='PLAN_0_urgent',
+                                               situation='plan_stalled', lead=None))
+    json.dump(new, open(p2, 'w'))
     os.utime(p2, (clock[0], clock[0]))
     return None
 a, t = app(['down', change, None, 'q'], p2); a.run()
 assert a.sel_target == ('agent', 'local:w1:p1'), a.sel_target
-assert 'Now on the docs' in t.screen() and 'just now' in t.screen(), t.screen()
+assert a.lines[a.sel].target == ('agent', 'local:w1:p1') and a.sel > 3, (a.sel, 'the row moved, the selection followed')
+assert 'Now on the docs' in t.screen() and 'just now' in t.screen() and 'PLAN_0_urgent' in t.screen(), t.screen()
 # a stale map
 a, t = app(['q'], map_file(fleet(), ago=2000)); a.run()
 assert 'STALE' in t.screen()
