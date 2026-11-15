@@ -532,17 +532,16 @@ report(io, 'local', plan(succession=['local:w1:p3', 'local:w8:p8']))
 ap.run_pass(); step(ap, 400); step(ap, 400)
 assert prompts(io) == [] and io.events == [('plan_no_lead', 'PLAN_1_a', 'local')], (prompts(io), io.events)
 assert io.log.count(('left', 'local:w1:p2', 'plan_no_lead', 'PLAN_1_a')) == 1, io.log
-# A lead at its usage limit is gone only once the screen pass gave up on it.
+# A lead at its usage limit is not gone: the screen pass retries it, and the
+# helper would refuse a takeover on that evidence.
 io, ap = fresh(grace=0)
 io.rows['local'] = [row('w1:p2'), row('w1:p4')]
 report(io, 'local', plan(succession=['local:w1:p4']))
 ap.run_pass()
-ap.panes['local:w1:p2'].limit_tries = 1
-step(ap)
-assert not [p for p in prompts(io) if 'takeover' in p[3]], 'one retry is not gone'
-ap.panes['local:w1:p2'].limit_tries = autopilot.MAX_LIMIT_RETRIES
-step(ap)
-assert [p[2] for p in prompts(io) if 'takeover' in p[3]] == ['w1:p4'], prompts(io)
+for tries in (1, autopilot.MAX_LIMIT_RETRIES):
+    ap.panes['local:w1:p2'].limit_tries = tries
+    step(ap)
+assert not [p for p in prompts(io) if 'takeover' in p[3]], 'a usage limit never asks a successor'
 # A lead missing from one listing is not gone: it must be missing twice.
 io, ap = fresh(grace=0)
 io.rows['local'] = [row('w1:p2', 'working'), row('w1:p4')]
@@ -808,5 +807,43 @@ assert argv[-5:] == ['--loop', '--notify', '/bin/tell x', '--notify-env', 'TELL_
 print('ok')
 PY
 assert_eq "a stop inside the plan pass stops the daemon; background mode keeps --loop and --notify" "ok" "$OUT"
+
+# A lead working in a linked worktree of the plan's repository is still in it.
+iso_world wtlead
+REPO="$WORK/main"; mkrepo "$REPO"; mkrepo "$WORK/elsewhere"
+git -C "$REPO" worktree add -q "$WORK/wt" -b side
+mkstate "$REPO" PLAN_980_wt "$V5_OPEN"
+pane_claim w2:p1 "$REPO" PLAN_980_wt
+python3 - "$FAKE_HERDR_DIR/local/agents.json" "$WORK/wt" <<'PY'
+import json, sys
+agents = json.load(open(sys.argv[1]))
+for a in agents:
+    if a['pane_id'] == 'w2:p1':
+        a['cwd'] = sys.argv[2]
+json.dump(agents, open(sys.argv[1], 'w'))
+PY
+run "$HELPER" plans --json
+assert_eq "a lead in a linked worktree of the plan's repository is in it" "True" "$(plan_field "$OUT" PLAN_980_wt lead_in_repo)"
+assert_eq "(the plan itself is found)" "open" "$(plan_field "$OUT" PLAN_980_wt class)"
+python3 - "$FAKE_HERDR_DIR/local/agents.json" "$WORK/elsewhere" <<'PY'
+import json, sys
+agents = json.load(open(sys.argv[1]))
+for a in agents:
+    if a['pane_id'] == 'w2:p1':
+        a['cwd'] = sys.argv[2]
+json.dump(agents, open(sys.argv[1], 'w'))
+PY
+run "$HELPER" plans --json
+assert_eq "a lead in another repository is not" "False" "$(plan_field "$OUT" PLAN_980_wt lead_in_repo)"
+
+# Agents outside --scope never reach the map, here or on another machine.
+loop_world scopemap
+mkstate "$REPO" PLAN_931_there "$V7_OPEN"; box_claim "$REPO" PLAN_931_there
+run "$HELPER" autopilot --loop --once --scope local:w1,bb22
+assert_rc "a scoped loop pass exits 0" 0
+assert_contains "(an in-scope agent is on the map)" "$(cat "$(fleet_file)")" '"pane": "w1:p2"'
+assert_not_contains "an agent outside the scope is not on the map" "$(cat "$(fleet_file)")" '"pane": "w2:p1"'
+run "$HELPER" autopilot --loop --once --scope local:w1,bb22
+assert_not_contains "nor on the copy left on another machine" "$(cat "$(box_home)/.local/state/herdr-peers/fleet.json" 2>/dev/null)" '"pane": "w2:p1"'
 unset TELL_OUT HERDR_PEERS_AUTOPILOT_GRACE
 export XDG_STATE_HOME=$LOOP_XDG_STATE

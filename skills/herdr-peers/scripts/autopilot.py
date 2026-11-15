@@ -68,7 +68,7 @@ TAKEOVER_TEXT = (
     'herdr-peers lead takeover --plan %s — the helper checks itself whether the lead is really '
     'gone. If it accepts, continue executing the plan to its end, respecting its gates. If it '
     'refuses, do nothing more.')
-GONE_REASONS = ('no_agent', 'usage_limit')
+GONE_REASONS = ('no_agent',)
 
 BOX = {ord(c): ' ' for c in '│┃█'}
 CURSORS = '❯›>→▶'
@@ -739,7 +739,8 @@ class PlanLoop(object):
             return
 
         def ask(machine):
-            panes = dict((r['pane'], r['cwd']) for r in listed[machine] if r.get('cwd'))
+            panes = dict((r['pane'], r['cwd']) for r in listed[machine]
+                         if r.get('cwd') and r.get('in_scope', True))
             try:
                 return self.io.plans(machine, panes, None if self.ap.dry_run else self.fleet_text)
             except Exception as exc:  # one machine never stops the pass
@@ -817,8 +818,8 @@ class PlanLoop(object):
             if memo.absent < ABSENT_PASSES:
                 return  # one missing listing is not a gone lead
             gone = 'no_agent'
-        elif pmemo is not None and pmemo.limit_tries >= MAX_LIMIT_RETRIES:
-            gone = 'usage_limit'  # only once the screen pass gave up on its limit
+        # A lead at its usage limit is not gone: the screen pass retries it, and
+        # the helper refuses a takeover on that weak evidence without --reason.
         if gone:
             self.succeed(memo, machine, plan, by_pane, addr, gone, prompted)
             return
@@ -934,7 +935,7 @@ class PlanLoop(object):
                         if pane:
                             roles.setdefault(pane, []).append({'plan': plan['plan'], 'role': role})
             agents = []
-            for row in rows or []:
+            for row in [r for r in rows or [] if r.get('in_scope', True)]:  # never map what is out of scope
                 repo = repos.get(row['pane']) or {}
                 agents.append({'pane': row['pane'], 'kind': row.get('agent'),
                                'state': row.get('state'), 'cwd': row.get('cwd'),

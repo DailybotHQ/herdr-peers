@@ -3130,7 +3130,8 @@ class AutopilotIO(object):
             pane = a.get('pane_id') if isinstance(a, dict) else None
             if not (isinstance(pane, str) and re.fullmatch(PANE_RE, pane)):
                 continue
-            rows.append({'pane': pane, 'in_scope': in_scope((machine, pane), self.scope), 'state': a.get('agent_status'), 'agent': kind_of(a),
+            rows.append({'pane': pane, 'in_scope': in_scope((machine, pane), self.scope),
+                         'state': a.get('agent_status'), 'agent': kind_of(a),
                          'cwd': a.get('cwd') if isinstance(a.get('cwd'), str) else None,
                          'seq': a.get('state_change_seq'), 'turn': a.get('completion_seq'),
                          'you': machine == 'local' and pane == self.pane and

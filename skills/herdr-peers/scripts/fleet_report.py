@@ -257,6 +257,29 @@ class Git(object):
 
     def __init__(self):
         self.seen = {}
+        self.common = {}
+
+    def common_dir(self, path):
+        """The repository's common git directory for `path` (the same for a
+        checkout and all its linked worktrees), or None."""
+        path = clean_path(path)
+        if path is None:
+            return None
+        if path not in self.common:
+            found = None
+            if os.path.isdir(path):
+                try:
+                    proc = subprocess.run(['git', '-C', path, 'rev-parse', '--git-common-dir'],
+                                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                          stdin=subprocess.DEVNULL, timeout=GIT_TIMEOUT,
+                                          env=dict(os.environ, GIT_OPTIONAL_LOCKS='0'))
+                    out = proc.stdout.decode('utf-8', 'replace').strip()
+                    if proc.returncode == 0 and out:
+                        found = os.path.realpath(os.path.join(path, out))
+                except (OSError, subprocess.SubprocessError):
+                    pass
+            self.common[path] = found
+        return self.common[path]
 
     def lookup(self, cwd):
         cwd = clean_path(cwd)
@@ -388,9 +411,16 @@ def describe_plan(root, server, rec, panes, git, now=None, logs=None):
     # reused pane id (after a Herdr restart) would not. None when unknown.
     lead_in_repo = None
     if lead_top and (rec.get('repo_root') or found_at):
-        # Known only when the pane's directory is in a git repository here: a
-        # different repository means the pane does something else now.
-        lead_in_repo = lead_top == found_at or lead_top == rec.get('repo_root')
+        # Known only when the pane's directory is in a git repository here. The
+        # same repository is the same common git directory, so a lead in a
+        # linked worktree still counts; another repository means the pane does
+        # something else now.
+        mine = git.common_dir(panes[lead_pane])
+        theirs = git.common_dir(found_at or rec.get('repo_root'))
+        if mine and theirs:
+            lead_in_repo = mine == theirs
+        else:
+            lead_in_repo = lead_top == found_at or lead_top == rec.get('repo_root')
     cls, block_class, progress, updated = 'unreadable', None, None, None
     if path:
         state = load_json(path, MAX_STATE_BYTES)
