@@ -122,7 +122,7 @@ set_state bb22 w1:p3 idle
 show local w2:p1 claude__done__plan_approval
 show bb22 w1:p1 pi__idle__folder_trust
 run "$HELPER" autopilot --once
-assert_contains "plan approval is accepted from a done pane" "$(keys_sent)" "local w2:p1 enter"
+assert_contains "plan approval is accepted from a done pane, without switching to auto mode" "$(keys_sent)" "local w2:p1 down,enter"
 assert_contains "folder trust is accepted from an idle pane" "$(keys_sent)" "bb22 w1:p1 enter"
 
 # --- never touched ---------------------------------------------------------------------
@@ -283,6 +283,7 @@ class IO(object):
     def keys(self, machine, pane, keys): self.sent.append(('keys', pane, tuple(keys))); return True
     def prompt(self, machine, pane, text): self.sent.append(('prompt', pane, text[:11])); return True
     def record(self, addr, kind, choice, outcome, dry): self.log.append((outcome, addr, choice.cls))
+    def warn(self, addr, exc): self.warned = getattr(self, 'warned', []) + [addr]
 
 now = [1000.0]
 def fresh(**kw):
@@ -336,8 +337,94 @@ io.down.clear(); io.lists = 0
 for _ in range(8):
     ap.run_pass()
 assert io.lists >= 8 + 1, 'a machine that came back is asked again'
+
+# A look that could not be completed is repeated on the next pass.
+io, ap = fresh()
+turn(io, 1, state='done', screen='claude__done__plan_approval')
+real_read = io.read
+io.read = lambda m, p: None
+ap.run_pass(); ap.run_pass()
+assert io.sent == []
+io.read = real_read
+ap.run_pass()
+assert io.sent and io.sent[0] == ('keys', 'w1:p2', ('down', 'enter')), io.sent
+
+# A pane that appears after the first look at its machine and already asks is nudged.
+io, ap = fresh()
+io.rows['local'] = []; ap.run_pass()
+turn(io, 5); ap.run_pass()
+assert len(prompts(io)) == 1, 'a late pane that asks is continued'
+
+# After a usage limit ends, the pane is no longer read on every pass.
+io, ap = fresh()
+turn(io, 1, state='blocked', screen='claude__blocked__usage_limit'); ap.run_pass()
+turn(io, 2, state='working'); ap.run_pass()
+turn(io, 3, state='done', screen='codex__done__finished'); ap.run_pass()
+now[0] += autopilot.LIMIT_RETRY * 2
+reads = io.reads
+ap.run_pass(); ap.run_pass()
+assert io.reads == reads, 'no reads once the limit is over'
+
+# A ticking counter next to an unmoved menu does not defeat the stuck guard.
+io, ap = fresh()
+turn(io, 1, state='blocked', screen='codex__blocked__approval')
+base, tick = fx('codex__blocked__approval'), [0]
+def ticking(machine, pane):
+    tick[0] += 1
+    return base.replace('› 1. Yes', '  Working (%ds)\n› 1. Yes' % tick[0])
+io.read = ticking
+for _ in range(4):
+    ap.run_pass()
+assert len([s for s in io.sent if s[0] == 'keys']) == autopilot.MAX_ATTEMPTS, io.sent
+assert ('gave_up', 'local:w1:p2', 'stuck') in io.log
+
+# The usage-limit retry never goes over a human's draft, and --no-nudge silences it.
+io, ap = fresh()
+turn(io, 1, state='idle', screen='codex__idle__limit_banner_over_draft'); ap.run_pass()
+now[0] += autopilot.LIMIT_RETRY + 1; ap.run_pass()
+assert io.sent == [], io.sent
+io, ap = fresh(nudge=False)
+turn(io, 1, state='blocked', screen='claude__blocked__usage_limit'); ap.run_pass()
+now[0] += autopilot.LIMIT_RETRY + 1; ap.run_pass()
+assert io.sent == [], io.sent
+
+# After a keyed step, a printed menu above an input line is not "the next step".
+io, ap = fresh()
+turn(io, 1, state='blocked', screen='codex__blocked__approval')
+def swap(machine, pane, keys):
+    io.sent.append(('keys', pane, tuple(keys)))
+    io.rows['local'][0]['state'] = 'done'
+    io.screens[('local', pane)] = fx('claude__done__printed_menu_over_draft')
+    return True
+io.keys = swap
+ap.run_pass()
+assert io.sent == [('keys', 'w1:p2', ('enter',))], io.sent
+# ... and neither is an input line holding a draft with wrapped text under it.
+io, ap = fresh()
+turn(io, 1, state='blocked', screen='codex__blocked__approval')
+def swap_to_draft(machine, pane, keys):
+    io.sent.append(('keys', pane, tuple(keys)))
+    io.rows['local'][0]['state'] = 'idle'
+    io.screens[('local', pane)] = fx('codex__idle__trust_text_above_draft')
+    return True
+io.keys = swap_to_draft
+ap.run_pass()
+assert io.sent == [('keys', 'w1:p2', ('enter',))], io.sent
+
+# An error on one pane does not stop the pass.
+io, ap = fresh()
+io.rows['local'] = [{'pane': 'w1:p2', 'state': 'blocked', 'agent': 'x', 'seq': 1, 'turn': 1, 'you': False},
+                    {'pane': 'w1:p3', 'state': 'blocked', 'agent': 'codex', 'seq': 1, 'turn': 1, 'you': False}]
+io.screens[('local', 'w1:p3')] = fx('codex__blocked__approval')
+def boom(machine, pane):
+    if pane == 'w1:p2':
+        raise RuntimeError('x')
+    return io.screens[(machine, pane)]
+io.read = boom
+ap.run_pass()
+assert io.warned == ['local:w1:p2'] and ('keys', 'w1:p3', ('enter',)) in io.sent, (io.warned, io.sent)
 print('ok')
 PY
-assert_rc "turn detection, the nudge cap, the usage-limit retry and machine backoff hold" 0
+assert_rc "turn detection, the nudge cap, the usage-limit retry, backoff, repeated looks and the stuck guard hold" 0
 assert_eq "(scripted I/O ran to its end)" "ok" "$OUT"
 unset HERDR_PEERS_AUTOPILOT_CONFIRM

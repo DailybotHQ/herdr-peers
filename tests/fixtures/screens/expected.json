@@ -79,6 +79,14 @@
   ],
   "option": 1
  },
+ "claude__blocked__permission_under_429_line": {
+  "action": "keys",
+  "class": "permission",
+  "keys": [
+   "enter"
+  ],
+  "option": 1
+ },
  "claude__blocked__preselected_widening": {
   "action": "keys",
   "class": "permission",
@@ -87,6 +95,20 @@
    "enter"
   ],
   "option": 2
+ },
+ "claude__blocked__printed_menu_over_input": {
+  "action": "leave",
+  "class": "unknown",
+  "keys": [],
+  "option": null
+ },
+ "claude__blocked__question_about_login_copy": {
+  "action": "keys",
+  "class": "question",
+  "keys": [
+   "enter"
+  ],
+  "option": 1
  },
  "claude__blocked__question_multiselect": {
   "action": "keys",
@@ -135,6 +157,15 @@
   "keys": [],
   "option": null
  },
+ "claude__blocked__widening_session_wide": {
+  "action": "keys",
+  "class": "permission",
+  "keys": [
+   "up",
+   "enter"
+  ],
+  "option": 1
+ },
  "claude__done__finished": {
   "action": "none",
   "class": "none",
@@ -145,19 +176,33 @@
   "action": "keys",
   "class": "plan_approval",
   "keys": [
+   "down",
    "enter"
   ],
-  "option": 1
+  "option": 2
  },
  "claude__done__plan_approval_under_update_banner": {
   "action": "keys",
   "class": "plan_approval",
   "keys": [
+   "down",
    "enter"
   ],
-  "option": 1
+  "option": 2
+ },
+ "claude__done__printed_menu_over_draft": {
+  "action": "none",
+  "class": "none",
+  "keys": [],
+  "option": null
  },
  "claude__done__prose_numbered_list": {
+  "action": "none",
+  "class": "none",
+  "keys": [],
+  "option": null
+ },
+ "claude__idle__numbered_draft_in_input_box": {
   "action": "none",
   "class": "none",
   "keys": [],
@@ -170,6 +215,12 @@
    "enter"
   ],
   "option": 1
+ },
+ "codex__blocked__login_in_browser": {
+  "action": "leave",
+  "class": "login",
+  "keys": [],
+  "option": null
  },
  "codex__blocked__queued_question_closed": {
   "action": "keys",
@@ -187,6 +238,12 @@
   ],
   "option": 1
  },
+ "codex__done__error_429_in_output": {
+  "action": "none",
+  "class": "none",
+  "keys": [],
+  "option": null
+ },
  "codex__done__finished": {
   "action": "none",
   "class": "none",
@@ -196,6 +253,18 @@
  "codex__done__prose_question": {
   "action": "none",
   "class": "none",
+  "keys": [],
+  "option": null
+ },
+ "codex__done__queued_hint_in_prose": {
+  "action": "none",
+  "class": "none",
+  "keys": [],
+  "option": null
+ },
+ "codex__idle__limit_banner_over_draft": {
+  "action": "leave",
+  "class": "usage_limit",
   "keys": [],
   "option": null
  },

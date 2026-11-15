@@ -28,6 +28,7 @@ DEFAULT_INTERVAL = 60
 MIN_INTERVAL = 15
 MAX_STEPS = 8            # keys-then-reread rounds on one pane in one pass
 MAX_ATTEMPTS = 2         # rounds without progress before a screen is left
+MAX_LIMIT_RETRIES = 48   # tries on one usage-limit episode (a day), then it is left
 MAX_NUDGES = 3           # prompts to one pane within NUDGE_WINDOW
 NUDGE_WINDOW = 3600      # seconds; a pane that keeps asking is left after MAX_NUDGES
 LIMIT_RETRY = 1800       # seconds between two tries on a pane at its usage limit
@@ -70,26 +71,33 @@ NEGATIVE = re.compile(
 # accepts one action; it does not change an agent's permission policy.
 WIDENING = re.compile(
     r'always allow|don\'t ask again|run everything|always-approve|persist to settings|'
-    r'switch to auto mode|switch to accept edits|to allowlist|trust parent folder|'
-    r'extra usage|upgrade', re.I)
+    r'auto mode|auto-accept|accept edits|allow all|during this session|bypass permissions|'
+    r'to allowlist|trust parent folder|extra usage|upgrade', re.I)
 
 # name -> patterns; the first match decides. A screen is data.
 LOGIN = [r'Select login method', r'Sign in with ChatGPT', r'Log ?in with', r'Paste (the )?code here',
          r'Please run /login', r'Invalid API key', r'Provide your own API key',
          r'(?i)authentication (required|failed)', r'(?i)enter (your )?(api key|password|token)',
          r'(?i)please sign in again', r'(?i)access token could not be refreshed']
+# The same, without the phrases an agent working on a sign-in feature would
+# plausibly print in a question: these decide when they sit right above a menu.
+LOGIN_STRONG = [r'Select login method', r'Sign in with ChatGPT', r'Paste (the )?code here',
+                r'Please run /login', r'Invalid API key', r'Provide your own API key',
+                r'(?i)authentication required', r'(?i)please sign in again',
+                r'(?i)access token could not be refreshed', r'(?i)device code']
+# A CLI's own limit banner at the start of a line. Generic "429" and "rate
+# limit" lines are not here: a command's output prints those too.
 LIMIT = [r"(?m)^[^\w>\n]{0,3}[ \t]*You['’]ve hit your (?:[\w-]+ )?limit\b",
          r'(?mi)^[^\w>\n]{0,3}[ \t]*(?:Claude )?usage limit reached\b',
-         r'(?mi)^[^\w>\n]{0,3}[ \t]*(?:[\w-]+ )?limit reached[ \t]*[·∙•|-][ \t]*resets\b',
-         r'(?mi)^[^\w>\n]{0,3}[ \t]*(?:API )?Error:?[ \t]*(?:429\b|rate limit (?:reached|exceeded)\b)',
-         r'(?mi)^[^\w>\n]{0,3}[ \t]*rate limit (?:reached|exceeded)\b']
-BYPASS = [r'Bypass Permissions mode', r'Yes, I accept']
+         r'(?mi)^[^\w>\n]{0,3}[ \t]*(?:[\w-]+ )?limit reached[ \t]*[·∙•|-][ \t]*resets\b']
 TRUST = [r'Do you trust the (files|contents) (in|of) this (folder|directory|project)',
          r'Is this a project you created or one you trust', r'(Do you t|T)rust this folder\?',
          r'allow Codex to work in this folder', r'Trust this workspace',
          r'(?m)^\s*Do not trust\s*$']
 UPDATE = [r'(?i)update available', r'(?i)a new version .* is available']
 PLAN = [r'Would you like to proceed\?', r'Ready to code\?']
+# Plan approval shows no "Enter selects" line; these footers are its own.
+PLAN_FOOT = re.compile(r'ctrl\+g to edit|to approve with this feedback')
 REVIEW = [r'Ready to submit your answers\?']
 QUEUED = [r'shift\+← to answer']
 # Named classes that may be keyed whatever Herdr's state says: each is
@@ -163,7 +171,8 @@ def parse_menu(text):
 
     Returns {'style', 'rows': [{'label', 'selected', 'num', 'checked'}],
     'first', 'last' (line indexes in the tail), 'below' (non-empty lines
-    under the block), 'hint' (a line under it says Enter selects)}.
+    under the block), 'hint' (a line under it says Enter selects),
+    'input_below' (an input line sits under it)}.
     A block needs two option rows and a selection mark: a cursor glyph on
     one row, or radio marks on all of them. A numbered list in an agent's
     prose has neither and is not a menu.
@@ -238,7 +247,9 @@ def _collect(lines, at, style, column=None):
         return None
     under = [ln for ln in lines[span[1] + 1:] if ln.strip()]
     return {'style': style, 'rows': rows, 'first': span[0], 'last': span[1],
-            'below': len(under), 'hint': any(HINT.search(ln) for ln in under[:5])}
+            'below': len(under), 'hint': any(HINT.search(ln) for ln in under[:5]),
+            # An agent's input line under the block: these rows are not a dialog.
+            'input_below': any(INPUT_ROW.match(ln) for ln in under)}
 
 
 def _ascending(rows):
@@ -295,49 +306,50 @@ def menu_decision(menu, cls, why, prefer=None):
     return Decision('keys', cls, why, keys_for(menu, target), target + 1)
 
 
-LOGIN_ROW = re.compile(r'(?i)sign in|log ?in|api key|chatgpt|console account|subscription')
 NEAR = 14          # an anchor counts only this close above its menu
 FOOTER_MAX = 6     # a live menu sits at the bottom: few lines under it
+QUEUED_TAIL = 12   # the queued-question hint counts only this low on the screen
 
 
-def live(menu, state):
-    """Is this block a menu that waits now? It must sit at the bottom of the
-    screen. A block of unnumbered rows looks exactly like an agent's input
-    line with wrapped text under it, so outside a blocked state it also
-    needs a line saying that Enter selects — otherwise an Enter could send a
-    human's half-written message."""
-    if menu['below'] > FOOTER_MAX:
+def live(menu, state, lines=()):
+    """Is this block a dialog that waits now?
+
+    It sits at the bottom of the screen with no input line under it. Outside
+    a blocked state — where Herdr itself says a dialog is up — it also must
+    say that Enter selects (or carry plan approval's own footer): a block of rows with a cursor is exactly
+    what an agent's input line with wrapped or numbered text looks like, and
+    an Enter there would send a human's half-written message.
+    """
+    if menu['below'] > FOOTER_MAX or menu['input_below']:
         return False
-    return menu['style'] != 'plain' or state == 'blocked' or menu['hint']
+    if state == 'blocked':
+        return True
+    region = lines[menu['first']:menu['last'] + 6]
+    return menu['hint'] or any(PLAN_FOOT.search(ln) for ln in region)
 
 
 def near_menu(patterns, lines, menu):
-    """An anchored class counts only when its text sits right above a menu
-    that is at the bottom of the screen — not somewhere in old scrollback."""
-    if menu['below'] > FOOTER_MAX:
-        return None
+    """An anchored class counts only when its text sits right above its
+    menu — not somewhere in old scrollback."""
     return first_match(patterns, '\n'.join(lines[max(0, menu['first'] - NEAR):menu['last'] + 4]))
 
 
 def decide(agent, state, text):
     """The action for one pane. Pure: no I/O, nothing from `text` is run."""
     lines = tail_lines(text)
-    tail = '\n'.join(lines)
     menu = parse_menu(text)
-    labels = [r['label'] for r in menu['rows']] if menu else []
-    hit = first_match(LOGIN, tail)
-    if hit and (not menu or any(LOGIN_ROW.search(label) for label in labels)):
-        return Decision('leave', 'login', hit)
-    if any(re.search(r'Yes, I accept', label) for label in labels):
-        return Decision('leave', 'bypass_ack', 'Yes, I accept')
-    if first_match(QUEUED, tail) and not menu:
-        return Decision('keys', 'queued_question', 'shift+← to answer', ['shift+left'])
-    hit = first_match(LIMIT, '\n'.join(lines[-15:]))
-    if hit:
-        return Decision('leave', 'usage_limit', hit)
-    if menu and not live(menu, state):
+    if menu and not live(menu, state, lines):
         menu = None
+    labels = [r['label'] for r in menu['rows']] if menu else []
     if menu:
+        hit = near_menu(LOGIN_STRONG, lines, menu)
+        if hit:
+            return Decision('leave', 'login', hit)
+        if any(re.search(r'Yes, I accept', label) for label in labels):
+            return Decision('leave', 'bypass_ack', 'Yes, I accept')
+        hit = near_menu(LIMIT, lines, menu)
+        if hit:
+            return Decision('leave', 'usage_limit', hit)
         for cls, patterns in ANCHORED:
             hit = near_menu(patterns, lines, menu)
             if not hit:
@@ -352,13 +364,22 @@ def decide(agent, state, text):
             hit = near_menu(PERMISSION, lines, menu)
             return menu_decision(menu, 'permission' if hit else 'question', hit or 'menu')
         return Decision('none', 'none', 'no live menu of a known class')
+    low = '\n'.join(lines[-QUEUED_TAIL:])
+    if state in ('blocked', 'working') and first_match(QUEUED, low):
+        return Decision('keys', 'queued_question', 'shift+← to answer', ['shift+left'])
+    hit = first_match(LOGIN, '\n'.join(lines[-8:]))
+    if hit:
+        return Decision('leave', 'login', hit)
+    hit = first_match(LIMIT, '\n'.join(lines[-8:]))
+    if hit:
+        return Decision('leave', 'usage_limit', hit)
     if state == 'blocked':
         return Decision('leave', 'unknown', 'blocked without a recognised menu')
     return Decision('none', 'none', 'nothing waits')
 
 
 def input_text(lines):
-    """Text on the agent's input line, '' when empty, None when not found."""
+    """Text on the agent's input line; '' when it is empty or not shown."""
     for line in reversed(lines[-8:]):
         m = INPUT_ROW.match(line)
         if m:
@@ -366,30 +387,46 @@ def input_text(lines):
     return ''
 
 
+def has_draft(text, state=None):
+    """True when the input line holds something that is not a placeholder:
+    a human is typing there, and nothing may be sent to that pane. The rows
+    of a live dialog are not an input line."""
+    lines = tail_lines(text)
+    menu = parse_menu(text)
+    if menu and live(menu, state, lines):
+        lines = lines[:menu['first']] + lines[menu['last'] + 1:]
+    return not PLACEHOLDERS.match(input_text(lines))
+
+
 def asks_in_prose(text):
     """True when a finished turn ends by asking the human something."""
     lines = tail_lines(text, 30)
-    body = '\n'.join(lines)
-    if not TURN_DONE.search(body):
+    if not TURN_DONE.search('\n'.join(lines)) or has_draft(text):
         return False
-    draft = input_text(lines)
-    if draft is None or not PLACEHOLDERS.match(draft):
-        return False  # a human is typing there
     said = [ln for ln in lines if ln.strip() and not RULE.match(ln) and not CHROME.search(ln)
             and not INPUT_ROW.match(ln) and not TURN_DONE.search(ln)]
     return any(ASKS.search(ln) for ln in said[-5:])
 
 
-def screen_digest(text):
-    return hashlib.sha256('\n'.join(tail_lines(text)).encode('utf-8', 'replace')).hexdigest()[:16]
+def wait_digest(text):
+    """What identifies the screen a pane is waiting at: the option block and
+    the lines right above it, with digits blanked so a ticking timer or
+    counter does not make an unmoved screen look new. Without a block, the
+    whole tail."""
+    lines = tail_lines(text)
+    menu = parse_menu(text)
+    if menu:
+        lines = lines[max(0, menu['first'] - 8):menu['last'] + 1]
+    flat = re.sub(r'\d+', '#', '\n'.join(lines))
+    return hashlib.sha256(flat.encode('utf-8', 'replace')).hexdigest()[:16]
 
 
 def engaged(text):
-    """A dialog autopilot is already inside: a numbered or radio block, or
-    one that says Enter selects. Never a bare block of unnumbered rows —
-    that is what an input line with wrapped text looks like."""
+    """A dialog autopilot is already inside: the next step of what it just
+    keyed. It must still be a live block at the bottom of the screen."""
     menu = parse_menu(text)
-    return bool(menu) and (menu['style'] != 'plain' or menu['hint'])
+    return bool(menu) and menu['below'] <= FOOTER_MAX and not menu['input_below'] \
+        and (menu['style'] != 'plain' or menu['hint'])
 
 
 class Pane(object):
@@ -397,12 +434,15 @@ class Pane(object):
 
     def __init__(self):
         self.state = None
-        self.seq = None        # Herdr's state_change_seq at the last pass
-        self.turn = None       # Herdr's completion_seq when last seen or prompted
+        self.seq = None        # Herdr's state_change_seq at the last completed look
+        self.turn = None       # Herdr's completion_seq when last seen
         self.seen_working = False
         self.nudges = []       # times of the prompts sent to it
-        self.limit_at = 0.0
-        self.left = None       # digest of a screen autopilot gave up on
+        self.limit_at = 0.0    # when its usage limit was last noted or retried
+        self.limit_tries = 0
+        self.stuck = None      # digest of the screen last keyed without progress
+        self.tries = 0         # key rounds spent on that screen
+        self.left = None       # digest of a screen autopilot gave up on or left
 
 
 class Autopilot(object):
@@ -416,7 +456,7 @@ class Autopilot(object):
         self.clock, self.sleep, self.confirm = clock, sleep, confirm
         self.panes = {}
         self.backoff = {}      # machine -> [passes to skip, last penalty]
-        self.first_pass = True
+        self.known = set()     # machines that have answered at least once
         self.actions = 0
 
     # -- one pass ---------------------------------------------------------
@@ -438,81 +478,93 @@ class Autopilot(object):
                 self.backoff[machine] = [penalty, penalty]
                 continue
             self.backoff.pop(machine, None)
+            first_look = machine not in self.known
             for agent in agents:
                 addr = '%s:%s' % (machine, agent['pane'])
                 seen.add(addr)
                 if agent.get('you') or addr in self.exclude:
                     continue
-                self.visit(machine, agent, addr)
+                try:
+                    self.visit(machine, agent, addr, first_look)
+                except Exception as exc:  # one pane never stops the loop
+                    self.io.warn(addr, exc)
+            self.known.add(machine)
         for addr in [a for a in self.panes if a not in seen
                      and a.split(':', 1)[0] in due]:
             del self.panes[addr]
-        self.first_pass = False
 
-    def visit(self, machine, agent, addr):
+    def visit(self, machine, agent, addr, first_look):
         memo = self.panes.setdefault(addr, Pane())
-        state, before, fresh = agent.get('state'), memo.state, memo.state is None
-        changed = state != before or agent.get('seq') != memo.seq
-        memo.state, memo.seq = state, agent.get('seq')
+        state, fresh = agent.get('state'), memo.state is None and memo.turn is None
+        changed = state != memo.state or agent.get('seq') != memo.seq
         if fresh:
             memo.turn = agent.get('turn')
         elif agent.get('turn') != memo.turn:
             memo.seen_working, memo.turn = True, agent.get('turn')  # a turn finished meanwhile
+        memo.state = state
         if state == 'working':
-            memo.seen_working, memo.left = True, None
+            memo.seq, memo.seen_working = agent.get('seq'), True
+            memo.left = memo.stuck = None
+            memo.tries = 0
             return
         limit_due = memo.limit_at and self.clock() - memo.limit_at >= LIMIT_RETRY
         if state != 'blocked' and not changed and not limit_due:
             return  # an idle pass reads no pane
-        self.attend(machine, agent, addr, memo, fresh)
+        # A stop that predates autopilot is one seen on the first look at its machine.
+        if self.attend(machine, agent, addr, memo, stale=fresh and first_look):
+            memo.seq = agent.get('seq')
+        else:
+            memo.state = 'unseen'  # the look did not complete: look again next pass
 
-    def attend(self, machine, agent, addr, memo, fresh):
+    def attend(self, machine, agent, addr, memo, stale):
+        """Read the pane and act. False when the look could not be completed."""
         pane, kind = agent['pane'], agent.get('agent')
-        attempts, last = 0, None
-        for _step in range(MAX_STEPS):
+        for step in range(MAX_STEPS):
             text = self.io.read(machine, pane)
             if text is None:
-                return
-            digest = screen_digest(text)
+                return False
+            digest = wait_digest(text)
             if digest == memo.left:
-                return
-            if digest == last:
-                attempts += 1
-                if attempts >= MAX_ATTEMPTS:
-                    memo.left = digest
-                    self.record(addr, kind, Decision('leave', 'stuck', 'no progress'), 'gave_up')
-                    return
-            else:
-                attempts = 0
-            last = digest
-            state = self.io.state(machine, pane) if _step else agent.get('state')
+                return True
+            state = self.io.state(machine, pane) if step else agent.get('state')
             if state == 'working':
-                return
+                return True
             # Once a dialog was keyed, its next step is part of the same
             # dialog even when Herdr briefly reports another state.
-            choice = decide(kind, 'blocked' if _step and engaged(text) else state, text)
+            choice = decide(kind, 'blocked' if step and engaged(text) else state, text)
             if choice.action == 'keys':
+                if digest == memo.stuck:
+                    memo.tries += 1
+                else:
+                    memo.stuck, memo.tries = digest, 1
+                if memo.tries > MAX_ATTEMPTS:
+                    memo.left = digest
+                    self.record(addr, kind, Decision('leave', 'stuck', 'no progress'), 'gave_up')
+                    return True
                 self.record(addr, kind, choice, 'keyed')
                 if self.dry_run:
-                    return
+                    return True
                 if not self.io.keys(machine, pane, choice.keys):
-                    return
+                    return False
                 self.sleep(self.confirm)
                 continue
             if choice.cls == 'usage_limit':
-                self.limit(machine, pane, addr, kind, memo, choice, text)
-            elif choice.action == 'leave':
-                if memo.left != digest:
-                    memo.left = digest
-                    self.record(addr, kind, choice, 'left')
+                self.limit(machine, pane, addr, kind, memo, choice, text, state)
+                return True
+            memo.limit_at, memo.limit_tries = 0.0, 0
+            if choice.action == 'leave':
+                memo.left = digest
+                self.record(addr, kind, choice, 'left')
             elif state in ('idle', 'done'):
-                self.maybe_nudge(machine, pane, addr, kind, memo, text, fresh)
-            return
+                self.maybe_nudge(machine, pane, addr, kind, memo, text, stale)
+            return True
+        return True
 
-    def limit(self, machine, pane, addr, kind, memo, choice, text):
+    def limit(self, machine, pane, addr, kind, memo, choice, text, state):
         """A pane at its usage limit: noted once, then tried again every
-        LIMIT_RETRY seconds — accept the menu if one is shown, then ask it to
-        go on."""
+        LIMIT_RETRY seconds — accept the dialog if one is shown, then ask it
+        to go on. Never over a human's draft, never with --no-nudge, and not
+        forever."""
         now = self.clock()
         if not memo.limit_at:
             memo.limit_at = now
@@ -521,8 +573,11 @@ class Autopilot(object):
         if now - memo.limit_at < LIMIT_RETRY:
             return
         memo.limit_at = now
+        if not self.nudge or memo.limit_tries >= MAX_LIMIT_RETRIES or has_draft(text, state):
+            return
+        memo.limit_tries += 1
         menu = parse_menu(text)
-        target = choose(menu) if menu and menu['below'] <= FOOTER_MAX else None
+        target = choose(menu) if menu and live(menu, state, tail_lines(text)) else None
         keys = keys_for(menu, target) if target is not None else []
         self.record(addr, kind, Decision('prompt', 'usage_limit', 'retry after the wait', keys,
                                          None if target is None else target + 1), 'nudged')
@@ -533,12 +588,12 @@ class Autopilot(object):
             self.sleep(self.confirm)
         self.io.prompt(machine, pane, RESUME_TEXT)
 
-    def maybe_nudge(self, machine, pane, addr, kind, memo, text, fresh):
+    def maybe_nudge(self, machine, pane, addr, kind, memo, text, stale):
         if not self.nudge:
             return
-        if fresh and not self.catch_up:
+        if stale and not self.catch_up:
             return  # stopped before autopilot started: not ours to restart
-        if not fresh and not memo.seen_working:
+        if memo.nudges and not memo.seen_working:
             return  # no turn of its own since the last prompt
         now = self.clock()
         memo.nudges = [t for t in memo.nudges if now - t < NUDGE_WINDOW]

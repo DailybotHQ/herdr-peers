@@ -10,4 +10,6 @@
    ❯ 1. Yes, and use auto mode
      2. Yes, manually approve edits
      3. Tell the agent what to change
+        shift+tab to approve with this feedback
 
+   ctrl+g to edit in VS Code · ~/plans/a-plan.md

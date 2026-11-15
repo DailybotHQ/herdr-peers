@@ -1,0 +1,10 @@
+⏺ Bash(curl -s https://example.com/api)
+  ⎿  Error: 429 Too Many Requests
+
+ Bash command
+ curl -s https://example.com/api --retry 3
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend

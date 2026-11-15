@@ -1,0 +1,11 @@
+• Ran curl -s https://example.com/api
+  └ Error: 429 Too Many Requests
+    rate limit exceeded
+
+• The endpoint answered 429; I added a retry with backoff and the test passes.
+
+  Worked for 40s
+
+› Ask Codex to do anything
+
+  model high · /app

@@ -28,14 +28,21 @@ contract of 1.1.0 changes. The release is additive.
   - **Which option:** the one marked `(Recommended)`, else the one the CLI
     pre-selected, else the first. Never a refusal, never free text, never a
     row that widens the agent's standing permissions (`always allow`,
-    `don't ask again`, `Run Everything`, auto mode, persisted settings).
+    `allow all … during this session`, `don't ask again`, `Run Everything`,
+    auto mode, bypass permissions, persisted settings) — so plan approval
+    is accepted with "manually approve edits", not "use auto mode".
   - **Agents that stop to ask in prose** get one fixed prompt to continue
     with what they recommended — at most 3 per pane per hour, only after a
     turn of their own, never when the input line holds a human's draft.
-  - **Usage limits** are retried every 30 minutes; **logins** and Claude's
-    bypass-permissions acknowledgement are never touched.
+  - **Usage limits** (the CLI's own banner, not a `429` in a command's
+    output) are retried every 30 minutes for at most a day; **logins** and
+    Claude's bypass-permissions acknowledgement are never touched.
+  - **An input line is never mistaken for a menu:** a block of options
+    counts only at the bottom of the screen with no input line under it,
+    and outside a `blocked` state only when it says that Enter selects.
   - **Verified on real panes** of Claude Code, Codex, Cursor, Grok, Pi and
-    Antigravity; 36 screen fixtures in `tests/fixtures/screens/`.
+    Antigravity; screen fixtures with their expected decision in
+    `tests/fixtures/screens/`, including hand-written hazards.
   - **Cheap by construction:** asleep between passes (default 60 s), one
     `agent list` per machine per pass in parallel, a screen read only when
     a pane's state changed, backoff for unreachable machines; about one
@@ -49,8 +56,8 @@ contract of 1.1.0 changes. The release is additive.
 - **Launching several agents at once** — `launcher.md` documents how a lead
   opens a tab of agents with `ak`, on chosen accounts and vendors, gives
   each its brief and watches them with `lanes`.
-- Test scope `autopilot` (96 assertions); the fake `herdr` can script a
-  dialog that moves on when it is keyed (`<machine>/keys.json`).
+- Test scope `autopilot`; the fake `herdr` can script a dialog that moves
+  on when it is keyed (`<machine>/keys.json`).
 
 ### Changed
 

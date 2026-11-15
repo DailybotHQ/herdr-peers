@@ -202,7 +202,7 @@ presses the keys that accept an option — the one marked recommended, else
 the one the CLI pre-selected, else the first — and re-reads the screen to
 confirm, step by step until the dialog is done. It never picks a refusal,
 free text, or a row that widens an agent's permissions ("always allow",
-"don't ask again"). An agent that ended its turn with a question gets one
+"don't ask again", "use auto mode"). An agent that ended its turn with a question gets one
 fixed prompt telling it to continue with what it recommended. A login is
 never touched; a pane with your half-typed message is never touched; a
 screen that does not move is left after two tries. It sleeps between passes

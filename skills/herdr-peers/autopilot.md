@@ -43,8 +43,8 @@ closes.
 | `--once`, `--passes N` | One pass, or N passes, then exit. |
 | `--exclude <machine>:<pane>` | A pane it never touches (repeatable). Use it for a pane you are working in by hand. |
 | `--scope …` | The same allow-list as every verb (`local`, `<machine>`, `<machine>:<workspace>`); default: every enabled machine. `HERDR_PEERS_SCOPE` applies too. |
-| `--no-nudge` | Never prompt an agent that stopped by asking in prose. |
-| `--catch-up` | Also continue agents that had already stopped to ask before autopilot started. Without it, autopilot only continues stops it saw happen. |
+| `--no-nudge` | Never prompt an agent: not one that stopped by asking in prose, not one at its usage limit. Menus are still accepted. |
+| `--catch-up` | Also continue agents that had already stopped to ask before autopilot first looked at their machine. Without it, autopilot only continues stops that happen while it runs. |
 
 `HERDR_PEERS_AUTOPILOT_CONFIRM` sets the seconds between a key and the
 re-read that confirms it (default 1.5; 0–30).
@@ -64,9 +64,10 @@ The option it accepts, in this order:
 
 It never chooses a row that refuses (`No`, `Cancel`, `Quit`, `Deny`, `Do not
 trust`), a free-text row (`Type something`, `Other`, `Chat about this`), or a
-row that **widens the agent's standing permissions** (`always allow`, `don't
-ask again`, `Run Everything`, `always-approve`, `switch to auto mode`,
-`Persist to settings`, `Trust parent folder`). It approves this one action;
+row that **widens the agent's standing permissions** (`always allow`, `allow
+all … during this session`, `don't ask again`, `Run Everything`,
+`always-approve`, anything naming `auto mode`, `accept edits` or `bypass
+permissions`, `Persist to settings`, `Trust parent folder`). It approves this one action;
 it does not change an agent's permission policy. When the pre-selected row is
 one of those, it moves to the first row that is not.
 
@@ -74,13 +75,13 @@ one of those, it moves to the first row that is not.
 | --- | --- |
 | A question with options (one or several questions, with a review step) | Accepts the recommended option of each, then submits. On a multi-select question it ticks one option and moves on. |
 | A tool approval (run a command, edit or create a file, fetch a URL) | Accepts once. |
-| Plan approval ("ready to code?") | Accepts. |
+| Plan approval ("ready to code?") | Accepts, with the option that keeps the agent's permission mode ("manually approve edits"), not the one that switches it to auto mode. |
 | Folder trust on first run | Accepts for that folder. |
 | An update prompt at start-up | Skips the update. |
 | A question queued while the agent is still working (Codex) | Opens it, then accepts. |
 | A turn that ended asking in prose | Sends one fixed prompt: continue, take the option you recommended, leave pending only what truly needs the developer. |
-| A usage limit | Leaves it; every 30 minutes accepts the option shown (if any) and asks the agent to continue its pending plan. |
-| A login, a sign-in, an API-key prompt | **Never touched.** A human signs in. |
+| A usage limit (the CLI's own banner; a `429` in a command's output is not one) | Leaves it; every 30 minutes accepts the option shown (if any) and asks the agent to continue its pending plan — for at most a day, never over a draft on the input line, and not with `--no-nudge`. |
+| A login, a sign-in, an API-key or device-code prompt | **Never touched.** A human signs in. |
 | Claude's bypass-permissions acknowledgement | **Never touched.** The developer accepts it once per profile. |
 | A blocked pane with no menu it recognises | Left, and recorded as `unknown`. |
 
@@ -92,12 +93,18 @@ selected; otherwise it is left alone.
 ## 4. What it never does
 
 - Key a pane where no menu is recognised. A blind Enter is never sent.
-- Key or prompt a pane whose input line holds text: that is a human's draft.
+- Treat an input line as a menu. A block of options counts only at the
+  bottom of the screen with no input line under it; outside a `blocked`
+  state it must also say that Enter selects (or be plan approval, by its own
+  footer) and must not sit inside the input box. Text an agent merely
+  printed above the input line is not a dialog.
+- Prompt a pane whose input line holds text: that is a human's draft.
 - Prompt an agent that simply finished, or one that never had a turn.
 - Prompt the same pane more than 3 times in an hour: a pane that keeps asking
   is left for the human.
 - Repeat a key on a screen that did not move: after two tries it gives up on
-  that screen and records it.
+  that screen and records it. A ticking timer on the screen does not count
+  as movement.
 - Touch its own pane, an excluded pane, or a machine outside the scope.
 - Read, store or print screen text. The record holds the screen class, the
   option number and the keys.

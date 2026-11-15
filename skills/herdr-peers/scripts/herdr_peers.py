@@ -2897,6 +2897,9 @@ class AutopilotIO(object):
     def prompt(self, machine, pane, text):
         return herdr(['agent', 'prompt', pane, text], machine=machine, timeout=30)[0] == 0
 
+    def warn(self, addr, exc):
+        warn('autopilot: skipped %s this pass (%s)' % (addr, safe(type(exc).__name__)))
+
     def record(self, addr, kind, choice, outcome, dry_run):
         note = ' '.join(filter(None, [
             'keys=%s' % ','.join(choice.keys) if choice.keys else None,
@@ -2987,15 +2990,23 @@ def cmd_autopilot(args):
         exclude.add(fmt_address(resolve_machine(addr)))
     current = herdr_json(['pane', 'current', '--current'], timeout=8)
     me = ((current.get('result') or {}).get('pane') or {})
+    if not (isinstance(me.get('pane_id'), str) and re.fullmatch(PANE_RE, me['pane_id'])):
+        raise Stop(EXIT_ENV, 'cannot tell which pane this is; run autopilot inside a Herdr pane')
     io = AutopilotIO(store, me.get('pane_id'), me.get('terminal_id'), scope_from(args))
     lock_path, pid_path = autopilot_paths(store)
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        os.close(fd)
-        raise Stop(EXIT_POLICY, 'autopilot is already running on this server '
-                   '(`herdr-peers autopilot status`, `herdr-peers autopilot stop`)')
+    for attempt in (1, 2):
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except OSError:
+            if attempt == 1:
+                time.sleep(0.3)  # a `status` or `stop` probing the lock holds it for an instant
+                continue
+            os.close(fd)
+            raise Stop(EXIT_POLICY, 'autopilot is already running on this server '
+                       '(`herdr-peers autopilot status`, `herdr-peers autopilot stop`)')
+    write_private(pid_path, '%d\n' % os.getpid())  # at once: `stop` reads it while the lock is held
 
     class Halt(Exception):
         pass
@@ -3007,7 +3018,6 @@ def cmd_autopilot(args):
                                catch_up=args.catch_up, exclude=exclude, confirm=confirm)
     previous = signal.signal(signal.SIGTERM, halt)
     try:
-        write_private(pid_path, '%d\n' % os.getpid())
         if passes is None:
             print('autopilot: watching every agent on every enabled machine every %ds%s — '
                   'stop with `herdr-peers autopilot stop` or Ctrl-C'
@@ -3015,7 +3025,14 @@ def cmd_autopilot(args):
             sys.stdout.flush()
         done = 0
         while True:
-            loop.run_pass()
+            try:
+                loop.run_pass()
+            except (Stop, OSError) as exc:
+                if passes is not None:
+                    raise
+                # A failed pass (Herdr restarting, a full disk) never ends the watch.
+                warn('autopilot: pass failed (%s); trying again next pass'
+                     % safe(getattr(exc, 'message', None) or type(exc).__name__))
             done += 1
             if passes is not None and done >= passes:
                 break
