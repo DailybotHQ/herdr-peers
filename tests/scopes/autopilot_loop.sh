@@ -692,6 +692,7 @@ for n in 960 961 962; do mkstate "$REPO" "PLAN_${n}_b" "$V5_BLOCKED"; claim "$RE
 cat >"$WORK/hang" <<'SH'
 #!/bin/sh
 env >"$0.env"
+echo run >>"$0.runs"
 sleep 30 &
 echo $! >"$0.child"
 wait
@@ -702,6 +703,7 @@ run env HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT=2 MY_SECRET_TOKEN=s3cr3t-value "$HE
 t1=$(date +%s)
 assert_rc "a hanging notify command does not fail the pass" 0
 if [ $((t1 - t0)) -lt 12 ]; then t_ok "three hanging events cost one budget, not three timeouts"; else t_fail "three hanging events cost one budget, not three timeouts" "took $((t1 - t0)) s"; fi
+assert_eq "a hanging command spends the pass's budget: the other events wait" "1" "$(wc -l <"$WORK/hang.runs" | tr -d ' ')"
 sleep 1
 if kill -0 "$(cat "$WORK/hang.child")" 2>/dev/null; then t_fail "its children are killed with it"; kill "$(cat "$WORK/hang.child")"; else t_ok "its children are killed with it"; fi
 assert_not_contains "the notify command does not get tokens" "$(cat "$WORK/hang.env")" "s3cr3t-value"
@@ -711,5 +713,71 @@ run "$HELPER" autopilot --loop --once --notify-env "BAD NAME" --notify "$WORK/ha
 assert_rc "a malformed --notify-env is a usage error" 2
 run "$HELPER" autopilot --loop --once --notify-env HOME
 assert_rc "--notify-env without --notify is a usage error" 2
+
+# A report missing any key is refused, whatever the rest says.
+run python3 - "$SCRIPTS" <<'PY'
+import json, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import fleet_report
+good = {'schema': 'herdr-peers/plans-v1', 'state': 'ok', 'agents': [
+    {'pane': 'w1:p1', 'cwd': '/a', 'repo_root': None, 'branch': None}], 'plans': [{
+    'plan': 'P1', 'lead': None, 'epoch': 1, 'succession': [], 'lanes': [], 'class': 'open',
+    'progress': None, 'blocker_class': None, 'open_asks': None, 'repo_root': None, 'plan_dir': None,
+    'state_updated_at': None, 'server': 'a' * 64, 'updated_at': '2026-01-01T00:00:00Z', 'lead_in_repo': None}]}
+assert fleet_report.valid_report(good)
+for key in sorted(fleet_report.PLAN_KEYS):
+    broken = json.loads(json.dumps(good)); del broken['plans'][0][key]
+    assert not fleet_report.valid_report(broken), 'a plan without %s is refused' % key
+for key in sorted(fleet_report.AGENT_KEYS):
+    broken = json.loads(json.dumps(good)); del broken['agents'][0][key]
+    assert not fleet_report.valid_report(broken), 'an agent without %s is refused' % key
+print('ok')
+PY
+assert_eq "a machine report missing any key is refused" "ok" "$OUT"
+
+# A dry run never hands a machine the map, also on a later report.
+run python3 - "$SCRIPTS" <<'PY'
+import sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import autopilot
+now = [1000.0]
+class IO(object):
+    self_machine = None
+    def __init__(self): self.fleets_sent = []
+    def sources(self): return ['local', 'far']
+    def agents(self, m): return [{'pane': 'w1:p2', 'state': 'working', 'agent': 'claude', 'seq': 1, 'turn': 1, 'you': False, 'cwd': '/r'}]
+    def read(self, m, p): return ''
+    def state(self, m, p): return 'working'
+    def plans(self, m, panes, fleet_text):
+        self.fleets_sent.append(fleet_text)
+        return 'ok', {'plans': [], 'agents': []}
+    def record(self, *a, **k): pass
+    def warn(self, addr, exc): raise exc
+    def label(self, m): return m
+    def identity(self): return {}
+    def save_fleet(self, t): raise AssertionError('a dry run saved the map')
+    def event(self, e, d): pass
+io = IO()
+ap = autopilot.Autopilot(io, clock=lambda: now[0], sleep=lambda s: None, confirm=0, loop=True, dry_run=True)
+for _ in range(3):
+    ap.run_pass(); now[0] += 400
+assert len(io.fleets_sent) >= 4 and all(f is None for f in io.fleets_sent), io.fleets_sent
+print('ok')
+PY
+assert_eq "a dry run hands no machine the map, on any pass" "ok" "$OUT"
+
+# A lead outside --scope is still listed: never mistaken for gone, its successor never prompted.
+iso_world scopelead
+export HERDR_PEERS_AUTOPILOT_GRACE=0
+REPO="$WORK/repo"; mkrepo "$REPO"
+mkstate "$REPO" PLAN_970_scoped "$V5_OPEN"
+pane_claim w2:p1 "$REPO" PLAN_970_scoped --succession local:w1:p2
+set_state local w2:p1 working
+: >"$FAKE_HERDR_DIR/argv.log"   # the claim's own lead notice to the successor is not the loop's
+run "$HELPER" autopilot --loop --passes 3 --interval 0 --scope local:w1
+assert_rc "a scoped loop exits 0" 0
+assert_eq "a working lead outside the scope is not taken for gone" "0" "$(prompt_count)"
 unset TELL_OUT HERDR_PEERS_AUTOPILOT_GRACE
 export XDG_STATE_HOME=$LOOP_XDG_STATE
