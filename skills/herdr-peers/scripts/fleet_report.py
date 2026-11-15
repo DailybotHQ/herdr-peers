@@ -281,50 +281,62 @@ class Git(object):
         return top, branch
 
 
-def age_seconds(stamp, now):
-    """Seconds since an ISO-8601 UTC stamp, or None when it is not one."""
+def recent(stamp, cutoff):
+    """True when an ISO-8601 UTC stamp is at or after `cutoff` (same format:
+    the strings order like the times); a stamp that is not one counts as
+    recent, so an unparseable ask is still awaited."""
     if not isinstance(stamp, str) or not TS_RE.fullmatch(stamp):
-        return None
-    try:
-        import calendar
-        return now - calendar.timegm(time.strptime(stamp[:19], '%Y-%m-%dT%H:%M:%S'))
-    except ValueError:
-        return None
+        return True
+    return stamp[:19] >= cutoff
 
 
-def open_asks(root, server, pane, now=None):
-    """How many asks this pane still awaits, from the delegation log of its
-    server directory; None when the log cannot be counted. An ask launched
-    more than OPEN_ASK_WINDOW ago is not awaited any more."""
-    now = time.time() if now is None else now
+def launched_asks(root, server, cache):
+    """{ask id: latest caller record} of one server's delegation log, parsed
+    once per report (`cache`); {} without a log; None when it cannot be read."""
+    if server in cache:
+        return cache[server]
     path = os.path.join(root, server, 'log.ndjson')
     if not os.path.exists(path):
-        return 0
+        cache[server] = {}
+        return cache[server]
     data = read_small(path, MAX_LOG_BYTES)
     if data is None:
+        cache[server] = None
         return None
     latest = {}
     for line in data.split(b'\n'):
-        if not line.strip():
-            continue
+        if b'"caller"' not in line:
+            continue  # most lines are other roles: skip them before parsing
         try:
             rec = json.loads(line.decode('utf-8'))
         except (ValueError, UnicodeDecodeError):
             continue
         if isinstance(rec, dict) and rec.get('role') == 'caller' and isinstance(rec.get('id'), str):
             latest[rec['id']] = rec
+    cache[server] = dict((k, v) for k, v in latest.items() if v.get('state') == 'launched')
+    return cache[server]
+
+
+def open_asks(root, server, pane, now=None, cache=None):
+    """How many asks this pane still awaits, from the delegation log of its
+    server directory; None when the log cannot be counted. An ask launched
+    more than OPEN_ASK_WINDOW ago is not awaited any more."""
+    now = time.time() if now is None else now
+    latest = launched_asks(root, server, {} if cache is None else cache)
+    if latest is None:
+        return None
+    cutoff = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(now - OPEN_ASK_WINDOW))
     count = 0
     for rec in latest.values():
         if rec.get('state') != 'launched':
             continue
         match = ADDR_RE.match(rec.get('self') or '')
-        age = age_seconds(rec.get('ts'), now)
-        if match and match.group(2) == pane and (age is None or age < OPEN_ASK_WINDOW):
+        if match and match.group(2) == pane and recent(rec.get('ts'), cutoff):
             count += 1
     return count
 
 
-def describe_plan(root, server, rec, panes, git, now=None):
+def describe_plan(root, server, rec, panes, git, now=None, logs=None):
     plan_id = rec['plan'].rsplit('/', 1)[-1]
     lead = rec['lead']
     lead_pane = ADDR_RE.match(lead).group(2) if lead else None
@@ -354,7 +366,7 @@ def describe_plan(root, server, rec, panes, git, now=None):
         'plan_dir': os.path.dirname(path) if path else None, 'class': cls,
         'blocker_class': block_class, 'progress': progress, 'state_updated_at': updated,
         'updated_at': rec['updated_at'],
-        'open_asks': open_asks(root, server, lead_pane, now) if lead_local else None,
+        'open_asks': open_asks(root, server, lead_pane, now, logs) if lead_local else None,
     }
 
 
@@ -484,8 +496,9 @@ def report(panes=None, root=None, now=None, servers=None):
     except OSError as exc:
         out['state'], out['reason'] = 'unknown', 'state root unreadable (%s)' % type(exc).__name__
         found = []
+    logs = {}
     for server, rec in newest_per_plan(found):
-        out['plans'].append(describe_plan(root, server, rec, panes, git, now))
+        out['plans'].append(describe_plan(root, server, rec, panes, git, now, logs))
     for pane in sorted(panes):
         top, branch = git.lookup(panes[pane])
         out['agents'].append({'pane': pane, 'cwd': panes[pane], 'repo_root': top, 'branch': branch})
