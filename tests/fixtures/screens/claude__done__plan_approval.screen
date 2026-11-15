@@ -1,0 +1,40 @@
+
+  ⎿  /plan to preview
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+
+  ─────────────────────────────────────────────────────────────
+   Ready to code?
+
+   Here is Claude's plan:
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+   Add README.md to the lab folder
+
+   Context: UI test in the scratch folder
+   tmp/lab/claude; the folder needs a README.md
+   containing the single line lab.
+
+   - Create README.md in the working directory
+     (tmp/lab/claude/README.md) with the Write tool,
+     containing exactly one line: lab.
+   - Verify by reading the file back and confirming it holds
+     only that line.
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+
+
+
+
+
+
+
+  ─────────────────────────────────────────────────────────────
+   Claude has written up a plan and is ready to execute. Would
+   you like to proceed?
+
+   ❯ 1. Yes, and use auto mode
+     2. Yes, manually approve edits
+     3. Tell Claude what to change
+        shift+tab to approve with this feedback
+
+   ctrl+g to edit in VS Code · ~/.local/share/kit/profile
+   s/claude/p1/plans/a-plan.md

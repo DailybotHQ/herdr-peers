@@ -1,0 +1,40 @@
+
+› Continue: choose the recommended option for each question
+  (first option when none is recommended). Then, as a second
+  UI test, run these two shell commands one at a time and
+  report their output: 'touch created.txt' and 'curl -sI
+  https://example.com'.
+
+
+• Your choices are Red, Small, and Cheese. I’ll run the two
+  shell commands in order and report each output.
+
+• Ran touch created.txt
+  └ (no output)
+
+• Exited (status 6) curl -sI https://example.com
+  └ (no output)
+
+• touch created.txt completed with no output. The curl command
+  returned exit code 6 with no output, so I’m requesting
+  network permission to retry it.
+
+• Running curl -sI https://example.com
+
+
+  Would you like to run the following command?
+
+  Environment: local
+
+  Reason: May I allow network access to retry `curl -sI
+  https://example.com` and report its output?
+
+  $ curl -sI https://example.com
+
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with
+     `curl -sI https://example.com` (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel

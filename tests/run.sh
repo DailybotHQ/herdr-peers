@@ -12,7 +12,7 @@
 set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-ORDER="harness lint protocol helper lead orchestra debate skill templates security repo live"
+ORDER="harness lint protocol helper lead orchestra autopilot debate skill templates security repo live"
 
 available=""
 for s in $ORDER; do

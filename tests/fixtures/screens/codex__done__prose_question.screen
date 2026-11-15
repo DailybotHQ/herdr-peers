@@ -1,0 +1,40 @@
+
+
+› This is a UI test in a scratch folder. Ask me a multiple-
+  choice question using your interactive question tool
+  (request_user_input or equivalent): 3 questions in one call
+  if the tool allows it: 'Which color?' (Red recommended,
+  Green, Blue), 'Which size?' (Small, Medium, Large, none
+  recommended), 'Which toppings?' (Cheese, Olives, Basil).
+  After I answer, reply with one line summarizing my answers
+  and stop. Do not edit files.
+
+
+? Which color?
+
+  • Red (Recommended)
+  • Green
+  • Blue
+
+? Which size?
+
+  • Small
+  • Medium
+  • Large
+
+? Which toppings?
+
+  • Cheese
+  • Olives
+  • Basil
+
+• Please choose an option for each question; I’ll summarize
+  your answers in one line.
+
+  Worked for 9s • 7:59 AM
+
+
+› Ask Codex to do anything
+
+  GPT-6-Luna high · ~/projects/acme/work/site…
+  ? for shortcuts                     ⚠ 1 warning · f2 to view

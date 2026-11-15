@@ -1,0 +1,19 @@
+ age: 10238
+ cf-cache-status: HIT
+ cf-ray: a5ae7e7f1df2180a-BOG
+ alt-svc: h3=":443"; ma=86400
+
+ Took 0.4s
+
+
+ Which fruit?
+
+ - Apple
+ - Banana (Recommended)
+ - Cherry
+
+───────────────────────────────────────────────────────────────
+
+───────────────────────────────────────────────────────────────
+~/projects/acme/work/site/reposit...
+↑15k ↓346 R47k CH98.8% $0.056 3.2%/500k (auto)  grok-4.6 • medi

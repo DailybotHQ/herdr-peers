@@ -1,0 +1,13 @@
+• Working (8m 14s • esc to interrupt)
+
+• Queued follow-up inputs
+
+
+  Which shape should the API take: one route per operation or one
+  generic endpoint? The generic one is smaller but broader.
+
+  › 1. One route per operation (Recommended)
+    2. One generic endpoint
+    3. Other
+
+  enter submit   ^] skip   shift+→ main prompt
