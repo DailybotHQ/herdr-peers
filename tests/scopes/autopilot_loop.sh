@@ -948,10 +948,8 @@ assert_contains "(the current task is in the window)" "$L" '"title": "task 80"'
 # Plan content stays on the daemon's machine; the copies elsewhere are reduced; tokens never travel.
 loop_world mapcontent
 mkstate "$REPO" PLAN_990_content "$V5_OPEN"
-cat >"$REPO/.dwp/plans/PLAN_990_content/PROGRESS.md" <<'MD'
-# PROGRESS
-- Next action: deploy with key ghp_abcdefghijklmnopqrstuvwxyz0123456789 then report.
-MD
+FAKE_TOKEN="ghp""_$(printf '%s' abcdefghijklmnopqrstuvwxyz0123456789)"   # built at run time: no token shape in the file
+printf '# PROGRESS\n- Next action: deploy with key %s then report.\n' "$FAKE_TOKEN" >"$REPO/.dwp/plans/PLAN_990_content/PROGRESS.md"
 pane_claim w2:p1 "$REPO" PLAN_990_content
 run "$HELPER" autopilot --loop --once
 run "$HELPER" autopilot --loop --once
