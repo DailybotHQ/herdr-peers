@@ -21,6 +21,10 @@ State lives in $FAKE_HERDR_DIR (required):
                              (a human answering the question it showed);
                              {"<pane>": {"get": N, "prompt": M}} blocks only
                              those calls (a status probe, or prompts after it)
+  <machine>/keys.json        {"<pane>": [{"screen": TEXT, "state": STATUS}, ...]}: each
+                             `pane send-keys` to that pane shows the next step's
+                             screen and sets the agent's status (a dialog that
+                             moves on when it is keyed); absent = nothing changes
   argv.log                   one JSON line per invocation: {"machine", "argv"}
 
 FAKE_HERDR_FAIL="<group> <verb>" makes that command fail with a server error
@@ -259,6 +263,26 @@ def agent_cmd(srv, verb, tail):
     usage_error("unrecognized subcommand 'agent %s'" % verb)
 
 
+def advance_screen(srv, pane):
+    """A keyed dialog moves on: pop the pane's next scripted step, if any."""
+    path = os.path.join(srv.dir, 'keys.json')
+    script = load_json(path, {})
+    steps = script.get(pane) if isinstance(script, dict) else None
+    if not steps:
+        return
+    step = steps.pop(0)
+    with open(path, 'w', encoding='utf-8') as fh:
+        json.dump(script, fh)
+    with open(srv.pane_file(pane), 'w', encoding='utf-8') as fh:
+        fh.write(step.get('screen', '') + '\n')
+    agents = srv.agents()
+    for agent in agents:
+        if isinstance(agent, dict) and agent.get('pane_id') == pane and step.get('state'):
+            agent['agent_status'] = step['state']
+    with open(os.path.join(srv.dir, 'agents.json'), 'w', encoding='utf-8') as fh:
+        json.dump(agents, fh)
+
+
 def pane_cmd(srv, verb, tail):
     cid = 'cli:pane:' + verb
     pos = positional(tail, VALUE_FLAGS)
@@ -326,6 +350,8 @@ def pane_cmd(srv, verb, tail):
         new = 'w1:p%d' % n
         srv.append_pane(new, '')
         ok(cid, {'pane': srv.pane_object(new), 'type': 'pane_split'})
+    if verb == 'send-keys' and pos:
+        advance_screen(srv, pos[0])
     if verb in ('close', 'run', 'send-text', 'send-keys', 'layout'):
         ok(cid, {'type': 'pane_' + verb.replace('-', '_')})
     usage_error("unrecognized subcommand 'pane %s'" % verb)

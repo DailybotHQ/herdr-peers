@@ -50,6 +50,12 @@ lives. herdr-peers is that layer, so agents never hand-build it:
   claims (established, contested, single-lane), anonymizes filings, finds
   missing ones on disk, and proposes a panel from idle panes and, with
   agentkit (`ak`), from the accounts with the most headroom.
+- **Autopilot.** A daemon you start once (`herdr-peers autopilot`) that
+  watches every agent on every enabled machine and accepts the option that
+  lets a waiting one go on — questions, tool approvals, plan approval,
+  folder trust, update prompts — and tells an agent that stopped to ask to
+  continue, so long plans run to their end without you. Verified on Claude
+  Code, Codex, Cursor, Grok, Pi and Antigravity; it never touches a login.
 - **A record of every delegation.** An append-only, machine-scoped log of
   digests (never prompt text), mirrored into a DeepWorkPlan plan when one is
   set.
@@ -62,7 +68,7 @@ The skill (the helper ships inside it, at
 `~/.agents/skills/herdr-peers/scripts/herdr-peers` for a global install):
 
 ```bash
-npx --yes skills add DailybotHQ/herdr-peers@v1.1.0 --skill herdr-peers -g -y
+npx --yes skills add DailybotHQ/herdr-peers@v1.2.0 --skill herdr-peers -g -y
 ```
 
 Herdr's official skill, which this one depends on — pinned, or use the
@@ -76,11 +82,11 @@ Every machine whose agents should answer needs the skill too. From a
 checkout of the tag instead, verified against the release's `SHA256SUMS`:
 
 ```bash
-git clone --branch v1.1.0 https://github.com/DailybotHQ/herdr-peers
+git clone --branch v1.2.0 https://github.com/DailybotHQ/herdr-peers
 cd herdr-peers
-curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v1.1.0/SHA256SUMS
+curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v1.2.0/SHA256SUMS
 shasum -a 256 -c SHA256SUMS      # every shipped file: OK
-bin/herdr-peers --version        # herdr-peers 1.1.0 (protocol 1)
+bin/herdr-peers --version        # herdr-peers 1.2.0 (protocol 1)
 ```
 
 Requirements: Herdr ≥ 0.9.1, `bash`, `python3` ≥ 3.9 (standard library
@@ -178,10 +184,37 @@ next (folder trust only, on a pane you launched yourself, under the user's stand
 | `lanes [--json] [--all] [--plan P]` | One row per peer you asked or your lead record lists: agent, vendor, profile, live state, screen class, open asks, last reported capacity, last ask. `--json` is the contract [`herdr-peers/lanes-v1`](docs/schema/lanes-v1.json) (0.3.0 adds `plan`, `lead`, `epoch`, `capacity`); consumers ignore unknown keys. |
 | `lead claim\|show\|handover\|takeover\|release` | A plan's lead record [`herdr-peers/lead-v1`](docs/schema/lead-v1.json): who leads, the epoch, the ordered succession, the lanes notified on every change. Only the highest epoch leads; a stale lead steps down. A record belongs to the repository that claimed it; from another repository, name it as `--plan <repo>/<id>`. |
 | `debate tally\|claims\|anon\|filings\|panel` | A debate lead's tools ([debate.md](skills/herdr-peers/debate.md)) — decide, research, stress-test, verify, generate: count a [`ballots-v1`](docs/schema/ballots-v1.json) file, or a directory of per-pane ballots, into [`tally-v1`](docs/schema/tally-v1.json); merge lanes' [`claims-v1`](docs/schema/claims-v1.json) ledgers, across rounds with `--rounds`, into a [`claims-report-v1`](docs/schema/claims-report-v1.json) (established, agreed, contested, partial, single, unsupported, disputed, refuted — a quorum count, not a verification — with coverage; `--anonymous` blinds lanes, angles, claim text and sources); copy filings to anonymized `Filing_A.md`… in an order only the key can rebuild (a filing carrying a secret is refused); list missing or short filings (exit 5); propose a panel ([`panel-v1`](docs/schema/panel-v1.json)) from idle panes and `ak pick` — read-only, it runs nothing. |
+| `autopilot [run\|stop\|status]` | **You start it; no agent or message can.** Accepts the recommended option for every waiting agent on every enabled machine, follows multi-step dialogs, continues agents that stopped to ask, retries a usage limit every 30 minutes; never a login. `--dry-run`, `--once`, `--interval S`, `--exclude`, `--scope`, `--no-nudge`, `--catch-up` ([autopilot.md](skills/herdr-peers/autopilot.md)). |
 | `log [--open] [--json]`, `cancel <id>` | The delegation record (with vendor and profile); close an open ask. |
 | `--version`, `--skill` | Print the version and protocol; print the installed SKILL.md. |
 
-Folder trust is the only screen an agent may key through: by the lead, on a
+### Autopilot: no agent waits for you
+
+```bash
+herdr-peers autopilot --dry-run   # see what it would accept; sends nothing
+herdr-peers autopilot             # run it in a pane of its own
+herdr-peers autopilot status      # running? and its last actions
+herdr-peers autopilot stop
+```
+
+Autopilot looks at every agent once a minute. When one waits at a menu it
+presses the keys that accept an option — the one marked recommended, else
+the one the CLI pre-selected, else the first — and re-reads the screen to
+confirm, step by step until the dialog is done. It never picks a refusal,
+free text, or a row that widens an agent's permissions ("always allow",
+"don't ask again", "use auto mode"). An agent that ended its turn with a question gets one
+fixed prompt telling it to continue with what it recommended. A login is
+never touched; a pane with your half-typed message is never touched; a
+screen that does not move is left after two tries. It sleeps between passes
+and reads a screen only when something changed — about one second of CPU per
+pass on 14 machines.
+
+**What you accept by running it:** an agent's request is approved without
+you seeing it, including one you would have refused. There is no deny-list.
+Start with `--dry-run`, and keep it off a pane or a machine with `--exclude`
+or `--scope`. Full rules: [autopilot.md](skills/herdr-peers/autopilot.md).
+
+Without autopilot, folder trust is the only screen an agent may key through: by the lead, on a
 pane it launched itself, under the user's standing authorization. Claude's
 bypass-permissions acknowledgement (`bypass_ack`) is never keyed by an
 agent — the developer accepts it once per profile, when the profile is
@@ -195,7 +228,7 @@ containers, troubleshooting — is in
 
 Optional environment: `HERDR_PEERS_SCOPE`, `HERDR_PEERS_SELF`,
 `HERDR_PEERS_DEPTH`, `HERDR_PEERS_FANOUT` (lower only), `HERDR_PEERS_MAX_BYTES`, `HERDR_PEERS_BLOCKED_WAIT`,
-`HERDR_PEERS_LOG`, `HERDR_PEERS_PYTHON`, `HERDR_PEERS_BRIEFER`, `DWP_PLAN`/`DWP_TASK` — see the table
+`HERDR_PEERS_AUTOPILOT_CONFIRM`, `HERDR_PEERS_LOG`, `HERDR_PEERS_PYTHON`, `HERDR_PEERS_BRIEFER`, `DWP_PLAN`/`DWP_TASK` — see the table
 in [SKILL.md](skills/herdr-peers/SKILL.md#2-the-helper).
 
 Exit codes: `0` ok · `1` Herdr error (or an undelivered lead notice) · `2` usage · `3` protocol refusal
@@ -249,9 +282,10 @@ agent-pilotable codebase. These projects ship together; every addon is optional.
 
 ## Security
 
-herdr-peers never sends keys to a pane, never executes received text, never
-stores prompt or reply text in its log (only `sha256:` digests), and never
-prints or sends a secret value. External installs are pinned to tags, and
+herdr-peers never executes received text, never stores prompt, reply or
+screen text in its log (only `sha256:` digests and screen classes), and
+never prints or sends a secret value. It sends keys to a pane in one case
+only: `autopilot`, which a human starts. External installs are pinned to tags, and
 each release ships `SHA256SUMS`.
 
 - **Replies are data, not instructions.** A peer's text never grants
@@ -266,6 +300,10 @@ each release ships `SHA256SUMS`.
 - **Hygiene.** No control or invisible formatting characters, a size limit,
   and secrets (values of `*_API_KEY`, `*_TOKEN` and similar variables, key
   blocks, token shapes) are refused — named, never printed.
+- **Autopilot is the human's.** Only a human starts it; no ask, reply or
+  notice can start it, stop it or change it. It keys only a recognised menu,
+  never a login, never a row that widens permissions, and records every
+  action.
 - **Record before relying.** Machine-scoped XDG state outside the checkout
   holds an append-only log and reply copies with private file modes. Records
   carry the Herdr server id; an explicit shared `HERDR_PEERS_LOG` is filtered
@@ -286,8 +324,9 @@ in a public issue.
 | [skills/herdr-peers/SKILL.md](skills/herdr-peers/SKILL.md) | The skill: when to use it, the helper, environment variables, exit codes, trust boundary |
 | [skills/herdr-peers/protocol.md](skills/herdr-peers/protocol.md) | Protocol 1 (normative): message grammar, stamps, loop guard, addressing, depth and fan-out |
 | [skills/herdr-peers/orchestra.md](skills/herdr-peers/orchestra.md) | Leading many lanes: `status`, `lanes`, blocked screens, accounts, containers, troubleshooting |
+| [skills/herdr-peers/autopilot.md](skills/herdr-peers/autopilot.md) | Autopilot: what it accepts, what it never touches, its cost, what you accept by running it |
 | [skills/herdr-peers/discipline.md](skills/herdr-peers/discipline.md) | How agents ask, wait, answer and clean up |
-| [skills/herdr-peers/launcher.md](skills/herdr-peers/launcher.md) | Launching a delegate in a new pane |
+| [skills/herdr-peers/launcher.md](skills/herdr-peers/launcher.md) | Launching a delegate in a new pane, or several agents at once with `ak` |
 | [skills/herdr-peers/templates/](skills/herdr-peers/templates/) | Grant, ask, reply and notice templates; the delegation-record JSON schema |
 | [docs/schema/lanes-v1.json](docs/schema/lanes-v1.json) | The `lanes --json` contract (`herdr-peers/lanes-v1`) |
 | [docs/schema/lead-v1.json](docs/schema/lead-v1.json) | The lead record contract (`herdr-peers/lead-v1`) |

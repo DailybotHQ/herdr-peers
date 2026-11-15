@@ -1,0 +1,36 @@
+
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Fable 5.2 · Claude Team
+ ▝▝   ▝▝   ~/…/repo/tmp/lab/claude
+
+▎ Auto mode is now Claude Code's default permission mode.
+▎ Auto mode lets Claude handle permission prompts automatically.
+▎ Claude checks each tool call for risky actions and prompt
+▎ injection before executing, runs the ones it assesses as
+▎ lower-risk, and blocks the rest.
+▎ https://code.claude.com/docs/en/permission-modes
+
+❯ This is a UI test in a scratch folder. Use the
+  AskUserQuestion tool once, with exactly 3 questions in the
+  same call: (1) single-select 'Which color?' with options Red
+  (mark it Recommended), Green, Blue; (2) single-select 'Which
+  size?' with options Small, Medium, Large and NO recommended
+  option; (3) multi-select 'Which toppings?' with options
+  Cheese, Olives, Basil. After I answer, reply with one line
+  summarizing my answers and stop.
+────────────────────────────────────────────────────────────────
+←  ☐ Color  ☐ Size  ☐ Toppings  ✔ Submit  →
+
+Which color?
+
+❯ 1. Red (Recommended)
+     The color red.
+  2. Green
+     The color green.
+  3. Blue
+     The color blue.
+  4. Type something.
+────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

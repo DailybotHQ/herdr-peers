@@ -1,0 +1,15 @@
+  ✨ Update available! 2.1.0 -> 2.2.0
+
+   Ready to code?
+   Here is the plan:
+   - Create the file
+   - Verify it
+
+   The plan is ready to execute. Would you like to proceed?
+
+   ❯ 1. Yes, and use auto mode
+     2. Yes, manually approve edits
+     3. Tell the agent what to change
+        shift+tab to approve with this feedback
+
+   ctrl+g to edit in VS Code · ~/plans/a-plan.md

@@ -1,0 +1,17 @@
+  interactive question tool if you have one. Then stop.
+
+
+  I'll run these one at a time in the scratch folder,
+  starting with touch created.txt.
+
+  $ touch created.txt Waiting for approval...
+
+────────────────────────────────────────────────────────────────
+ $  touch created.txt in .
+
+ Run this command?
+ Not in allowlist: touch
+  → Run (once) (y)
+    Add Shell(touch) to allowlist? (tab)
+    Run Everything (shift+tab)
+    Skip & tell the agent what to do instead (esc or n)

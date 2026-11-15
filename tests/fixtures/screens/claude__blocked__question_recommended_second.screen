@@ -1,0 +1,40 @@
+     containing the single line lab.
+
+     - Create README.md in the working directory
+       (tmp/lab/claude/README.md) with the Write tool,
+       containing exactly one line: lab.
+     - Verify by reading the file back and confirming it holds
+       only that line.
+
+⏺ Write(README.md)
+  ⎿  Wrote 1 line to README.md
+      1 lab
+
+  Read 1 file
+
+⏺ README.md now exists in the lab folder with the single line
+  lab; I read it back to confirm.
+
+✻ Cogitated for 16s · done 8:05 AM
+
+❯ UI test: use AskUserQuestion once with ONE single-select
+  question 'Which fruit?' with options in this order: Apple,
+  Banana (Recommended), Cherry. The recommended one must be
+  second. After I answer, say which I chose and stop.
+─────────────────────────────────────────────────────────────────
+ ☐ Fruit
+
+Which fruit?
+
+❯ 1. Apple
+     An apple.
+  2. Banana (Recommended)
+     A banana.
+  3. Cherry
+     A cherry.
+  4. Type something.
+─────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+───────────────────────────────────────── add-readme-lab-folder ─

@@ -1,0 +1,40 @@
+  option; (3) multi-select 'Which toppings?' with options
+  Cheese, Olives, Basil. After I answer, reply with one line
+  summarizing my answers and stop.
+
+⏺ User answered Claude's questions:
+  ⎿  · Which color? → Red (Recommended)
+     · Which size? → Small
+     · Which toppings? → Cheese
+
+⏺ Your answers: color Red, size Small, toppings Cheese.
+
+✻ Brewed for 11s · done 7:59 AM
+
+❯ UI test, scratch folder. Do these three things one at a time,
+  in order, each with its own tool call: (1) run the shell
+  command 'touch created.txt'; (2) edit notes.txt to append the
+  line 'world'; (3) fetch https://example.com with your web
+  fetch tool and tell me its title. Then stop.
+
+⏺ Creating empty file created.txt
+  ⎿  $ touch created.txt
+
+────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch
+ to auto mode" below
+ Create empty file created.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ touch created.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and always allow access to /srv/project
+      s/acme/work/site/repos/
+      repo/tmp/lab/claude from this project
+   3. Yes, and switch to auto mode · auto mode handles these
+      prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend

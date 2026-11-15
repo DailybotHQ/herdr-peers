@@ -1,0 +1,19 @@
+
+ Trust project folder?
+ /srv/projects/acme/work/sitean-
+ website/repos/repo/tmp/lab/pi
+
+ This allows pi to load .pi settings and resources, install
+ missing project packages, and execute project extensions.
+
+ → Trust
+   Trust parent folder
+ (/srv/projects/acme/work/sitean
+ -website/repos/repo/tmp/lab)
+   Trust (this session only)
+   Do not trust
+   Do not trust (this session only)
+
+ ↑↓ navigate  enter select  escape/ctrl+c cancel
+
+───────────────────────────────────────────────────────────────
