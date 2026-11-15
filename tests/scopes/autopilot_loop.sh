@@ -316,10 +316,15 @@ assert_eq "its copy is private" "600" "$(python3 -c 'import os,sys; print(oct(os
 python3 - "$(fleet_file)" <<'PY'
 import json, sys
 doc = json.load(open(sys.argv[1]))
-doc['machines'][0]['label'] = 'box\x1b[31m'
-doc['machines'][0]['plans'][0]['lead'] = 'local:w2:p1\x1b]0;x\x07'
+machine = [m for m in doc['machines'] if m['plans'] and m['agents']][0]
+machine['label'] = 'box\x1b[31m'
+machine['plans'][0]['lead'] = 'local:w2:p1\x1b]0;x\x07'
+machine['agents'][0]['branch'] = 'main\x1b[2J'
 json.dump(doc, open(sys.argv[1], 'w'))
 PY
+assert_eq "(the hostile map was written)" "0" "$?"
+run "$HELPER" fleet
+assert_contains "(the hostile label is shown, neutralised)" "$OUT" "box?[31m"
 run "$HELPER" fleet
 if printf '%s' "$OUT" | grep -q "$(printf '\033')"; then t_fail "terminal escapes in a stored map are neutralised in the human view"; else t_ok "terminal escapes in a stored map are neutralised in the human view"; fi
 touch -t 202001010000 "$(fleet_file)"
