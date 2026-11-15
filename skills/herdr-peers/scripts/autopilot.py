@@ -478,9 +478,14 @@ class Autopilot(object):
         self.backoff = {}      # machine -> [passes to skip, last penalty]
         self.known = set()     # machines that have answered at least once
         self.actions = 0
+        self.passes = 0
 
     # -- one pass ---------------------------------------------------------
     def run_pass(self):
+        """One look at every due machine. Returns the pass summary: machines
+        that answered, agents listed, actions taken, seconds spent."""
+        started, before = self.clock(), self.actions
+        self.passes += 1
         sources = self.io.sources()
         due = []
         for machine in sources:
@@ -512,6 +517,11 @@ class Autopilot(object):
         for addr in [a for a in self.panes if a not in seen
                      and a.split(':', 1)[0] in due]:
             del self.panes[addr]
+        return {'pass': self.passes,
+                'machines': sum(1 for agents in listed if agents is not None),
+                'agents': sum(len(agents) for agents in listed if agents is not None),
+                'actions': self.actions - before,
+                'seconds': max(0.0, self.clock() - started)}
 
     def visit(self, machine, agent, addr, first_look):
         memo = self.panes.setdefault(addr, Pane())
