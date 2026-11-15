@@ -439,16 +439,22 @@ def group_header(g, width):
         tone = 'bad' if p.needs_you else ('ok' if p.cls == 'open' else 'dim')
         line.add('▌', tone).add(' %s ' % badge, tone + '_badge').add(' ')
         title = clean((p.detail or {}).get('title'), 120)
-        line.add(p.plan, 'group_title')
-        if title:
-            line.add('  ' + title, 'dim')
         right = []
         if p.total:
-            right.append(('%s %d/%d ' % (bar(p.done, p.total, 10), p.done or 0, p.total), 'accent'))
-        right.append(('  ' + p.label, 'dim'))
-        used = sum(width_of(t) for t, _ in line.segs) + sum(width_of(t) for t, _ in right)
-        if used < width:
-            line.add(' ' * (width - used))
+            pct = int(100 * (p.done or 0) / float(p.total))
+            right.append(('%s %d/%d %3d%% ' % (bar(p.done, p.total, 12), p.done or 0, p.total, pct),
+                          'ok' if p.done == p.total else 'accent'))
+        right.append(('  ' + fit(p.label, 24) + ' ', 'dim'))
+        room = width - sum(width_of(t) for t, _ in line.segs) - sum(width_of(t) for t, _ in right) - 1
+        name = fit(p.plan, max(8, room))
+        line.add(name, 'group_title')
+        room -= width_of(name)
+        if title and room > 8:
+            line.add(fit('  ' + title, room), 'dim')
+            room -= width_of(fit('  ' + title, room))
+        if room > 0:
+            line.add(' ' * room)
+        line.add(' ')
         for text, style in right:
             line.add(text, style)
     else:
@@ -551,6 +557,14 @@ def render_plan(plan, now, width):
         out.append(Line().add('   nobody on the map works on this plan', 'dim'))
     for role, a in plan.members:
         out.append(agent_cells(a, now, width, role))
+    summary = d.get('summary') if isinstance(d.get('summary'), list) else []
+    if summary:
+        out.append(Line())
+        at = parse_ts(d.get('summary_at'))
+        out.append(Line().add(' Summary', 'section').add(
+            ('  from PROGRESS.md, written %s' % age_phrase(now - at)) if at else '  from PROGRESS.md', 'dim'))
+        for text in summary:
+            out.append(Line().add('   ' + clean(text, 300), 'normal'))
     tasks = d.get('tasks') if isinstance(d.get('tasks'), list) else []
     if tasks:
         out.append(Line())
@@ -562,16 +576,8 @@ def render_plan(plan, now, width):
             if not isinstance(t, dict):
                 continue
             mark, style = TASK_MARK.get(t.get('status'), TASK_MARK[None])
-            out.append(Line().add('   %s ' % mark, style).add(pad(clean(t.get('id'), 24), 18), 'dim').add(
+            out.append(Line().add('   %s ' % mark, style).add(pad(clean(t.get('id'), 24), 19) + ' ', 'dim').add(
                 clean(t.get('title'), 200) or '', 'title' if t.get('status') == 'in_progress' else 'normal'))
-    summary = d.get('summary') if isinstance(d.get('summary'), list) else []
-    if summary:
-        out.append(Line())
-        at = parse_ts(d.get('summary_at'))
-        out.append(Line().add(' Summary', 'section').add(
-            ('  from PROGRESS.md, written %s' % age_phrase(now - at)) if at else '  from PROGRESS.md', 'dim'))
-        for text in summary:
-            out.append(Line().add('   ' + clean(text, 300), 'normal'))
     return [fit_line(l, width) for l in out]
 
 
