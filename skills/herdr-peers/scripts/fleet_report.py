@@ -22,6 +22,7 @@ import stat
 import subprocess
 import sys
 import time
+import unicodedata
 
 SCHEMA = 'herdr-peers/plans-v1'
 FLEET_SCHEMA = 'herdr-peers/fleet-v1'
@@ -196,20 +197,43 @@ def newest_per_plan(found):
     return [best[k] for k in sorted(best)][:MAX_PLANS]
 
 
+# Token shapes (the helper's own list, kept here because this module is
+# self-contained): free text on the map never carries one.
+TOKEN_PATTERNS = [
+    re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----'),
+    re.compile(r'\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}\b'),
+    re.compile(r'\bgithub_pat_[A-Za-z0-9_]{40,}\b'),
+    re.compile(r'\bsk-ant-[A-Za-z0-9_-]{20,}'),
+    re.compile(r'\bsk-(proj-)?[A-Za-z0-9]{32,}\b'),
+    re.compile(r'\bxox[abposr]-[A-Za-z0-9-]{10,}'),
+    re.compile(r'\bAKIA[0-9A-Z]{16}\b'),
+]
+SECRET_NAME_RE = re.compile(r'(_API_KEY|_TOKEN|_SECRET|_SECRET_KEY|_ACCESS_KEY|_PASSWORD)$', re.I)
+REDACTED = '[redacted]'
+UNSAFE_CATEGORIES = ('Cc', 'Cf', 'Zl', 'Zp', 'Co', 'Cs')
+
+
+def redact(text):
+    """`text` with token shapes and the values of this machine's secret-named
+    environment variables replaced by [redacted]."""
+    for pattern in TOKEN_PATTERNS:
+        text = pattern.sub(REDACTED, text)
+    for name, value in os.environ.items():
+        if SECRET_NAME_RE.search(name) and len(value) >= 8 and value in text:
+            text = text.replace(value, REDACTED)
+    return text
+
+
 def clean_text(value, limit=TITLE_MAX):
-    """A short single-line text safe to show: control and format characters
-    become spaces, runs of spaces collapse, the result is cut to `limit`."""
+    """A short single-line text safe to show and to copy: control, format
+    (bidi, soft hyphen, tag), separator and private-use characters become
+    spaces, token shapes are redacted, runs of spaces collapse, the result is
+    cut to `limit`."""
     if not isinstance(value, str):
         return None
-    out = []
-    for ch in value[:limit * 4]:
-        code = ord(ch)
-        if code < 32 or code == 127 or 0x80 <= code <= 0x9f or 0x200b <= code <= 0x200f \
-                or 0x202a <= code <= 0x202e or 0x2066 <= code <= 0x2069 or code == 0xfeff:
-            out.append(' ')
-        else:
-            out.append(ch)
-    text = ' '.join(''.join(out).split())
+    text = ''.join(' ' if unicodedata.category(ch) in UNSAFE_CATEGORIES else ch
+                   for ch in value[:limit * 4])
+    text = ' '.join(redact(text).split())
     return text[:limit] or None
 
 

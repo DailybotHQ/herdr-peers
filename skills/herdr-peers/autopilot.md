@@ -308,6 +308,17 @@ the blocker as recorded, and up to 14 lines of the plan's own `PROGRESS.md`
 — the summary its agents keep — so nobody has to ask a lead how a plan is
 going.
 
+Plan content stays on the daemon's machine. The map there carries each
+open plan's detail; the copies the daemon leaves on other machines carry,
+per plan, its identity, class, blocker class, progress, task counts and
+current task, addresses, epoch and repository root — never the summary,
+the task list or the blocker text — and no agent session title or working
+directory. Every free-text field (titles, summary, blocker) is cleaned and
+token shapes (keys, tokens, private-key blocks, and the values of secret-
+named environment variables) are replaced by `[redacted]` before it is
+written. Above 2 MB the map drops plan details first and records
+`fleet_too_large` once.
+
 `herdr-peers fleet ui` is a live watcher over that map, in any terminal:
 
 ```

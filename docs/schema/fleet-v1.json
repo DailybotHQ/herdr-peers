@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "herdr-peers/fleet-v1",
   "title": "herdr-peers fleet map (fleet-v1)",
-  "description": "What `herdr-peers fleet --json` prints: the map the autopilot loop keeps of every enabled machine, its agents, their repositories and the plans with a lead record, merged from each machine's plans-v1 report and Herdr's agent listing. The daemon writes it to <state root>/herdr-peers/fleet.json on its own machine and leaves a copy on every machine it collects a report from. Pane addresses inside a machine entry are as that machine names them (`local:` is that machine). `age_seconds` and `stale` are added by the reader. Never carries screen text, file content, prompt text or secrets.",
+  "description": "What `herdr-peers fleet --json` prints: the map the autopilot loop keeps of every enabled machine, its agents, their repositories and the plans with a lead record, merged from each machine's plans-v1 report and Herdr's agent listing. The daemon writes it to <state root>/herdr-peers/fleet.json on its own machine and leaves a copy on every machine it collects a report from. Pane addresses inside a machine entry are as that machine names them (`local:` is that machine). `age_seconds` and `stale` are added by the reader. Never carries screen text, file content, prompt text or secrets. The daemon's own copy carries each open plan's detail; the copies it leaves on other machines carry per plan its identity, class, blocker class, progress digest, task counts, current task, addresses, epoch, update time and repository root, never its detail (detail is null), and no agent session title or working directory. Every free-text field is cleaned and token shapes are redacted before it is written.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -209,7 +209,9 @@
                 "tasks_done",
                 "tasks_total",
                 "current_task",
-                "detail"
+                "detail",
+                "progress",
+                "updated_at"
               ],
               "properties": {
                 "plan": {
@@ -421,6 +423,21 @@
                       "description": "Index of the first listed task: a plan with more than 64 tasks is shown as a window around its current task."
                     }
                   }
+                },
+                "progress": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[0-9a-f]{16}$",
+                  "description": "The plan's progress digest (changes only when the plan advances)."
+                },
+                "updated_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "When its lead record was last written."
                 }
               }
             }

@@ -705,8 +705,19 @@ class PlanLoop(object):
         self.ap, self.io = ap, ap.io
         self.machines = {}     # machine -> {'at', 'state', 'report'}
         self.memos = {}        # (machine, plan id) -> PlanMemo
-        self.fleet_text = None
+        self.fleet_text = None      # the daemon's own map
+        self.remote_text = None     # the reduced copy left on other machines
         self.fleet_key = None
+        self.too_large = False
+        # A daemon that restarts hands the machines the last map at once
+        # instead of waiting a full report cycle for its first one.
+        load = getattr(self.io, 'load_fleet', None)
+        last = load() if load is not None and not ap.dry_run else None
+        if isinstance(last, dict) and isinstance(last.get('machines'), list):
+            try:
+                self.remote_text = json.dumps(remote_copy(last), sort_keys=True)
+            except (TypeError, ValueError, AttributeError, KeyError):
+                self.remote_text = None
 
     # -- reports -----------------------------------------------------------
     def due(self, machine, rows, now):
@@ -742,7 +753,7 @@ class PlanLoop(object):
             panes = dict((r['pane'], r['cwd']) for r in listed[machine]
                          if r.get('cwd') and r.get('in_scope', True))
             try:
-                return self.io.plans(machine, panes, None if self.ap.dry_run else self.fleet_text)
+                return self.io.plans(machine, panes, None if self.ap.dry_run else self.remote_text)
             except Exception as exc:  # one machine never stops the pass
                 self.io.warn(machine, exc)
                 return 'unknown', None
@@ -953,6 +964,7 @@ class PlanLoop(object):
                               'epoch': plan['epoch'], 'succession': plan['succession'],
                               'lanes': plan['lanes'], 'repo_root': plan['repo_root'],
                               'blocker_class': plan['blocker_class'],
+                              'progress': plan.get('progress'), 'updated_at': plan.get('updated_at'),
                               'tasks_done': plan.get('tasks_done'),
                               'tasks_total': plan.get('tasks_total'),
                               'current_task': plan.get('current_task'),
@@ -966,21 +978,54 @@ class PlanLoop(object):
         key = hashlib.sha256(json.dumps(body, sort_keys=True).encode('utf-8')).hexdigest()
         if key != self.fleet_key:
             self.fleet_key = key
-            body['generated_at'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now))
-            self.fleet_text = json.dumps(body, sort_keys=True)
+            stamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now))
+            body['generated_at'] = stamp
+            text = json.dumps(body, sort_keys=True)
+            if len(text.encode('utf-8')) > MAP_MAX_BYTES:
+                # Too big for the map: plan details go first; the rest of the map stays.
+                for m in body['machines']:
+                    for p in m['plans']:
+                        p['detail'] = None
+                text = json.dumps(body, sort_keys=True)
+                if not self.too_large:
+                    self.too_large = True
+                    self.ap.record('local:-', None, Decision('leave', 'fleet_too_large',
+                                                             'plan details left out of the map'), 'left')
+            self.fleet_text = text  # this machine's own map, with plan details
+            self.remote_text = json.dumps(remote_copy(body), sort_keys=True)
         if not self.ap.dry_run:
             self.io.save_fleet(self.fleet_text)
 
 
+MAP_MAX_BYTES = 2 * 1024 * 1024 - 4096   # under the store's 2 MB cap, with room to spare
+REMOTE_PLAN_KEYS = ('plan', 'class', 'blocker_class', 'progress', 'lead', 'lanes', 'succession',
+                    'epoch', 'updated_at', 'repo_root', 'situation',
+                    'tasks_done', 'tasks_total', 'current_task')
+
+
+def remote_copy(body):
+    """The map as it is left on other machines: plan content stays on the
+    daemon's machine. Per plan its identity, class, blocker class, progress
+    digest and counts, current task, addresses, epoch, update time and
+    repository root — never its detail (summary, task list, blocker text);
+    per agent no session title and no working directory."""
+    out = dict(body, machines=[])
+    for m in body['machines']:
+        plans = []
+        for p in m.get('plans') or []:
+            q = dict((k, p.get(k)) for k in REMOTE_PLAN_KEYS)
+            q['detail'] = None  # the summary, task list and blocker text stay on the daemon's machine
+            plans.append(q)
+        agents = [dict(a, title=None, cwd=None) for a in m.get('agents') or []]
+        out['machines'].append(dict(m, plans=plans, agents=agents))
+    return out
+
+
 def clean_title(value, limit=120):
-    """An agent's session title, single line, safe to show and cut."""
-    if not isinstance(value, str):
-        return None
-    text = ' '.join(''.join(' ' if (ord(c) < 32 or ord(c) == 127 or 0x80 <= ord(c) <= 0x9f
-                                    or 0x200b <= ord(c) <= 0x200f or 0x202a <= ord(c) <= 0x202e
-                                    or 0x2066 <= ord(c) <= 0x2069 or ord(c) == 0xfeff) else c
-                            for c in value[:limit * 4]).split())
-    return text[:limit] or None
+    """An agent's session title, single line, safe to show and cut (the same
+    cleaner and token redactor as every free text on the map)."""
+    import fleet_report
+    return fleet_report.clean_text(value, limit)
 
 
 def local_pane(addr):

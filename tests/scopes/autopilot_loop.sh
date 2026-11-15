@@ -944,5 +944,62 @@ assert_eq "a finished plan carries no detail" "null" "$(plan_field "$R" PLAN_941
 L=$(plan_field "$R" PLAN_942_long detail)
 assert_contains "a long plan is shown as a window around its current task" "$L" '"tasks_from": 36'
 assert_contains "(the current task is in the window)" "$L" '"title": "task 80"'
+
+# Plan content stays on the daemon's machine; the copies elsewhere are reduced; tokens never travel.
+loop_world mapcontent
+mkstate "$REPO" PLAN_990_content "$V5_OPEN"
+cat >"$REPO/.dwp/plans/PLAN_990_content/PROGRESS.md" <<'MD'
+# PROGRESS
+- Next action: deploy with key ghp_abcdefghijklmnopqrstuvwxyz0123456789 then report.
+MD
+pane_claim w2:p1 "$REPO" PLAN_990_content
+run "$HELPER" autopilot --loop --once
+run "$HELPER" autopilot --loop --once
+LOCAL=$(cat "$(fleet_file)")
+REMOTE=$(cat "$(box_home)/.local/state/herdr-peers/fleet.json" 2>/dev/null)
+assert_contains "the daemon's own map keeps the plan's summary" "$LOCAL" "Next action: deploy with key"
+assert_contains "with token shapes redacted" "$LOCAL" "[redacted]"
+assert_not_contains "and never the token" "$LOCAL" "ghp_abcdefghij"
+assert_contains "(the other machine has a copy)" "$REMOTE" "PLAN_990_content"
+assert_not_contains "the copy elsewhere carries no plan summary" "$REMOTE" "Next action"
+assert_not_contains "no plan detail" "$REMOTE" '"summary"'
+assert_contains "but the plan's task counts and current task" "$REMOTE" '"tasks_total": 2'
+assert_not_contains "no working directories" "$REMOTE" "\"cwd\": \"/"
+assert_contains "but the plan's progress digest" "$REMOTE" '"progress": "'
+run python3 - "$SCRIPTS" <<'PY'
+import sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import autopilot, fleet_report
+t = 'x؜­\U000E0041y sk-ant-' + 'a' * 30 + ' z'
+assert fleet_report.clean_text(t) == 'x y [redacted] z', repr(fleet_report.clean_text(t))
+assert autopilot.clean_title(t) == 'x y [redacted] z'
+# Over the size cap, plan details go first and it is recorded once.
+class IO(object):
+    self_machine = None
+    def __init__(self): self.saved, self.records = [], []
+    def label(self, m): return m
+    def identity(self): return {}
+    def save_fleet(self, text): self.saved.append(text)
+class AP(object):
+    dry_run = False
+    panes = {}
+    def __init__(self, io): self.io = io
+    def record(self, addr, kind, choice, outcome, plan=None): self.io.records.append(choice.cls)
+io = IO(); ap = AP(io)
+loop = autopilot.PlanLoop(ap)
+huge = {'title': 'x', 'tasks': [], 'tasks_from': 0, 'blocker': None, 'summary': ['y' * 200] * 14, 'summary_at': None}
+plans = [{'plan': 'P%d' % i, 'class': 'open', 'lead': None, 'epoch': 1, 'succession': [], 'lanes': [],
+          'repo_root': '/r', 'blocker_class': None, 'progress': None, 'updated_at': None,
+          'detail': dict(huge, title='t' * 100 + str(i))} for i in range(900)]
+loop.machines['local'] = {'at': 0, 'state': 'ok', 'report': {'plans': plans, 'agents': []}}
+loop.publish({'local': []}, 1000.0)
+loop.fleet_key = None
+loop.publish({'local': []}, 1001.0)
+assert len(io.saved[-1].encode()) <= autopilot.MAP_MAX_BYTES, len(io.saved[-1])
+assert '"detail": null' in io.saved[-1] and io.records.count('fleet_too_large') == 1, io.records
+print('ok')
+PY
+assert_eq "free text is cleaned and redacted; a map over the cap drops plan details, recorded once" "ok" "$OUT"
 unset TELL_OUT HERDR_PEERS_AUTOPILOT_GRACE
 export XDG_STATE_HOME=$LOOP_XDG_STATE

@@ -341,4 +341,58 @@ run "$HELPER" fleet ui --snapshot --width 10
 assert_rc "an absurd width is a usage error" 2
 run "$HELPER" fleet ui --snapshot --group machine
 assert_contains "--group machine groups by machine" "$OUT" "▣ Mac"
+
+# --- a malformed or hostile map never takes the watcher down ------------------------------------
+run python3 - "$UI_SCRIPTS" <<'PY'
+import json, os, sys, tempfile, time
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import fleet_ui as ui
+def base():
+    return {'schema': 'herdr-peers/fleet-v1', 'daemon': {}, 'machines': [{
+        'machine': 'local', 'label': 'Mac', 'agents': [{'pane': 'w1:p1', 'plans': []}],
+        'plans': [{'plan': 'P', 'class': 'open', 'detail': {
+            'title': 't', 'tasks': [{'id': '1', 'title': 'x', 'status': 'pending'}], 'summary': [],
+            'summary_at': None, 'blocker': None, 'tasks_from': 0}}]}]}
+def write(doc):
+    path = os.path.join(tempfile.mkdtemp(), 'fleet.json')
+    json.dump(doc, open(path, 'w'))
+    return path
+cases = {}
+b = base(); b['machines'][0]['agents'] = 5; cases['agents is a number'] = b
+b = base(); b['machines'][0]['plans'] = 7; cases['plans is a number'] = b
+b = base(); b['machines'][0]['machine'] = ['x']; cases['an unhashable machine'] = b
+b = base(); b['machines'][0]['agents'][0]['plans'] = 3; cases['agent roles is a number'] = b
+b = base(); b['machines'][0]['plans'][0]['detail']['tasks'] = [{'status': ['x']}]; cases['an unhashable task status'] = b
+b = base(); b['machines'][0]['plans'][0]['detail']['summary'] = [1, 2]; cases['a summary of numbers'] = b
+for name, doc in cases.items():
+    out = ui.snapshot(ui.FileSource(write(doc)), time.time(), 100)
+    assert 'map unreadable' in out, (name, out[:200])
+# the live app keeps running on such a map
+class Term(object):
+    keys = ['q']
+    def size(self): return 120, 40
+    def clear(self): pass
+    def draw(self, y, line): self.last = line
+    def flush(self): pass
+    def read_key(self, t): return self.keys.pop(0) if self.keys else 'q'
+    def last_mouse(self): return None
+app = ui.App(Term(), ui.FileSource(write(cases['agents is a number'])), link_factory=lambda f: None)
+assert app.run() == 0
+# a symlink and an oversized file are refused
+good = write(base())
+link = good + '.link'
+os.symlink(good, link)
+assert 'map unreadable' in ui.snapshot(ui.FileSource(link), time.time(), 100), 'a symlinked map is refused'
+big = os.path.join(tempfile.mkdtemp(), 'fleet.json')
+with open(big, 'w') as fh:
+    fh.write(' ' * (ui.MAX_MAP_BYTES + 10))
+assert 'map unreadable' in ui.snapshot(ui.FileSource(big), time.time(), 100), 'an oversized map is refused'
+assert 'map unreadable' not in ui.snapshot(ui.FileSource(good), time.time(), 100)
+# format characters never reach the screen
+dirty = 'a؜b­c\U000E0041d‮e​f'
+assert ui.clean(dirty) == 'a b c d e f', repr(ui.clean(dirty))
+print('ok')
+PY
+assert_eq "malformed maps, symlinks, oversized files and format characters are handled" "ok" "$OUT"
 export XDG_STATE_HOME=$UI_XDG_STATE

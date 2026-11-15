@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import subprocess
 import time
 import unicodedata
@@ -57,17 +58,86 @@ ROLE_MARK = {'lead': '★', 'lane': '·', 'successor': '↳'}
 TASK_MARK = {'completed': ('✓', 'ok'), 'skipped': ('–', 'dim'), 'in_progress': ('▶', 'accent'),
              'blocked': ('■', 'bad'), 'pending': ('○', 'dim'), None: ('?', 'dim')}
 
-_BAD = re.compile('[\x00-\x1f\x7f-\x9f​-‏‪-‮⁦-⁩﻿]')
+UNSAFE_CATEGORIES = ('Cc', 'Cf', 'Zl', 'Zp', 'Co', 'Cs')
+MAX_MAP_BYTES = 2 * 1024 * 1024
+NOFOLLOW = getattr(os, 'O_NOFOLLOW', 0)
 
 
 def clean(value, limit=400):
-    """A single printable line: controls, bidi and zero-width characters become
-    spaces, runs of spaces collapse. Data from the map or a screen is shown,
-    never interpreted."""
+    """A single printable line: control, format (bidi, zero-width, soft
+    hyphen, tag), separator and private-use characters become spaces, runs
+    of spaces collapse. Data from the map or a screen is shown, never
+    interpreted."""
     if value is None:
         return ''
-    text = _BAD.sub(' ', str(value)[:limit * 2])
+    text = ''.join(' ' if unicodedata.category(c) in UNSAFE_CATEGORIES else c
+                   for c in str(value)[:limit * 2])
     return ' '.join(text.split())[:limit]
+
+
+def _str(v):
+    return v is None or isinstance(v, str)
+
+
+def valid_fleet(doc):
+    """True when `doc` has the fleet-v1 shape the watcher reads: every
+    container the type it must be, every key a string. A copy of the map can
+    come from another machine's daemon: anything else is refused whole."""
+    if not isinstance(doc, dict) or doc.get('schema') != SCHEMA:
+        return False
+    if not isinstance(doc.get('machines'), list) or not isinstance(doc.get('daemon', {}), dict):
+        return False
+    for m in doc['machines']:
+        if not isinstance(m, dict) or not isinstance(m.get('machine'), str) or not _str(m.get('label')):
+            return False
+        if not isinstance(m.get('agents', []), list) or not isinstance(m.get('plans', []), list):
+            return False
+        for a in m.get('agents', []):
+            if not isinstance(a, dict) or not isinstance(a.get('pane'), str):
+                return False
+            if not all(_str(a.get(k)) for k in ('kind', 'state', 'cwd', 'repo_root', 'branch',
+                                                 'title', 'state_since')):
+                return False
+            roles = a.get('plans', [])
+            if not isinstance(roles, list) or not all(
+                    isinstance(r, dict) and isinstance(r.get('plan'), str) and _str(r.get('role'))
+                    for r in roles):
+                return False
+        for p in m.get('plans', []):
+            if not isinstance(p, dict) or not isinstance(p.get('plan'), str):
+                return False
+            if not all(_str(p.get(k)) for k in ('class', 'lead', 'repo_root', 'blocker_class',
+                                                 'situation')):
+                return False
+            for k in ('tasks_done', 'tasks_total', 'epoch'):
+                v = p.get(k)
+                if v is not None and (not isinstance(v, int) or isinstance(v, bool)):
+                    return False
+            cur = p.get('current_task')
+            if cur is not None and not (isinstance(cur, dict) and _str(cur.get('id'))
+                                        and _str(cur.get('title'))):
+                return False
+            d = p.get('detail')
+            if d is None:
+                continue
+            if not isinstance(d, dict) or not _str(d.get('title')) or not _str(d.get('summary_at')):
+                return False
+            if not isinstance(d.get('tasks', []), list) or not all(
+                    isinstance(t, dict) and _str(t.get('id')) and _str(t.get('title'))
+                    and _str(t.get('status')) for t in d.get('tasks', [])):
+                return False
+            summary = d.get('summary')
+            if summary is not None and not (isinstance(summary, list)
+                                            and all(isinstance(x, str) for x in summary)):
+                return False
+            b = d.get('blocker')
+            if b is not None and not (isinstance(b, dict) and _str(b.get('reason'))
+                                      and _str(b.get('needs'))):
+                return False
+            first = d.get('tasks_from', 0)
+            if not isinstance(first, int) or isinstance(first, bool):
+                return False
+    return True
 
 
 def width_of(text):
@@ -164,15 +234,23 @@ class FileSource(object):
         if key == self.key:
             return False
         self.key = key
+        doc = None
         try:
-            with open(self.path, 'r', encoding='utf-8') as fh:
-                doc = json.load(fh)
-        except (OSError, ValueError, RecursionError):
-            self.fleet, self.error = None, 'unreadable map'
-            return True
-        if not isinstance(doc, dict) or doc.get('schema') != SCHEMA \
-                or not isinstance(doc.get('machines'), list):
-            self.fleet, self.error = None, 'not a fleet-v1 map'
+            fd = os.open(self.path, os.O_RDONLY | NOFOLLOW)
+            try:
+                info = os.fstat(fd)
+                if stat.S_ISREG(info.st_mode) and info.st_size <= MAX_MAP_BYTES:
+                    data = os.read(fd, MAX_MAP_BYTES + 1)
+                    if len(data) <= MAX_MAP_BYTES:
+                        doc = json.loads(data.decode('utf-8'))
+            finally:
+                os.close(fd)
+        except (OSError, ValueError, UnicodeDecodeError, RecursionError):
+            doc = None
+        if not valid_fleet(doc):
+            # Unreadable, too big, a symlink, or not the fleet-v1 shape: shown as
+            # such, and the watcher keeps running.
+            self.fleet, self.error = None, 'map unreadable (not a valid fleet-v1 map)'
             return True
         self.fleet, self.error = doc, None
         return True

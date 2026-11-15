@@ -3248,6 +3248,10 @@ class AutopilotIO(object):
             return 'unknown', None
         return 'ok', report
 
+    def load_fleet(self):
+        """This machine's last map, or None."""
+        return load_fleet_report().read_fleet()[0]
+
     def save_fleet(self, text):
         """Keep this machine's copy of the map current (see `plans`)."""
         if text:
