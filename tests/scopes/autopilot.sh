@@ -427,4 +427,6 @@ print('ok')
 PY
 assert_rc "turn detection, the nudge cap, the usage-limit retry, backoff, repeated looks and the stuck guard hold" 0
 assert_eq "(scripted I/O ran to its end)" "ok" "$OUT"
+# shellcheck source-path=SCRIPTDIR source=autopilot_loop.sh
+. "$ROOT/tests/scopes/autopilot_loop.sh"
 unset HERDR_PEERS_AUTOPILOT_CONFIRM

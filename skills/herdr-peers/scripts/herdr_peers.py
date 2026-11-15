@@ -2840,6 +2840,53 @@ def cmd_debate(args):
     raise Stop(EXIT_USAGE, 'debate needs a sub-verb: tally, claims, anon, filings or panel')
 
 
+# ---------------------------------------------------------------- plans
+
+def load_fleet_report():
+    """The self-contained machine report module (scripts/fleet_report.py)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sys.dont_write_bytecode = True  # no __pycache__ in the skill directory
+    import fleet_report
+    return fleet_report
+
+
+def local_pane_dirs():
+    """{pane id: working directory} of this server's agents, or {} outside
+    Herdr or when the listing fails: the report then omits repositories."""
+    if os.environ.get('HERDR_ENV') != '1':
+        return {}
+    rc, out, _err = herdr(['agent', 'list'], timeout=12)
+    try:
+        agents = json.loads(out)['result']['agents'] if rc == 0 else []
+    except (ValueError, KeyError, TypeError):
+        agents = []
+    panes = {}
+    for a in agents if isinstance(agents, list) else []:
+        if isinstance(a, dict) and isinstance(a.get('pane_id'), str) and isinstance(a.get('cwd'), str):
+            panes[a['pane_id']] = a['cwd']
+    return panes
+
+
+def cmd_plans(args):
+    """The plans led on this machine: read-only, and usable outside a pane
+    (the autopilot daemon asks every machine the same question)."""
+    report = load_fleet_report().report(local_pane_dirs())
+    if args.json:
+        print(json.dumps(report, sort_keys=True, indent=1))
+        return EXIT_OK if report['state'] == 'ok' else EXIT_HERDR
+    if report['state'] != 'ok':
+        raise Stop(EXIT_HERDR, 'plans: unknown (%s)' % safe(report['reason']))
+    if not report['plans']:
+        print('no plan has a lead record on this machine (`herdr-peers lead claim --plan P`)')
+        return EXIT_OK
+    print('%-44s %-11s %-18s %5s  %s' % ('PLAN', 'CLASS', 'LEAD', 'EPOCH', 'REPOSITORY'))
+    for plan in report['plans']:
+        print('%-44s %-11s %-18s %5d  %s' % (
+            safe(plan['plan'])[:44], plan['class'], safe(plan['lead'] or '-'), plan['epoch'],
+            safe(plan['repo_root'] or '-')))
+    return EXIT_OK
+
+
 # ---------------------------------------------------------------- autopilot
 
 class AutopilotIO(object):
@@ -3250,6 +3297,9 @@ def build_parser():
                     'started')
     ap.add_argument('--scope', help='allow-list: *, <machine>, <machine>:<workspace>, '
                     'comma-separated (default: every enabled machine)')
+    pl = sub.add_parser('plans', help='the plans led on this machine, with each plan\'s state '
+                        '(read-only; works outside a Herdr pane)')
+    pl.add_argument('--json', action='store_true', help='herdr-peers/plans-v1 JSON')
     for sp in (dt, da, dc, df, dp):
         sp.add_argument('--pane', help="this session's pane id (w1:p2); wins over HERDR_PANE_ID")
     dp.add_argument('--json', action='store_true', help='herdr-peers/panel-v1 JSON')
@@ -3259,7 +3309,7 @@ def build_parser():
 VERBS = {'ask': cmd_ask, 'reply': cmd_reply, 'check': cmd_check, 'wait': cmd_wait,
          'list': cmd_list, 'log': cmd_log, 'cancel': cmd_cancel, 'status': cmd_status,
          'lanes': cmd_lanes, 'notify': cmd_notify, 'lead': cmd_lead,
-         'debate': cmd_debate, 'autopilot': cmd_autopilot}
+         'debate': cmd_debate, 'autopilot': cmd_autopilot, 'plans': cmd_plans}
 
 
 def main(argv=None):
