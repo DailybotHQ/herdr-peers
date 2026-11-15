@@ -290,30 +290,57 @@ def recent(stamp, cutoff):
     return stamp[:19] >= cutoff
 
 
+def caller_records(path):
+    """{ask id: (state, self, ts)} of the latest caller record per ask in a log file (opened without following a symlink,
+    at most MAX_LOG_BYTES), streamed so memory stays flat whatever its size;
+    None when it cannot be read."""
+    try:
+        fd = os.open(path, os.O_RDONLY | NOFOLLOW)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_LOG_BYTES:
+            os.close(fd)
+            return None
+        handle = os.fdopen(fd, 'rb')
+    except OSError:
+        os.close(fd)
+        return None
+    latest = {}
+    with handle:
+        try:
+            for line in handle:
+                if b'"caller"' not in line:
+                    continue  # most lines are other roles: skip them before parsing
+                try:
+                    rec = json.loads(line.decode('utf-8'))
+                except (ValueError, UnicodeDecodeError):
+                    continue
+                if isinstance(rec, dict) and rec.get('role') == 'caller' \
+                        and isinstance(rec.get('id'), str):
+                    # Only what the count needs is kept: memory stays flat.
+                    latest[rec['id']] = (rec.get('state'), rec.get('self'), rec.get('ts'))
+        except OSError:
+            return None
+    return latest
+
+
 def launched_asks(root, server, cache):
-    """{ask id: latest caller record} of one server's delegation log, parsed
-    once per report (`cache`); {} without a log; None when it cannot be read."""
+    """The asks still `launched` in one server's delegation log, as (state,
+    self, ts), parsed once per report (`cache`); [] without a log; None when
+    it cannot be read."""
     if server in cache:
         return cache[server]
     path = os.path.join(root, server, 'log.ndjson')
     if not os.path.exists(path):
-        cache[server] = {}
+        cache[server] = []
         return cache[server]
-    data = read_small(path, MAX_LOG_BYTES)
-    if data is None:
+    latest = caller_records(path)
+    if latest is None:
         cache[server] = None
         return None
-    latest = {}
-    for line in data.split(b'\n'):
-        if b'"caller"' not in line:
-            continue  # most lines are other roles: skip them before parsing
-        try:
-            rec = json.loads(line.decode('utf-8'))
-        except (ValueError, UnicodeDecodeError):
-            continue
-        if isinstance(rec, dict) and rec.get('role') == 'caller' and isinstance(rec.get('id'), str):
-            latest[rec['id']] = rec
-    cache[server] = dict((k, v) for k, v in latest.items() if v.get('state') == 'launched')
+    cache[server] = [v for v in latest.values() if v[0] == 'launched']
     return cache[server]
 
 
@@ -327,11 +354,9 @@ def open_asks(root, server, pane, now=None, cache=None):
         return None
     cutoff = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(now - OPEN_ASK_WINDOW))
     count = 0
-    for rec in latest.values():
-        if rec.get('state') != 'launched':
-            continue
-        match = ADDR_RE.match(rec.get('self') or '')
-        if match and match.group(2) == pane and recent(rec.get('ts'), cutoff):
+    for _state, self_addr, stamp in latest:
+        match = ADDR_RE.match(self_addr or '') if isinstance(self_addr, str) else None
+        if match and match.group(2) == pane and recent(stamp, cutoff):
             count += 1
     return count
 
