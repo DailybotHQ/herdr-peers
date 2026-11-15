@@ -9,6 +9,25 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-11-15
+
+### Fixed
+
+- **Autopilot left a question that shows a preview beside its options.**
+  The preview box runs several lines under the last option, more than a
+  live menu was allowed to have beneath it, so the pane was recorded as
+  `unknown` and never answered. A block may now have up to 16 lines under
+  it when one of them says that Enter selects. Found on a real pane.
+- **The recommended mark is recognised in other languages and on a wrapped
+  label line.** `(Recomendado)`, `(Recomendada)`, `(Recommandé)`,
+  `(Empfohlen)` and `(Consigliato)` count like `(Recommended)`, also when
+  the label wraps and the mark sits on its second or third line.
+- An option's label ends at a wide gap, so text of a preview drawn on the
+  same line is never read as part of the label (it could have named a
+  refusal or a permission-widening phrase).
+- Fixtures `claude__blocked__question_with_preview` and
+  `claude__blocked__question_preview_recommended_third`.
+
 ## [1.2.1] - 2026-11-15
 
 ### Fixed

@@ -1,0 +1,23 @@
+
+─────────────────────────────────────────────────────────────────────────────────────
+ ☐ Viewer
+
+│ The lists fit existing components. The only missing piece is a read-only viewer
+│ for a document. It proposes a new component. Do you approve it?
+
+❯ 1. Yes, create                  ┌───────────────────────────────────────────────┐
+    DocumentViewer                │ Library                    [Upload document]  │
+    (Recomendado)                 │ - Documents --------+ + Selected -----------+ │
+  2. No; list + download only     │   | Guide   | PDF   | | Guide.pdf | source  | │
+  3. Reuse the expandable         │   | Notes   | DOCX  | | always allow edits  | │
+    card                          │   +-----------------+ +---------------------+ │
+                                  │   Facts   Scope: Team / Organization          │
+                                  │   | Fact              Source | Captured |     │
+                                  └───────────────────────────────────────────────┘
+
+                                  Notes: press n to add notes
+
+─────────────────────────────────────────────────────────────────────────────────────
+  Chat about this
+
+Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel
