@@ -872,7 +872,8 @@ assert fleet_report.task_progress(state)[2]['id'] is None, 'a task id outside th
 report = {'schema': 'herdr-peers/plans-v1', 'state': 'ok', 'agents': [], 'plans': [{
     'plan': 'P1', 'lead': None, 'epoch': 1, 'succession': [], 'lanes': [], 'class': 'open',
     'progress': None, 'blocker_class': None, 'open_asks': None, 'repo_root': None, 'plan_dir': None,
-    'state_updated_at': None, 'tasks_done': 1, 'tasks_total': 2,
+    'state_updated_at': None, 'tasks_done': 1, 'tasks_total': 2, 'server': 'a' * 64,
+    'updated_at': '2026-01-01T00:00:00Z', 'lead_in_repo': None, 'detail': None,
     'current_task': {'id': 'T-1', 'title': 'bad\x1b[0m'}}]}
 assert not fleet_report.valid_report(report), 'a raw control character in a task title is refused'
 report['plans'][0]['current_task']['title'] = 'fine'
