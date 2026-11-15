@@ -198,7 +198,10 @@ def classify(state):
     if not isinstance(state, dict):
         return 'unreadable', None, None
     tasks = state.get('tasks')
-    if not isinstance(tasks, list) or not tasks or len(tasks) > 4096:
+    if tasks is None and state.get('status') in TASK_STATUSES:
+        tasks = []  # a state that keeps only its top-level status
+    if not isinstance(tasks, list) or (not tasks and state.get('status') not in TASK_STATUSES) \
+            or len(tasks) > 4096:
         return 'unreadable', None, None
     statuses, satisfied = [], 0
     for task in tasks:
@@ -214,7 +217,8 @@ def classify(state):
     blocker = state.get('blocked') if 'blocked' in state else state.get('blocker')
     if blocker is not None and not isinstance(blocker, dict):
         return 'unreadable', None, None
-    done = all(s in ('completed', 'skipped') for s in statuses) and 'completed' in statuses
+    done = bool(statuses) and all(s in ('completed', 'skipped') for s in statuses) \
+        and 'completed' in statuses
     if top == 'completed' or (top is None and done):
         cls = 'completed'
     elif blocker or top == 'blocked' or 'blocked' in statuses:
@@ -367,17 +371,26 @@ def describe_plan(root, server, rec, panes, git, now=None, logs=None):
     lead_pane = ADDR_RE.match(lead).group(2) if lead else None
     lead_local = bool(lead) and ADDR_RE.match(lead).group(1) == 'local'
     bases = []
+    lead_top = None
     if lead_local and lead_pane in panes:
-        top, _branch = git.lookup(panes[lead_pane])
-        if top:
-            bases.append(top)
+        lead_top, _branch = git.lookup(panes[lead_pane])
+        if lead_top:
+            bases.append(lead_top)
     if rec.get('repo_root') and rec['repo_root'] not in bases:
         bases.append(rec['repo_root'])
-    path = None
+    path = found_at = None
     for base in bases:
         path = plan_state_path(base, plan_id)
         if path:
+            found_at = base
             break
+    # Does the pane the record names still work in the plan's repository? A
+    # reused pane id (after a Herdr restart) would not. None when unknown.
+    lead_in_repo = None
+    if lead_top and (rec.get('repo_root') or found_at):
+        # Known only when the pane's directory is in a git repository here: a
+        # different repository means the pane does something else now.
+        lead_in_repo = lead_top == found_at or lead_top == rec.get('repo_root')
     cls, block_class, progress, updated = 'unreadable', None, None, None
     if path:
         state = load_json(path, MAX_STATE_BYTES)
@@ -390,7 +403,7 @@ def describe_plan(root, server, rec, panes, git, now=None, logs=None):
         'succession': rec['succession'], 'lanes': rec['lanes'], 'repo_root': rec.get('repo_root'),
         'plan_dir': os.path.dirname(path) if path else None, 'class': cls,
         'blocker_class': block_class, 'progress': progress, 'state_updated_at': updated,
-        'updated_at': rec['updated_at'],
+        'updated_at': rec['updated_at'], 'lead_in_repo': lead_in_repo,
         'open_asks': open_asks(root, server, lead_pane, now, logs) if lead_local else None,
     }
 
@@ -425,12 +438,22 @@ def store_fleet(root, text):
             os.utime(path, None)  # still current: only its age is refreshed
             return 'unchanged'
         tmp = '%s.%d.tmp' % (path, os.getpid())
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600)
         try:
-            os.write(fd, text.encode('utf-8'))
-        finally:
-            os.close(fd)
-        os.replace(tmp, path)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600)
+            try:
+                data = text.encode('utf-8')
+                while data:
+                    data = data[os.write(fd, data):]
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            os.replace(tmp, path)
+        except OSError:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            return 'failed'
         return 'stored'
     except (OSError, ValueError, RecursionError):
         return 'failed'
@@ -448,6 +471,12 @@ def read_fleet(root=None):
         return None, None
 
 
+PLAN_KEYS = frozenset(('plan', 'server', 'lead', 'epoch', 'succession', 'lanes', 'repo_root',
+                       'plan_dir', 'class', 'blocker_class', 'progress', 'state_updated_at',
+                       'updated_at', 'lead_in_repo', 'open_asks'))
+AGENT_KEYS = frozenset(('pane', 'cwd', 'repo_root', 'branch'))
+
+
 def valid_report(doc):
     """True when `doc` is a well-formed plans-v1 report. The daemon checks
     every answer with this before using a single field of it."""
@@ -461,7 +490,9 @@ def valid_report(doc):
     if len(plans) > MAX_PLANS or len(agents) > MAX_PANES:
         return False
     for plan in plans:
-        if not isinstance(plan, dict):
+        if not isinstance(plan, dict) or not PLAN_KEYS <= set(plan):
+            return False
+        if plan.get('lead_in_repo') not in (True, False, None):
             return False
         if not isinstance(plan.get('plan'), str) or not PLAN_RE.fullmatch(plan['plan']):
             return False
@@ -492,7 +523,7 @@ def valid_report(doc):
         if stamp is not None and not (isinstance(stamp, str) and TS_RE.fullmatch(stamp)):
             return False
     for agent in agents:
-        if not isinstance(agent, dict):
+        if not isinstance(agent, dict) or not AGENT_KEYS <= set(agent):
             return False
         if not isinstance(agent.get('pane'), str) or not re.fullmatch(PANE_RE, agent['pane']):
             return False

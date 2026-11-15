@@ -14,6 +14,7 @@ directory $FAKE_HERDR_DIR/ssh/<target>/:
             wrong     print a JSON object of another schema, exit 0
             big       print more than the daemon accepts, exit 0
             slow      sleep longer than the daemon waits
+            flood     print without end
             hostile   print a plans-v1 report whose plan id, lead address and
                       paths are not what the schema allows, exit 0
 
@@ -70,6 +71,13 @@ def main(argv):
                        'blocker_class': None, 'progress': '0' * 16, 'state_updated_at': None,
                        'updated_at': '2026-01-01T00:00:00Z', 'open_asks': 0}]}) + '\n')
         return 0
+    if mode == 'flood':
+        chunk = b'x' * 65536
+        try:
+            while True:
+                sys.stdout.buffer.write(chunk)
+        except (BrokenPipeError, OSError):
+            return 0
     if mode == 'slow':
         time.sleep(int(os.environ.get('FAKE_SSH_SLEEP', '60')))
         return 0

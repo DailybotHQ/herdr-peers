@@ -31,7 +31,7 @@ import subprocess
 import sys
 import time
 
-VERSION = '1.3.0'
+VERSION = '1.2.2'
 PROTOCOL = 1
 MARKER = '[herdr-peers]'
 DEFAULT_MAX_BYTES = 16384
@@ -2944,6 +2944,90 @@ SSH_TARGET_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._@-]{0,127}')
 SSH_TIMEOUT = 25
 MAX_REPORT_BYTES = 2 * 1024 * 1024
 NOTIFY_TIMEOUT = 20
+NOTIFY_BUDGET = 20       # seconds of notify commands per pass, in all
+NOTIFY_QUEUE_MAX = 200
+NOTIFY_ENV = ('PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TMPDIR', 'TZ',
+              'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME')
+
+
+def notify_timeout():
+    """Seconds one notify command may take, and the notify budget of a pass
+    (HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT, 1-60, default 20)."""
+    try:
+        value = float(os.environ.get('HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT') or NOTIFY_TIMEOUT)
+    except ValueError:
+        return NOTIFY_TIMEOUT
+    return value if 1 <= value <= 60 else NOTIFY_TIMEOUT
+
+
+def notify_env(keep=()):
+    """The notify command's environment: the basics, plus the variables the
+    human named with --notify-env. Tokens and keys are not passed by default."""
+    return dict((k, v) for k, v in os.environ.items() if k in NOTIFY_ENV or k in keep)
+
+
+def bounded_run(argv, data, limit, timeout, env=None):
+    """Run argv with `data` on standard input, in a new session; read at most
+    `limit` bytes of standard output (0: discard it); kill the whole process
+    group at `timeout` seconds or when the output exceeds the limit. Returns
+    (exit status or None, output or None)."""
+    import select
+    import threading
+    try:
+        proc = subprocess.Popen(argv, stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE if limit else subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True, env=env)
+    except OSError:
+        return None, None
+
+    def feed():
+        try:
+            proc.stdin.write(data)
+        except OSError:
+            pass
+        finally:
+            try:
+                proc.stdin.close()
+            except OSError:
+                pass
+    writer = threading.Thread(target=feed)
+    writer.daemon = True
+    writer.start()
+    deadline = time.time() + timeout
+    chunks, size, ok = [], 0, True
+    try:
+        if limit:
+            fd = proc.stdout.fileno()
+            while True:
+                left = deadline - time.time()
+                if left <= 0:
+                    ok = False
+                    break
+                ready, _, _ = select.select([fd], [], [], min(left, 1.0))
+                if not ready:
+                    continue
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > limit:
+                    ok = False
+                    break
+                chunks.append(chunk)
+        try:
+            rc = proc.wait(timeout=max(0.1, deadline - time.time()) if ok else 0.1)
+        except subprocess.TimeoutExpired:
+            ok, rc = False, None
+    finally:
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            proc.wait()
+        if proc.stdout is not None:
+            proc.stdout.close()
+    return (rc if ok else None), (b''.join(chunks) if ok and limit else None)
 
 
 def ssh_timeout():
@@ -2959,12 +3043,14 @@ FLEET_STALE = 900  # seconds after which a machine's copy of the map is called s
 class AutopilotIO(object):
     """Herdr and the record writer, as the autopilot loop needs them."""
 
-    def __init__(self, store, pane, terminal, scope, quiet=False, notify=None):
+    def __init__(self, store, pane, terminal, scope, quiet=False, notify=None, notify_keep=()):
         self.store, self.pane, self.terminal, self.scope = store, pane, terminal, scope
         self.quiet = quiet
         self.self_machine = None
         self.notify = notify        # argv of the human's notify command, or None
         self.notify_failed = False
+        self.notify_keep = tuple(notify_keep)
+        self.notify_queue = []
         self.saved = {}             # machine id -> {'label', 'target'} (enabled machines)
         self.report_source = None
 
@@ -2994,9 +3080,7 @@ class AutopilotIO(object):
             pane = a.get('pane_id') if isinstance(a, dict) else None
             if not (isinstance(pane, str) and re.fullmatch(PANE_RE, pane)):
                 continue
-            if not in_scope((machine, pane), self.scope):
-                continue
-            rows.append({'pane': pane, 'state': a.get('agent_status'), 'agent': kind_of(a),
+            rows.append({'pane': pane, 'in_scope': in_scope((machine, pane), self.scope), 'state': a.get('agent_status'), 'agent': kind_of(a),
                          'cwd': a.get('cwd') if isinstance(a.get('cwd'), str) else None,
                          'seq': a.get('state_change_seq'), 'turn': a.get('completion_seq'),
                          'you': machine == 'local' and pane == self.pane})
@@ -3030,7 +3114,8 @@ class AutopilotIO(object):
 
     def identity(self):
         """Where the daemon runs, for readers of the map on other machines."""
-        return {'pane': self.pane, 'local_is': self.self_machine}
+        return {'pane': self.pane, 'local_is': self.self_machine,
+                'server': state_key(self.store.server_id)[:24]}
 
     def plans(self, machine, panes, fleet_text):
         """(state, report) for one machine: `ok` with a validated plans-v1
@@ -3057,18 +3142,14 @@ class AutopilotIO(object):
                 continue
             encoded = base64.b64encode(value.encode('utf-8')).decode('ascii')
             script = script.replace(line, "%s = '%s'  #" % (name, encoded), 1)
-        try:
-            proc = subprocess.run(SSH_ARGV + ['--', target, 'python3', '-'],
-                                  input=script.encode('utf-8'), stdout=subprocess.PIPE,
-                                  stderr=subprocess.PIPE, timeout=ssh_timeout())
-        except (OSError, subprocess.TimeoutExpired):
-            return 'unknown', None
-        if proc.returncode == 127:
+        rc, out = bounded_run(SSH_ARGV + ['--', target, 'python3', '-'], script.encode('utf-8'),
+                              MAX_REPORT_BYTES, ssh_timeout())
+        if rc == 127:
             return 'unsupported', None
-        if proc.returncode != 0 or len(proc.stdout) > MAX_REPORT_BYTES:
+        if rc != 0 or out is None:
             return 'unknown', None
         try:
-            report = json.loads(proc.stdout.decode('utf-8'))
+            report = json.loads(out.decode('utf-8'))
         except (ValueError, UnicodeDecodeError, RecursionError):
             return 'unknown', None
         if not fleet_report.valid_report(report) or report['state'] != 'ok':
@@ -3094,13 +3175,25 @@ class AutopilotIO(object):
             sys.stdout.flush()
         if dry_run:
             return
-        try:
-            proc = subprocess.run(self.notify, input=(json.dumps(event, sort_keys=True) + '\n')
-                                  .encode('utf-8'), stdout=subprocess.DEVNULL,
-                                  stderr=subprocess.DEVNULL, timeout=NOTIFY_TIMEOUT)
-            failed = proc.returncode != 0
-        except (OSError, subprocess.TimeoutExpired):
-            failed = True
+        if len(self.notify_queue) < NOTIFY_QUEUE_MAX:
+            self.notify_queue.append(event)
+
+    def flush_events(self):
+        """Run the notify command for queued events within this pass's budget
+        (NOTIFY_BUDGET seconds in all); what does not fit waits for the next
+        pass. Each run is its own process group, killed whole on timeout, with
+        a minimal environment."""
+        deadline = time.time() + notify_timeout()
+        while self.notify_queue and self.notify:
+            left = deadline - time.time()
+            if left <= 0.5:
+                return
+            event = self.notify_queue.pop(0)
+            rc, _out = bounded_run(self.notify, (json.dumps(event, sort_keys=True) + '\n').encode('utf-8'),
+                                   0, min(notify_timeout(), left), env=notify_env(self.notify_keep))
+            self.note_notify(rc != 0)
+
+    def note_notify(self, failed):
         if failed and not self.notify_failed:
             self.notify_failed = True
             self.store.append(make_record('left', 'autopilot', new_ulid(), 'local:%s' % self.pane,
@@ -3216,8 +3309,15 @@ def cmd_autopilot(args):
         if not notify or not shutil.which(notify[0]):
             raise Stop(EXIT_USAGE, '--notify needs a command whose program exists '
                        '(it is run without a shell)')
+    keep = []
+    for name in args.notify_env or []:
+        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,63}', name):
+            raise Stop(EXIT_USAGE, '--notify-env takes a variable name')
+        if not args.notify:
+            raise Stop(EXIT_USAGE, '--notify-env needs --notify')
+        keep.append(name)
     io = AutopilotIO(store, me.get('pane_id'), me.get('terminal_id'), scope_from(args),
-                     notify=notify)
+                     notify=notify, notify_keep=keep)
     lock_path, pid_path = autopilot_paths(store)
     # A bounded dry run sends nothing and keeps no state: it may run beside
     # the developer's own autopilot, so it takes no lock and writes no pid.
@@ -3487,6 +3587,10 @@ def build_parser():
     ap.add_argument('--notify', metavar='COMMAND',
                     help='with --loop: a command run (no shell) with a plan-event-v1 JSON object '
                     'on standard input when a plan stalls, is blocked, loses its lead or completes')
+    ap.add_argument('--notify-env', action='append', metavar='NAME',
+                    help='with --notify: also pass this environment variable to the command '
+                    '(repeatable); by default it gets only PATH, HOME, the locale and XDG '
+                    'directories, never tokens or keys')
     fl = sub.add_parser('fleet', help='every machine, agent, repository and plan the autopilot '
                         'loop knows, from this machine\'s copy of its map (read-only)')
     fl.add_argument('--json', action='store_true', help='herdr-peers/fleet-v1 JSON')

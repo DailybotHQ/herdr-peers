@@ -24,9 +24,10 @@
         "plan_stalled",
         "plan_blocked",
         "plan_no_lead",
-        "plan_completed"
+        "plan_completed",
+        "plan_lead_moved"
       ],
-      "description": "stalled: three loop prompts without progress; blocked: the plan state records a blocker; no_lead: the lead is gone and no successor could be asked; completed: a plan the loop watched while open has finished."
+      "description": "stalled: three loop prompts without progress; blocked: the plan state records a blocker; no_lead: the lead is gone and no successor could be asked; completed: a plan the loop watched while open has finished. lead_moved: the pane the lead record names now works outside the plan's repository (a stale record); nobody is prompted."
     },
     "plan": {
       "type": "string",

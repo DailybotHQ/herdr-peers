@@ -208,7 +208,8 @@ class are filled in.
 | The plan is open and its lead is `idle` or `done` | Asks the lead to continue: *"Plan P is not finished and you are its lead. Continue executing it to its end, respecting its gates and the authority already recorded in the plan. Never weaken a gate to pass it. If the plan cannot go on without something only the developer can provide, record the blocker in the plan state and stop."* |
 | The plan is blocked (its state records a blocker) | Nothing is sent. Recorded once as `plan_blocked`. |
 | The plan is completed, or unreadable | Nothing. |
-| The lead is gone: no agent in its pane, or still at its usage limit after the first retry | Asks the first reachable address in the record's `succession` to run `herdr-peers lead takeover --plan P --reason "autopilot: lead <reason>"` and then continue the plan. Once per epoch. |
+| The lead is gone: its pane missing from two listings in a row (an agent outside `--scope` still counts as listed), or at its usage limit after the screen pass gave up on it | Asks the first reachable address in the record's `succession` to run `herdr-peers lead takeover --plan P` — with no `--reason`, so the helper's own check decides whether the lead is really gone — and then continue the plan. Once per epoch. |
+| The pane the lead record names now works in another repository (a pane id reused after a Herdr restart) | Nothing is sent: it is never told it leads a plan. Recorded once as `plan_lead_moved`. |
 | The lead is gone and nobody in the succession can be asked | Nothing is sent. Recorded once as `plan_no_lead`. |
 
 The daemon prompts the lead only: lanes are driven by their lead. It never
@@ -229,7 +230,9 @@ A lead is asked to continue only when **all** of these hold:
   no draft, and it did not end by asking in prose (that is the nudge's case);
 - it took a turn of its own since the last prompt, and has had fewer than 3
   prompts in the last hour (the same cap as the nudge);
-- it is not the daemon's own pane, not excluded and inside the scope;
+- it is not the daemon's own pane, not excluded and inside the scope (agents
+  outside the scope are listed — so they are never mistaken for gone — but
+  never prompted);
 - `--no-nudge` is not set.
 
 After **3** loop prompts with no progress in the plan's state, the plan is
@@ -261,13 +264,17 @@ not "no plans") and never fails the pass.
 ### 9.6 Telling you (`--notify`)
 
 `--notify "<command>"` names a program the daemon runs when a watched plan
-becomes `plan_stalled`, `plan_blocked`, `plan_no_lead` or `plan_completed`
+becomes `plan_stalled`, `plan_blocked`, `plan_no_lead`, `plan_lead_moved` or `plan_completed`
 — once per plan and situation — with one JSON object
 ([`plan-event-v1`](../../docs/schema/plan-event-v1.json)) on its standard
 input: the event, the plan, the machine, the lead, the repository and the
 blocker's class. The command is split into arguments once and run without
-a shell, with a 20-second timeout; a failure is recorded once and never
-stops the pass. Only the command line that starts the daemon can set it.
+a shell, in its own process group (killed whole at its timeout, 20 s by
+default, `HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT`), with a minimal environment
+(`PATH`, `HOME`, the locale and the XDG directories — never tokens or keys;
+`--notify-env NAME` passes a variable the command needs). All notify commands
+of a pass share that same budget; events that do not fit wait for the next
+pass. A failure is recorded once and never stops the pass. Only the command line that starts the daemon can set it.
 `--dry-run` runs nothing.
 
 ### 9.7 What it never does, and what you are accepting
@@ -288,6 +295,12 @@ and writes one file, the map, in the herdr-peers state directory of each.
 Use `--scope` to keep it to some machines.
 
 ### 9.8 Limits
+
+- The first pass after start reads every idle pane once and waits for the
+  slowest machine (up to the report timeout): on a large fleet it can take a
+  minute or two. Later passes take seconds.
+- A dry run (`--dry-run`) writes no map on any machine and runs no notify
+  command.
 
 - A plan is watched only after its lead claimed it; a plan led from another
   machine than the one holding its files is reported but not prompted.

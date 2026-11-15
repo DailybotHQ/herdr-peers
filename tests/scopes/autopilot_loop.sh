@@ -341,7 +341,7 @@ SH
 chmod +x "$WORK/tell"
 export TELL_OUT="$WORK/events.ndjson"
 mkstate "$REPO" PLAN_933_blocked "$V5_BLOCKED"; pane_claim w1:p2 "$REPO" PLAN_933_blocked
-run "$HELPER" autopilot --loop --passes 2 --interval 0 --notify "$WORK/tell"
+run "$HELPER" autopilot --loop --passes 2 --interval 0 --notify "$WORK/tell" --notify-env TELL_OUT
 assert_rc "a loop with --notify exits 0" 0
 assert_eq "a blocked plan is told once" "1" "$(wc -l <"$TELL_OUT" | tr -d ' ')"
 run python3 "$VALIDATE" --doc "$ROOT/docs/schema/plan-event-v1.json" "$TELL_OUT"
@@ -350,7 +350,7 @@ assert_contains "it names the situation" "$(cat "$TELL_OUT")" '"event": "plan_bl
 assert_contains "the plan" "$(cat "$TELL_OUT")" '"plan": "PLAN_933_blocked"'
 assert_contains "and the blocker's class" "$(cat "$TELL_OUT")" '"blocker_class": "C2"'
 : >"$TELL_OUT"
-run "$HELPER" autopilot --loop --once --dry-run --notify "$WORK/tell"
+run "$HELPER" autopilot --loop --once --dry-run --notify "$WORK/tell" --notify-env TELL_OUT
 assert_eq "a dry run runs no notify command" "0" "$(wc -l <"$TELL_OUT" | tr -d ' ')"
 run "$HELPER" autopilot --loop --once --notify "$WORK/tell ; touch $WORK/pwned"
 if [ -e "$WORK/pwned" ]; then t_fail "the notify command runs without a shell"; else t_ok "the notify command runs without a shell"; fi
@@ -389,7 +389,7 @@ class IO(object):
     def keys(self, machine, pane, keys): self.sent.append(('keys', machine, pane)); return True
     def prompt(self, machine, pane, text): self.sent.append(('prompt', machine, pane, text)); return True
     def record(self, addr, kind, choice, outcome, dry, plan=None): self.log.append((outcome, addr, choice.cls, plan))
-    def warn(self, addr, exc): raise exc
+    def warn(self, addr, exc): self.warned = getattr(self, 'warned', []) + [(addr, type(exc).__name__)]
     def label(self, machine): return machine
     def identity(self): return {'pane': 'w1:p1', 'local_is': None}
     def plans(self, machine, panes, fleet_text):
@@ -409,7 +409,7 @@ def plan(pid='PLAN_1_a', cls='open', lead='local:w1:p2', progress='0' * 16, epoc
     return {'plan': pid, 'class': cls, 'lead': lead, 'epoch': epoch, 'succession': list(succession),
             'lanes': list(lanes), 'repo_root': '/r', 'plan_dir': '/r/.dwp/plans/' + pid,
             'blocker_class': block, 'progress': progress, 'state_updated_at': None,
-            'updated_at': '2026-01-01T00:00:00Z', 'open_asks': asks}
+            'updated_at': '2026-01-01T00:00:00Z', 'open_asks': asks, 'lead_in_repo': True}
 def report(io, machine, *plans):
     io.reports[machine] = ('ok', {'plans': list(plans), 'agents': []})
 def prompts(io): return [s for s in io.sent if s[0] == 'prompt']
@@ -516,8 +516,9 @@ report(io, 'local', plan(succession=['far:w7:p7', 'local:w1:p3', 'local:w1:p4', 
 ap.run_pass(); step(ap)
 sent = prompts(io)
 assert len(sent) == 1 and sent[0][2] == 'w1:p4', sent  # a foreign address and a working successor are passed over
-assert sent[0][3] == autopilot.TAKEOVER_TEXT % ('PLAN_1_a', 'no_agent', 'PLAN_1_a', 'no_agent'), sent[0][3]
-assert 'herdr-peers lead takeover --plan PLAN_1_a --reason "autopilot: lead no_agent"' in sent[0][3]
+assert sent[0][3] == autopilot.TAKEOVER_TEXT % ('PLAN_1_a', 'no_agent', 'PLAN_1_a'), sent[0][3]
+assert 'herdr-peers lead takeover --plan PLAN_1_a ' in sent[0][3] and '--reason' not in sent[0][3], \
+    'the takeover is left to the helper\'s own gone check'
 assert ('nudged', 'local:w1:p4', 'plan_takeover_prompted', 'PLAN_1_a') in io.log, io.log
 step(ap, 400); step(ap, 400)
 assert len(prompts(io)) == 1, 'asked twice at one epoch'
@@ -531,14 +532,53 @@ report(io, 'local', plan(succession=['local:w1:p3', 'local:w8:p8']))
 ap.run_pass(); step(ap, 400); step(ap, 400)
 assert prompts(io) == [] and io.events == [('plan_no_lead', 'PLAN_1_a', 'local')], (prompts(io), io.events)
 assert io.log.count(('left', 'local:w1:p2', 'plan_no_lead', 'PLAN_1_a')) == 1, io.log
-# A lead at its usage limit past the first retry is gone too.
+# A lead at its usage limit is gone only once the screen pass gave up on it.
 io, ap = fresh(grace=0)
 io.rows['local'] = [row('w1:p2'), row('w1:p4')]
 report(io, 'local', plan(succession=['local:w1:p4']))
 ap.run_pass()
 ap.panes['local:w1:p2'].limit_tries = 1
 step(ap)
+assert not [p for p in prompts(io) if 'takeover' in p[3]], 'one retry is not gone'
+ap.panes['local:w1:p2'].limit_tries = autopilot.MAX_LIMIT_RETRIES
+step(ap)
 assert [p[2] for p in prompts(io) if 'takeover' in p[3]] == ['w1:p4'], prompts(io)
+# A lead missing from one listing is not gone: it must be missing twice.
+io, ap = fresh(grace=0)
+io.rows['local'] = [row('w1:p2', 'working'), row('w1:p4')]
+report(io, 'local', plan(succession=['local:w1:p4']))
+ap.run_pass()
+io.rows['local'] = [row('w1:p4')]
+step(ap)
+assert prompts(io) == [], 'one missing listing is not a gone lead'
+step(ap)
+assert [p[2] for p in prompts(io)] == ['w1:p4'], prompts(io)
+# A lead outside --scope is listed, so it is not gone; nobody outside the scope is prompted.
+io, ap = fresh(grace=0)
+lead = row('w1:p2', 'working'); lead['in_scope'] = False
+out = row('w1:p5'); out['in_scope'] = False
+io.rows['local'] = [lead, row('w1:p4'), out]
+report(io, 'local', plan(succession=['local:w1:p5', 'local:w1:p4']), plan('PLAN_2_b', lead='local:w1:p5'))
+ap.run_pass(); step(ap); step(ap)
+assert prompts(io) == [], prompts(io)
+# A lead record whose pane now works elsewhere (a reused pane id) is never prompted.
+io, ap = fresh(grace=0)
+io.rows['local'] = [row('w1:p2')]
+stale = plan(); stale['lead_in_repo'] = False
+report(io, 'local', stale)
+ap.run_pass(); step(ap, 400); step(ap, 400)
+assert prompts(io) == [], prompts(io)
+assert io.log.count(('left', 'local:w1:p2', 'plan_lead_moved', 'PLAN_1_a')) == 1, io.log
+assert io.events == [('plan_lead_moved', 'PLAN_1_a', 'local')], io.events
+# An error in the plan pass never stops the daemon.
+io, ap = fresh(grace=0)
+io.rows['local'] = [row('w1:p2')]
+broken = plan(); del broken['lead']
+report(io, 'local', broken)
+io.reports['far'] = ('ok', {'plans': [plan()], 'agents': 'nope'})
+io.rows['far'] = [row('w1:p2')]
+ap.run_pass(); step(ap)
+assert getattr(io, 'warned', []), 'the error was reported'
 # --no-nudge and --dry-run: no prompt of either kind.
 for kw in ({'nudge': False}, {'dry_run': True}):
     io, ap = fresh(grace=0, **kw)
@@ -597,5 +637,79 @@ print('ok')
 PY
 assert_rc "grace, stall, caps, waiting leads, blocked and completed plans, succession, cadence and unknown answers hold" 0
 assert_eq "(scripted loop I/O ran to its end)" "ok" "$OUT"
+
+# --- review fixes -------------------------------------------------------------------------------------
+# A remote answer is cut at the limit while it streams, not after.
+iso_world flood
+export HERDR_PEERS_AUTOPILOT_GRACE=0
+REPO="$WORK/repo"; mkrepo "$REPO"; mkdir -p "$(box_home)"
+mkstate "$REPO" PLAN_931_there "$V7_OPEN"; box_claim "$REPO" PLAN_931_there
+echo flood >"$FAKE_HERDR_DIR/ssh/box/mode"
+t0=$(date +%s)
+run env HERDR_PEERS_AUTOPILOT_SSH_TIMEOUT=20 "$HELPER" autopilot --loop --once
+t1=$(date +%s)
+assert_rc "a machine that floods its answer does not fail the pass" 0
+if [ $((t1 - t0)) -lt 15 ]; then t_ok "the flood is cut at the size limit, not at the timeout"; else t_fail "the flood is cut at the size limit, not at the timeout" "took $((t1 - t0)) s"; fi
+assert_eq "and nobody is prompted" "0" "$(prompt_count)"
+
+# A bounded dry run writes no map, here or there.
+iso_world drymap
+REPO="$WORK/repo"; mkrepo "$REPO"; mkdir -p "$(box_home)"
+mkstate "$REPO" PLAN_931_there "$V7_OPEN"; box_claim "$REPO" PLAN_931_there
+run "$HELPER" autopilot --loop --passes 3 --interval 0 --dry-run
+assert_rc "three dry loop passes exit 0" 0
+if [ -e "$(fleet_file)" ] || [ -e "$(box_home)/.local/state/herdr-peers/fleet.json" ]; then
+  t_fail "a dry run writes no map on any machine"; else t_ok "a dry run writes no map on any machine"; fi
+
+# A state that keeps only its top-level status is read, not unreadable.
+iso_world topstatus
+REPO="$WORK/repo"; mkrepo "$REPO"
+mkstate "$REPO" PLAN_950_top '{"status":"in_progress","blocked":null,"checkpoint":null}'
+claim "$REPO" PLAN_950_top
+run env -u HERDR_ENV "$HELPER" plans --json
+assert_eq "a state with only a top-level status is classified" "open" "$(plan_field "$OUT" PLAN_950_top class)"
+
+# A lead record whose pane now works outside the plan's repository.
+iso_world moved
+REPO="$WORK/repo"; mkrepo "$REPO"; mkrepo "$WORK/other"
+mkstate "$REPO" PLAN_951_moved "$V5_OPEN"; pane_claim w2:p1 "$REPO" PLAN_951_moved
+python3 - "$FAKE_HERDR_DIR/local/agents.json" "$WORK/other" <<'PY'
+import json, sys
+agents = json.load(open(sys.argv[1]))
+for a in agents:
+    if a['pane_id'] == 'w2:p1':
+        a['cwd'] = sys.argv[2]
+json.dump(agents, open(sys.argv[1], 'w'))
+PY
+run "$HELPER" autopilot --loop --once
+assert_eq "a lead pane that works elsewhere now is not told it leads" "0" "$(prompt_count)"
+assert_contains "and the stale record is recorded" "$(ap_records)" "left local:w2:p1 plan_lead_moved"
+
+# --notify: its own process group, killed whole; a minimal environment; a budget per pass.
+iso_world notifyhang
+REPO="$WORK/repo"; mkrepo "$REPO"
+for n in 960 961 962; do mkstate "$REPO" "PLAN_${n}_b" "$V5_BLOCKED"; claim "$REPO" "PLAN_${n}_b"; done
+cat >"$WORK/hang" <<'SH'
+#!/bin/sh
+env >"$0.env"
+sleep 30 &
+echo $! >"$0.child"
+wait
+SH
+chmod +x "$WORK/hang"
+t0=$(date +%s)
+run env HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT=2 MY_SECRET_TOKEN=s3cr3t-value "$HELPER" autopilot --loop --once --notify "$WORK/hang"
+t1=$(date +%s)
+assert_rc "a hanging notify command does not fail the pass" 0
+if [ $((t1 - t0)) -lt 12 ]; then t_ok "three hanging events cost one budget, not three timeouts"; else t_fail "three hanging events cost one budget, not three timeouts" "took $((t1 - t0)) s"; fi
+sleep 1
+if kill -0 "$(cat "$WORK/hang.child")" 2>/dev/null; then t_fail "its children are killed with it"; kill "$(cat "$WORK/hang.child")"; else t_ok "its children are killed with it"; fi
+assert_not_contains "the notify command does not get tokens" "$(cat "$WORK/hang.env")" "s3cr3t-value"
+assert_contains "it gets PATH" "$(cat "$WORK/hang.env")" "PATH="
+run env HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT=2 MY_SECRET_TOKEN=s3cr3t-value "$HELPER" autopilot --loop --once --catch-up --notify "$WORK/hang" --notify-env MY_SECRET_TOKEN
+run "$HELPER" autopilot --loop --once --notify-env "BAD NAME" --notify "$WORK/hang"
+assert_rc "a malformed --notify-env is a usage error" 2
+run "$HELPER" autopilot --loop --once --notify-env HOME
+assert_rc "--notify-env without --notify is a usage error" 2
 unset TELL_OUT HERDR_PEERS_AUTOPILOT_GRACE
 export XDG_STATE_HOME=$LOOP_XDG_STATE

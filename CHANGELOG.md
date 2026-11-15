@@ -9,8 +9,6 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
-## [1.3.0] - 2026-11-15
-
 ### Added
 
 - **`autopilot --loop`: every open plan runs to its end.** The daemon a
@@ -36,16 +34,18 @@ changes bumped the minor version).
   machine, its agents with repository and branch, the plans and each
   agent's role in them. The daemon leaves every machine a copy, so any
   agent on any machine can read it.
-- **`--notify "<command>"`**: with `--loop`, run a command (no shell) with
-  a `plan-event-v1` object when a plan stalls, is blocked, loses its lead
-  or completes.
-- `HERDR_PEERS_AUTOPILOT_GRACE` and `HERDR_PEERS_AUTOPILOT_SSH_TIMEOUT`.
+- **`--notify "<command>"`**: with `--loop`, run a command (no shell, its
+  own process group, a minimal environment, `--notify-env NAME` to pass a
+  variable) with a `plan-event-v1` object when a plan stalls, is blocked,
+  loses its lead, its lead record goes stale, or it completes.
+- `HERDR_PEERS_AUTOPILOT_GRACE`, `HERDR_PEERS_AUTOPILOT_SSH_TIMEOUT` and
+  `HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT`.
 
 ### Changed
 
 - A bounded dry run (`autopilot --dry-run --once` or `--passes N`) no
   longer takes the single-instance lock, so it can run beside a running
-  autopilot.
+  autopilot; it writes no map and runs no notify command.
 
 ### Security
 

@@ -58,7 +58,8 @@
           "progress",
           "state_updated_at",
           "updated_at",
-          "open_asks"
+          "open_asks",
+          "lead_in_repo"
         ],
         "properties": {
           "plan": {
@@ -154,6 +155,13 @@
               "null"
             ],
             "description": "Asks the lead still awaits (launched within the last two hours); null when the lead is not a pane of this machine or the log cannot be counted."
+          },
+          "lead_in_repo": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the lead's pane on this machine still works inside the plan's repository; false means the record names a pane that now does something else (a reused pane id), and the loop never prompts it. null when unknown."
           }
         }
       }

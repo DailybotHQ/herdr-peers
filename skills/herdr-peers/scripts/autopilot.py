@@ -41,6 +41,7 @@ PLAN_REFRESH = 300       # seconds between two reports of a machine with nothing
 PLAN_HOT_REFRESH = 55    # the same, while one of its open plans has a lead that is not working
 LEAD_GRACE = 300         # seconds a lead's pane must stay unchanged before a loop prompt
 MAX_PLAN_PROMPTS = 3     # loop prompts to one plan without progress, then it is stalled
+ABSENT_PASSES = 2        # passes a lead's pane must be missing before it counts as gone
 FLEET_SCHEMA = 'herdr-peers/fleet-v1'
 EVENT_SCHEMA = 'herdr-peers/plan-event-v1'
 
@@ -63,10 +64,10 @@ LOOP_TEXT = (
     'gate to pass it. If the plan cannot go on without something only the developer can '
     'provide, record the blocker in the plan state and stop.')
 TAKEOVER_TEXT = (
-    '[autopilot] The lead of plan %s is gone (%s) and you are in its succession. Take the lead '
-    'with: herdr-peers lead takeover --plan %s --reason "autopilot: lead %s" — then continue '
-    'executing the plan to its end, respecting its gates. If the takeover is refused, do '
-    'nothing more.')
+    '[autopilot] The lead of plan %s looks gone (%s) and you are in its succession. Run: '
+    'herdr-peers lead takeover --plan %s — the helper checks itself whether the lead is really '
+    'gone. If it accepts, continue executing the plan to its end, respecting its gates. If it '
+    'refuses, do nothing more.')
 GONE_REASONS = ('no_agent', 'usage_limit')
 
 BOX = {ord(c): ' ' for c in '│┃█'}
@@ -525,7 +526,7 @@ class Autopilot(object):
             for agent in agents:
                 addr = '%s:%s' % (machine, agent['pane'])
                 seen.add(addr)
-                if agent.get('you') or addr in self.exclude:
+                if agent.get('you') or addr in self.exclude or not agent.get('in_scope', True):
                     continue
                 try:
                     self.visit(machine, agent, addr, first_look)
@@ -536,7 +537,10 @@ class Autopilot(object):
                      and a.split(':', 1)[0] in due]:
             del self.panes[addr]
         if self.plans:
-            self.plans.run(dict(zip(due, listed)))
+            try:
+                self.plans.run(dict(zip(due, listed)))
+            except Exception as exc:  # the plan pass never stops the screen pass
+                self.io.warn('plan loop', exc)
 
     def visit(self, machine, agent, addr, first_look):
         memo = self.panes.setdefault(addr, Pane())
@@ -674,6 +678,7 @@ class PlanMemo(object):
         self.situation = None  # plan_stalled, plan_blocked, plan_no_lead, plan_completed
         self.seen_open = False
         self.skip_seq = None   # the lead's state sequence when its screen ruled a prompt out
+        self.absent = 0        # consecutive reports in which the lead's pane was not listed
 
 
 class PlanLoop(object):
@@ -726,7 +731,7 @@ class PlanLoop(object):
         def ask(machine):
             panes = dict((r['pane'], r['cwd']) for r in listed[machine] if r.get('cwd'))
             try:
-                return self.io.plans(machine, panes, self.fleet_text)
+                return self.io.plans(machine, panes, None if self.ap.dry_run else self.fleet_text)
             except Exception as exc:  # one machine never stops the pass
                 self.io.warn(machine, exc)
                 return 'unknown', None
@@ -760,6 +765,9 @@ class PlanLoop(object):
                 except Exception as exc:  # one plan never stops the pass
                     self.io.warn('%s:%s' % (machine, plan.get('plan')), exc)
         self.publish(listed, now)
+        flush = getattr(self.io, 'flush_events', None)
+        if flush is not None:
+            flush()  # notify commands run last, within their own budget
 
     def consider(self, machine, plan, by_pane, now, prompted):
         memo = self.memos.setdefault((machine, plan['plan']), PlanMemo())
@@ -776,6 +784,10 @@ class PlanLoop(object):
             return
         pane = local_pane(plan['lead'])
         addr = '%s:%s' % (machine, pane) if pane else '%s:-' % machine
+        if pane is not None and pane in by_pane:
+            memo.absent = 0
+        elif pane is not None:
+            memo.absent += 1  # judged on the full listing, scope or not
         if cls == 'completed':
             if memo.seen_open:  # only a plan this daemon watched while open
                 self.enter(memo, machine, plan, 'plan_completed', addr, None)
@@ -792,15 +804,23 @@ class PlanLoop(object):
         pmemo = self.ap.panes.get(addr)
         gone = None
         if row is None:
+            if memo.absent < ABSENT_PASSES:
+                return  # one missing listing is not a gone lead
             gone = 'no_agent'
-        elif pmemo is not None and pmemo.limit_tries >= 1:
-            gone = 'usage_limit'
+        elif pmemo is not None and pmemo.limit_tries >= MAX_LIMIT_RETRIES:
+            gone = 'usage_limit'  # only once the screen pass gave up on its limit
         if gone:
             self.succeed(memo, machine, plan, by_pane, addr, gone, prompted)
             return
-        if memo.situation == 'plan_no_lead':
+        if memo.situation in ('plan_no_lead', 'plan_lead_moved') and plan.get('lead_in_repo') is not False:
             memo.situation = None
-        if row.get('you') or addr in self.ap.exclude or pmemo is None:
+        if row.get('you') or addr in self.ap.exclude or pmemo is None or not row.get('in_scope', True):
+            return
+        if plan.get('lead_in_repo') is False:
+            # The pane the record names works elsewhere now: a stale record
+            # (pane ids are reused after a Herdr restart). Never tell a stranger
+            # it leads a plan.
+            self.enter(memo, machine, plan, 'plan_lead_moved', addr, 'left')
             return
         if row.get('state') not in ('idle', 'done'):
             memo.skip_seq = None
@@ -853,7 +873,8 @@ class PlanLoop(object):
             row = by_pane.get(pane) if pane else None
             target = '%s:%s' % (machine, pane)
             pmemo = self.ap.panes.get(target)
-            if row is None or row.get('you') or target in self.ap.exclude or target in prompted:
+            if row is None or row.get('you') or target in self.ap.exclude or target in prompted \
+                    or not row.get('in_scope', True):
                 continue
             if row.get('state') not in ('idle', 'done') or (pmemo and pmemo.limit_at):
                 continue
@@ -869,8 +890,7 @@ class PlanLoop(object):
             self.ap.record(target, row.get('agent'), Decision(
                 'prompt', 'plan_takeover_prompted', 'lead %s' % reason), 'nudged', plan=plan['plan'])
             if not self.ap.dry_run:
-                self.io.prompt(machine, pane, TAKEOVER_TEXT % (plan['plan'], reason,
-                                                               plan['plan'], reason))
+                self.io.prompt(machine, pane, TAKEOVER_TEXT % (plan['plan'], reason, plan['plan']))
             return
         self.enter(memo, machine, plan, 'plan_no_lead', addr, 'left')
 
