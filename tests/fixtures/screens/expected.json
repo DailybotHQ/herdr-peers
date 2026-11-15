@@ -134,6 +134,16 @@
   ],
   "option": 1
  },
+ "claude__blocked__question_preview_recommended_third": {
+  "action": "keys",
+  "class": "question",
+  "keys": [
+   "down",
+   "down",
+   "enter"
+  ],
+  "option": 3
+ },
  "claude__blocked__question_recommended_second": {
   "action": "keys",
   "class": "question",
@@ -152,6 +162,14 @@
   "option": 1
  },
  "claude__blocked__question_single": {
+  "action": "keys",
+  "class": "question",
+  "keys": [
+   "enter"
+  ],
+  "option": 1
+ },
+ "claude__blocked__question_with_preview": {
   "action": "keys",
   "class": "question",
   "keys": [
