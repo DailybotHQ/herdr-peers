@@ -41,6 +41,18 @@ changes bumped the minor version).
 - `HERDR_PEERS_AUTOPILOT_GRACE`, `HERDR_PEERS_AUTOPILOT_SSH_TIMEOUT` and
   `HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT`.
 
+- **`herdr-peers fleet ui`**: a live terminal watcher of the whole fleet.
+  A header with how old the picture is and counts by state; agents grouped
+  by plan (lead, lanes, successors, the plan's progress and current task,
+  plans that need you first), with the agents working outside plans and
+  those doing nothing as groups of their own — or by repository or machine.
+  Open a plan (progress, current task, its tasks, the blocker, the summary
+  from its `PROGRESS.md`) or an agent (its plans, its live screen, focus its
+  pane) with Enter or a click. Redraws by itself when the map changes.
+  `--snapshot` prints it once as text. Standard library only (curses).
+- The map carries each agent's session title and time in its state, and
+  each plan's progress and, while open or blocked, its detail.
+
 ### Changed
 
 - A bounded dry run (`autopilot --dry-run --once` or `--passes N`) no

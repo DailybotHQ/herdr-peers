@@ -15,7 +15,7 @@ herdr-peers (skill + helper script)
 | Path | What |
 | --- | --- |
 | `skills/herdr-peers/` | The installable skill: `SKILL.md`, normative `protocol.md`, `discipline.md`, `launcher.md`, `orchestra.md`, `autopilot.md`, the debate sub-skill `debate.md`, `templates/` (incl. `delegation-record.json` schema and `templates/debate/`) |
-| `skills/herdr-peers/scripts/` | The helper: `herdr-peers` (bash entry) + `herdr_peers.py` (python3 stdlib) + `debate.py` (the `debate` verb) + `autopilot.py` (the `autopilot` verb: the pure decision function, the loop and the plan loop) + `fleet_report.py` (the machine report behind `plans` and `fleet`: self-contained, no import from the helper, because the plan loop sends this very file to other machines). It lives inside the skill so `npx skills add` installs it. |
+| `skills/herdr-peers/scripts/` | The helper: `herdr-peers` (bash entry) + `herdr_peers.py` (python3 stdlib) + `debate.py` (the `debate` verb) + `autopilot.py` (the `autopilot` verb: the pure decision function, the loop and the plan loop) + `fleet_ui.py` (`fleet ui`: source, pure model and rendering, curses) + `fleet_report.py` (the machine report behind `plans` and `fleet`: self-contained, no import from the helper, because the plan loop sends this very file to other machines). It lives inside the skill so `npx skills add` installs it. |
 | `bin/herdr-peers` | Checkout shim that runs the skill's helper |
 | `tests/` | `run.sh` (sandboxed runner), `lib.sh`, `fakes/herdr`, `fakes/ssh`, `fakes/agentkit/ak`, `scopes/`, `fixtures/messages/`, `tools/` |
 | `assets/` | README logos (`logo-light.png`, `logo-dark.png`) |
