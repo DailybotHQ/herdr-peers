@@ -9,6 +9,26 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-11-15
+
+### Fixed
+
+- **`check` refused a genuine reply stamped with this server's own saved
+  machine id** ([#35](https://github.com/DailybotHQ/herdr-peers/issues/35)).
+  A peer on this server is both `local:<pane>` and `<saved id>:<pane>`; the
+  caller now treats the two as the same peer, in both directions, in `check`
+  and in `wait`'s pane capture. The machine part must be `local` on one side
+  and this server's own saved id (`HERDR_PEERS_SELF`, the cached self probe,
+  or a fresh probe) on the other, and the pane must be the one asked: a reply
+  from another machine with the same pane id is still a conflict.
+- **A reply to a local asker is signed `local:`.** When the ask had not been
+  recorded by `check` (a `reply --message`), the reply took its own address
+  from the cached self probe and stamped the saved machine id even to a
+  caller on the same server. It now signs the way `check` records it:
+  `local:` to a local asker, the saved id only to a caller on another
+  machine, whose reply route needs it. This is how two of eight replies were
+  refused on a real run.
+
 ## [1.2.2] - 2026-11-15
 
 ### Fixed

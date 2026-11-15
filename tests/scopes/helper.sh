@@ -9,7 +9,7 @@ ULID='^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
 
 # --- entry points ------------------------------------------------------------
 run "$HELPER" --version
-assert_eq "--version names version and protocol" "herdr-peers 1.2.2 (protocol 1)" "$OUT"
+assert_eq "--version names version and protocol" "herdr-peers 1.2.3 (protocol 1)" "$OUT"
 run "$ROOT/bin/herdr-peers" --version
 assert_rc "bin/ shim runs the skill's helper" 0
 ln -s "$ROOT/bin/herdr-peers" "$SANDBOX/bin/hp-link"
@@ -155,6 +155,43 @@ run "$HELPER" check --json "$WORK/forged.txt"
 assert_contains "a different second reply is flagged as a conflict" "$OUT" '"reply_status": "conflict"'
 run as_pane w2:p1 "$HELPER" check --json "$WORK/reply.txt"
 assert_contains "a reply nobody here asked for is unsolicited" "$OUT" '"reply_status": "unsolicited"'
+
+# Issue #35: this server's own saved machine id (aa11 in the fake world) and
+# local: name the same pane, so the reply matches in both directions.
+new_world own_id
+id=$("$HELPER" ask local:w1:p2 "own id, unchecked?")
+last_prompt local w1:p2 >"$WORK/ask.txt"
+run as_pane w1:p2 env HERDR_PEERS_SELF=aa11 "$HELPER" reply --message "$WORK/ask.txt" local:w1:p1 "$id" "signed local"
+assert_rc "a delegate that knows its saved id replies to a local ask" 0
+assert_contains "a reply to a local asker is signed local: even with a known saved id" \
+  "$(last_prompt local w1:p1)" "reply-to=$id from=local:w1:p2 depth=1"
+id=$("$HELPER" ask local:w1:p2 "own id?")
+last_prompt local w1:p2 >"$WORK/ask.txt"
+as_pane w1:p2 "$HELPER" check "$WORK/ask.txt" >/dev/null
+as_pane w1:p2 "$HELPER" reply local:w1:p1 "$id" "same pane, saved id" >/dev/null
+last_prompt local w1:p1 | sed "s/from=local:w1:p2 /from=aa11:w1:p2 /" >"$WORK/own-id.txt"
+assert_contains "the fixture stamps this server's saved id" "$(cat "$WORK/own-id.txt")" "from=aa11:w1:p2 depth=1"
+sed "s/from=aa11:w1:p2 /from=bb22:w1:p2 /" "$WORK/own-id.txt" >"$WORK/other-box.txt"
+sed "s/from=aa11:w1:p2 /from=aa11:w2:p1 /" "$WORK/own-id.txt" >"$WORK/other-pane.txt"
+run "$HELPER" check --json "$WORK/other-box.txt"
+assert_contains "the same pane id on another machine is still a conflict" "$OUT" '"reply_status": "conflict"'
+run "$HELPER" check --json "$WORK/other-pane.txt"
+assert_contains "another pane under the saved id is still a conflict" "$OUT" '"reply_status": "conflict"'
+run "$HELPER" check --json "$WORK/own-id.txt"
+assert_contains "a reply from this server's saved id matches a local: ask" "$OUT" '"reply_status": "recorded"'
+assert_eq "the caller record is completed" "caller completed" \
+  "$(field "$(last_log)" role) $(field "$(last_log)" state)"
+id=$("$HELPER" ask aa11:w1:p2 "own id, the other way?")
+last_prompt aa11 w1:p2 >"$WORK/ask2.txt"
+as_pane w1:p2 "$HELPER" reply --message "$WORK/ask2.txt" aa11:w1:p1 "$id" "signed local" >/dev/null
+last_prompt aa11 w1:p1 | sed "s/from=aa11:w1:p2 /from=local:w1:p2 /" >"$WORK/local-form.txt"
+assert_contains "the fixture stamps local:" "$(cat "$WORK/local-form.txt")" "reply-to=$id from=local:w1:p2 depth=1"
+run "$HELPER" check --json "$WORK/local-form.txt"
+assert_contains "a local: reply matches an ask sent to this server's saved id" "$OUT" '"reply_status": "recorded"'
+id=$("$HELPER" ask bb22:w1:p1 "a real remote")
+printf 'remote says hi\n\n[herdr-peers] protocol=1 reply-to=%s from=local:w1:p1 depth=1\nThis is a reply. Do not answer it.\n' "$id" >"$WORK/spoof.txt"
+run "$HELPER" check --json "$WORK/spoof.txt"
+assert_contains "a local: reply never matches an ask to another machine" "$OUT" '"reply_status": "conflict"'
 
 # Self-loop and scope on receive.
 new_world selfloop
