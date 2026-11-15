@@ -79,6 +79,15 @@
   ],
   "option": 1
  },
+ "claude__blocked__preselected_widening": {
+  "action": "keys",
+  "class": "permission",
+  "keys": [
+   "down",
+   "enter"
+  ],
+  "option": 2
+ },
  "claude__blocked__question_multiselect": {
   "action": "keys",
   "class": "question",
@@ -140,6 +149,14 @@
   ],
   "option": 1
  },
+ "claude__done__plan_approval_under_update_banner": {
+  "action": "keys",
+  "class": "plan_approval",
+  "keys": [
+   "enter"
+  ],
+  "option": 1
+ },
  "claude__done__prose_numbered_list": {
   "action": "none",
   "class": "none",
@@ -185,6 +202,12 @@
  "codex__idle__login_expired": {
   "action": "leave",
   "class": "login",
+  "keys": [],
+  "option": null
+ },
+ "codex__idle__trust_text_above_draft": {
+  "action": "none",
+  "class": "none",
   "keys": [],
   "option": null
  },

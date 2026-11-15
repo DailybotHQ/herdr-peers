@@ -28,7 +28,7 @@ import subprocess
 import sys
 import time
 
-VERSION = '1.1.0'
+VERSION = '1.2.0'
 PROTOCOL = 1
 MARKER = '[herdr-peers]'
 DEFAULT_MAX_BYTES = 16384
@@ -2916,11 +2916,28 @@ def autopilot_paths(store):
 
 
 def autopilot_pid(store):
+    """The pid of the autopilot running on this server, or None. The lock is
+    the truth: a pid file left by a dead autopilot may name another process
+    by now, and `stop` must never signal that one."""
+    lock_path, pid_path = autopilot_paths(store)
     try:
-        with open(autopilot_paths(store)[1], 'r', encoding='utf-8') as fh:
-            pid = int(fh.read().strip())
-        os.kill(pid, 0)
-        return pid
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600)
+    except OSError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        held = True
+    else:
+        held = False
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+    if not held:
+        return None
+    try:
+        with open(pid_path, 'r', encoding='utf-8') as fh:
+            return int(fh.read().strip())
     except (OSError, ValueError):
         return None
 

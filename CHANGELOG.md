@@ -9,6 +9,67 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-15
+
+Protocol stays **1**: no stamp, grant, rule, verb, flag, exit code or JSON
+contract of 1.1.0 changes. The release is additive.
+
+### Added
+
+- **Autopilot** ([`autopilot.md`](skills/herdr-peers/autopilot.md)) —
+  `herdr-peers autopilot`, a daemon a human starts once so that no agent
+  waits for an approval. It watches every agent on every enabled machine
+  and, on a waiting screen, presses the keys that accept an option, then
+  re-reads the screen to confirm, step by step until the dialog is done.
+  - **What it accepts:** questions (single, several with a review step,
+    multi-select), tool approvals (command, file edit or creation, URL
+    fetch), plan approval, folder trust, an update prompt (skipped), a
+    question queued while a Codex turn is still working.
+  - **Which option:** the one marked `(Recommended)`, else the one the CLI
+    pre-selected, else the first. Never a refusal, never free text, never a
+    row that widens the agent's standing permissions (`always allow`,
+    `don't ask again`, `Run Everything`, auto mode, persisted settings).
+  - **Agents that stop to ask in prose** get one fixed prompt to continue
+    with what they recommended — at most 3 per pane per hour, only after a
+    turn of their own, never when the input line holds a human's draft.
+  - **Usage limits** are retried every 30 minutes; **logins** and Claude's
+    bypass-permissions acknowledgement are never touched.
+  - **Verified on real panes** of Claude Code, Codex, Cursor, Grok, Pi and
+    Antigravity; 36 screen fixtures in `tests/fixtures/screens/`.
+  - **Cheap by construction:** asleep between passes (default 60 s), one
+    `agent list` per machine per pass in parallel, a screen read only when
+    a pane's state changed, backoff for unreachable machines; about one
+    second of CPU per pass on 14 machines with 59 agents.
+  - `autopilot status`, `autopilot stop`, `--dry-run`, `--once`,
+    `--passes N`, `--interval S`, `--exclude`, `--scope`, `--no-nudge`,
+    `--catch-up`; `HERDR_PEERS_AUTOPILOT_CONFIRM`. One instance per server.
+  - Every action is recorded in the delegation log with `role: autopilot`
+    (states `keyed`, `nudged`, `left`, `gave_up`): the screen class and the
+    keys, never screen text. `delegation-record.json` gains those values.
+- **Launching several agents at once** — `launcher.md` documents how a lead
+  opens a tab of agents with `ak`, on chosen accounts and vendors, gives
+  each its brief and watches them with `lanes`.
+- Test scope `autopilot` (96 assertions); the fake `herdr` can script a
+  dialog that moves on when it is keyed (`<machine>/keys.json`).
+
+### Changed
+
+- `orchestra.md` §2: with autopilot running, a lane blocked at a question or
+  a permission needs no escalation. The rule for agents and leads is
+  unchanged — they key only folder trust, and never start autopilot on
+  their own. Protocol §13 states that autopilot is outside the protocol and
+  that no message can start or steer it.
+- The threat model gains T28–T33 and the accepted residual risk that
+  autopilot approves what agents ask, without a deny-list.
+
+### Known limitations
+
+- Autopilot sees only panes Herdr lists as agents; a CLI stopped at a
+  first-run screen before Herdr detects it is not reached.
+- OpenCode's screens are not verified. Codex's start-up update prompt is
+  matched from its documented shape, not from a live capture.
+- Screens are recognised by their text and can change with a CLI upgrade.
+
 ## [1.1.0] - 2026-10-25
 
 Protocol stays **1**: the ask, reply and notice stamps, the reply grant, the

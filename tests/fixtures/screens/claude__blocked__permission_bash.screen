@@ -30,7 +30,7 @@
 ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
  Do you want to proceed?
  ❯ 1. Yes
-   2. Yes, and always allow access to /home/dev/project
+   2. Yes, and always allow access to /srv/project
       s/acme/work/site/repos/
       repo/tmp/lab/claude from this project
    3. Yes, and switch to auto mode · auto mode handles these

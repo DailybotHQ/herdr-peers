@@ -217,6 +217,15 @@ run "$HELPER" autopilot status
 assert_contains "status shows it is no longer running" "$OUT" "not running"
 run "$HELPER" autopilot stop
 assert_contains "stop without a running autopilot is harmless" "$OUT" "not running"
+sleep 30 &
+bystander=$!
+printf '%s\n' "$bystander" >"$(state_dir)/autopilot.pid"
+run "$HELPER" autopilot stop
+assert_contains "a stale pid file is not trusted" "$OUT" "not running"
+check "and the process it names is not signalled" kill -0 "$bystander"
+kill "$bystander" 2>/dev/null
+wait "$bystander" 2>/dev/null
+rm -f "$(state_dir)/autopilot.pid"
 run "$HELPER" autopilot --interval 5
 assert_rc "an interval under the minimum is refused" 2
 run env -u HERDR_ENV "$HELPER" autopilot --once

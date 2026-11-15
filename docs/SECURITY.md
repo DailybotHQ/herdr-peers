@@ -23,6 +23,11 @@ that is never answered. `herdr-peers lead …` keeps a per-plan lead record
 (who leads, at which epoch, who succeeds it) and broadcasts changes as lead
 notices. Both sides keep an append-only local record.
 
+`herdr-peers autopilot`, started by a human, is a separate actor: a loop that
+reads agents' states and visible screens through Herdr and, on a waiting
+screen, sends key presses (`herdr pane send-keys`) or one fixed prompt
+(`herdr agent prompt`). It is the only part of herdr-peers that sends keys.
+
 ### Assets
 
 1. **The receiving agent's authority** — what it may do in its repository and
@@ -81,8 +86,29 @@ notices. Both sides keep an append-only local record.
 | T25 | **Panel provisioning** — a helper that launches agents or spends accounts on its own. | `debate panel` is read-only: it reads Herdr's agent list, this server's lead records and `ak pick` (once per call), and prints commands — lease, split, launch, release — that the lead runs only with the human's go-ahead (the fakes prove no prompt, key, split, run or lease is issued). Panes that lead or serve another plan's lead record are never offered; proposed launches carry no permission flag (agentkit's own posture, which the human controls, applies). | `debate` |
 | T26 | **Secrets in debate files** — a pane dumps a token into its filing, which `anon` would copy to every peer. | `debate anon` runs the helper's secret detector (`secret_finding`: values of `*_API_KEY`/`*_TOKEN`-style variables and known token shapes) over every filing first and refuses the run, naming the kind, never the value, before anything is written. | `debate` |
 | T27 | **Delivery to a blocked peer** — a reply retried into a pane that shows a question, or retried forever. | Only the delivery of the one recorded reply is retried, with backoff, for at most `--wait-blocked` / `HERDR_PEERS_BLOCKED_WAIT` seconds (default 600, cap 3600); each attempt takes the log lock and re-checks exactly-once, so concurrent replies still send one; the text is never changed and a still-blocked peer is recorded `unroutable` as before. Herdr refuses input to a blocked agent (`agent_blocked`), so no attempt types into the question. | `helper` |
+| T28 | **A message starts or steers autopilot** — an ask, reply or notice tells an agent to run `herdr-peers autopilot`, to widen its scope or to add `--catch-up`. | Autopilot is a command a human runs; nothing in `check`, `reply` or the lead path invokes it, and protocol §13 and the skill's trust boundary forbid an agent from starting it on a message's say-so. The text autopilot itself sends is not a protocol message (`check` decides it none). | `autopilot` |
+| T29 | **A screen shaped like a menu** — an agent (or text it displays) prints rows and a cursor so that autopilot presses keys. | Keys go only to a block recognised at the bottom of the screen; outside a `blocked` state the block must belong to a named class anchored on its own text (folder trust, plan approval, update prompt, review) within a few lines of it; a block of unnumbered rows also needs a line saying Enter selects, because an input line with wrapped text looks the same. The only keys ever sent are `enter`, `tab`, `up`, `down` and `shift+left`; no text from a screen is executed, sent or logged. What Enter does is decided by the agent's own terminal UI. | `autopilot` |
+| T30 | **Approving a harmful action** — an agent asks for a destructive command and autopilot accepts it. | By design autopilot accepts what an agent asks: this is the residual risk the human takes on by starting it (below). It narrows the blast radius only at the edges: it never chooses a row that widens the agent's standing permissions (`always allow`, `don't ask again`, `Run Everything`, auto mode, persisted settings, a parent folder), never a login, never Claude's bypass acknowledgement, and `--scope` / `--exclude` keep it off chosen machines and panes. | `autopilot` |
+| T31 | **Submitting a human's draft** — a prompt or an Enter lands in a pane where the human had typed something. | A pane is prompted only when its input line is empty or shows the CLI's own placeholder; keys go only to a recognised menu, never to an input line. | `autopilot` |
+| T32 | **A runaway loop** — an agent that asks again after every prompt, or a screen that never moves, keeps autopilot acting forever. | At most 3 prompts per pane per hour; a pane is prompted only after a turn of its own finished; a screen unchanged after two key rounds is left and recorded; at most 8 key rounds per pane per pass; a usage-limit pane is retried once per 30 minutes. | `autopilot` |
+| T33 | **Autopilot as a load on the machine** | One process, asleep between passes (default 60 s, minimum 15); one `agent list` per machine per pass; a screen is read only on a state change; an unreachable machine backs off up to 8 passes; a second instance on the same server is refused by a lock. | `autopilot` |
 
 ## Residual risk (accepted)
+
+- **Autopilot approves what agents ask.** With `herdr-peers autopilot`
+  running, a question, a tool approval or a plan approval is accepted
+  without a human seeing it, on every enabled machine in scope — including a
+  command the human would have refused. There is no deny-list and autopilot
+  does not judge what a command does. The human accepts this by starting it;
+  what still stands between an agent and harm is the agent's own guardrails
+  and permission mode, what its account and machine can reach, the
+  repository's rules, and review before a merge. Autopilot also inherits
+  Herdr's lack of sender authentication: whoever can run `herdr` against a
+  server could already press the same keys.
+- **Screens change.** Autopilot recognises screens by their text. A CLI
+  upgrade can change a screen so that it is no longer recognised (left as
+  `unknown`) or is recognised by the generic rule only; `--dry-run` shows
+  what it would do.
 
 - **No sender authentication (inherent to Herdr).** A process that can drive
   Herdr can type anything into a pane, with or without a stamp. A message
