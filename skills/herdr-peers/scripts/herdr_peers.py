@@ -24,11 +24,12 @@ import json
 import os
 import re
 import signal
+import stat
 import subprocess
 import sys
 import time
 
-VERSION = '1.2.3'
+VERSION = '1.2.4'
 PROTOCOL = 1
 MARKER = '[herdr-peers]'
 DEFAULT_MAX_BYTES = 16384
@@ -2926,7 +2927,8 @@ class AutopilotIO(object):
                 continue
             rows.append({'pane': pane, 'state': a.get('agent_status'), 'agent': kind_of(a),
                          'seq': a.get('state_change_seq'), 'turn': a.get('completion_seq'),
-                         'you': machine == 'local' and pane == self.pane})
+                         'you': machine == 'local' and pane == self.pane and
+                         (not self.terminal or a.get('terminal_id') in (None, self.terminal))})
         return rows
 
     def read(self, machine, pane):
@@ -2964,35 +2966,276 @@ class AutopilotIO(object):
             sys.stdout.flush()
 
 
+AUTOPILOT_LOG_CAP = 1024 * 1024  # autopilot.out rotates to autopilot.out.1 past this
+AUTOPILOT_START_WAIT = 5.0      # `start` waits this long for the daemon to hold the lock
+AUTOPILOT_STOP_WAIT = 10.0      # `stop` waits this long for it to exit
+
+
 def autopilot_paths(store):
     return os.path.join(store.dir, 'autopilot.lock'), os.path.join(store.dir, 'autopilot.pid')
+
+
+def autopilot_files(store):
+    """The background log and the options file, next to the pid file."""
+    return os.path.join(store.dir, 'autopilot.out'), os.path.join(store.dir, 'autopilot.json')
+
+
+def autopilot_lock_held(store):
+    """True while an autopilot holds this server's lock."""
+    lock_path, _ = autopilot_paths(store)
+    try:
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return True
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
 
 
 def autopilot_pid(store):
     """The pid of the autopilot running on this server, or None. The lock is
     the truth: a pid file left by a dead autopilot may name another process
     by now, and `stop` must never signal that one."""
-    lock_path, pid_path = autopilot_paths(store)
-    try:
-        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600)
-    except OSError:
-        return None
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        held = True
-    else:
-        held = False
-        fcntl.flock(fd, fcntl.LOCK_UN)
-    finally:
-        os.close(fd)
-    if not held:
+    _, pid_path = autopilot_paths(store)
+    if not autopilot_lock_held(store):
         return None
     try:
         with open(pid_path, 'r', encoding='utf-8') as fh:
             return int(fh.read().strip())
     except (OSError, ValueError):
         return None
+
+
+def open_autopilot_log(store):
+    """Open autopilot.out for appending (0600, never through a symlink),
+    rotating it to autopilot.out.1 once it reaches AUTOPILOT_LOG_CAP."""
+    path, _ = autopilot_files(store)
+    try:
+        st = os.lstat(path)
+        if stat.S_ISREG(st.st_mode) and st.st_size >= AUTOPILOT_LOG_CAP:
+            os.replace(path, path + '.1')
+    except OSError:
+        pass
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | NOFOLLOW, 0o600)
+    except OSError as exc:
+        raise Stop(EXIT_POLICY, 'cannot open the autopilot log %s (%s); a symlinked or '
+                   'unwritable file is refused' % (path, exc.strerror))
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise Stop(EXIT_POLICY, 'the autopilot log %s is not a regular file' % path)
+    os.fchmod(fd, 0o600)
+    return fd
+
+
+def rotate_autopilot_output(store):
+    """In the background daemon: once the log (fd 1) is past the cap, rotate
+    it and point stdout and stderr at the fresh file."""
+    try:
+        if os.fstat(1).st_size < AUTOPILOT_LOG_CAP:
+            return
+    except OSError:
+        return
+    sys.stdout.flush()
+    sys.stderr.flush()
+    fd = open_autopilot_log(store)
+    os.dup2(fd, 1)
+    os.dup2(fd, 2)
+    os.close(fd)
+
+
+def autopilot_option_argv(opts):
+    """The command-line form of the options a daemon was started with."""
+    argv = ['--interval', str(opts.get('interval'))]
+    for flag in ('dry_run', 'no_nudge', 'catch_up'):
+        if opts.get(flag):
+            argv.append('--' + flag.replace('_', '-'))
+    for addr in opts.get('exclude') or []:
+        argv += ['--exclude', addr]
+    if opts.get('scope'):
+        argv += ['--scope', opts['scope']]
+    return argv
+
+
+def autopilot_options(store, pid):
+    """The options file of the running autopilot, or None if it is not its own."""
+    _, opts_path = autopilot_files(store)
+    try:
+        fd = os.open(opts_path, os.O_RDONLY | NOFOLLOW)
+        with os.fdopen(fd, 'r', encoding='utf-8') as fh:
+            data = json.loads(fh.read(65536))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get('pid') != pid or \
+            not isinstance(data.get('options'), dict):
+        return None
+    return data
+
+
+def autopilot_status(store):
+    pid = autopilot_pid(store)
+    log_path, _ = autopilot_files(store)
+    if not pid:
+        print('autopilot: not running (start it with `herdr-peers autopilot start`)')
+    else:
+        print('autopilot: running (pid %d)' % pid)
+        info = autopilot_options(store, pid)
+        if info:
+            opts = info['options']
+            print('  mode: %s, since %s, started from pane %s' % (
+                safe(info.get('mode')), safe(info.get('since')), safe(info.get('pane'))))
+            print('  options: %s' % safe(' '.join(autopilot_option_argv(opts))))
+            if info.get('mode') == 'background':
+                print('  log: %s' % log_path)
+    for rec in [r for r in store.records() if r.get('role') == 'autopilot'][-10:]:
+        print('%s %s %s %s %s' % (safe(rec.get('ts')), safe(rec.get('state')),
+                                  safe(rec.get('target')), safe(rec.get('reason')),
+                                  safe(rec.get('note'))))
+    return EXIT_OK
+
+
+def autopilot_stop(store):
+    pid = autopilot_pid(store)
+    if not pid:
+        print('autopilot: not running')
+        return EXIT_OK
+    os.kill(pid, signal.SIGTERM)
+    print('autopilot: stop sent to pid %d' % pid)
+    sys.stdout.flush()
+    deadline = time.monotonic() + AUTOPILOT_STOP_WAIT
+    while time.monotonic() < deadline:
+        if not autopilot_lock_held(store):
+            print('autopilot: stopped (pid %d)' % pid)
+            return EXIT_OK
+        time.sleep(0.1)
+    raise Stop(EXIT_TIMEOUT, 'autopilot (pid %d) is still running %ds after the stop; check '
+               '`herdr-peers autopilot status`' % (pid, AUTOPILOT_STOP_WAIT))
+
+
+def log_tail(path, count=20):
+    """The last `count` lines of a log, each through safe(); '' if unreadable."""
+    try:
+        fd = os.open(path, os.O_RDONLY | NOFOLLOW)
+        with os.fdopen(fd, 'rb') as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - 2 * AUTOPILOT_LOG_CAP))
+            text = fh.read().decode('utf-8', 'replace')
+    except OSError:
+        return ''
+    lines = text.splitlines()
+    return '\n'.join(safe(l) for l in (lines[-count:] if count > 0 else []))
+
+
+AUTOPILOT_FOLLOW_POLL = 0.25  # `logs -f` looks for new lines this often
+
+
+def autopilot_logs(store, count, follow):
+    """Print the background log's last lines, and with --follow every line
+    written after them, across rotation and truncation. Read-only."""
+    path, _ = autopilot_files(store)
+    if not autopilot_pid(store):
+        sys.stderr.write('autopilot: not running\n')
+    tail = log_tail(path, count)
+    if tail:
+        print(tail)
+    elif not os.path.exists(path):
+        sys.stderr.write('autopilot: no log yet at %s\n' % path)
+    sys.stdout.flush()
+    if not follow:
+        return EXIT_OK
+
+    def opened(at_end):
+        try:
+            fd = os.open(path, os.O_RDONLY | NOFOLLOW)
+        except OSError:
+            return None, None
+        fh = os.fdopen(fd, 'rb')
+        if at_end:
+            fh.seek(0, os.SEEK_END)
+        return fh, os.fstat(fh.fileno()).st_ino
+
+    def emit(data, pending):
+        pending += data
+        *done, pending = pending.split(b'\n')
+        for line in done:
+            print(safe(line.decode('utf-8', 'replace')))
+        sys.stdout.flush()
+        return pending
+
+    fh, ino = opened(at_end=True)
+    pending = b''
+    try:
+        while True:
+            data = fh.read() if fh else b''
+            if data:
+                pending = emit(data, pending)
+                continue
+            try:
+                st = os.lstat(path)
+            except OSError:
+                st = None
+            if fh is None:
+                if st is not None:
+                    fh, ino = opened(at_end=False)
+            elif st is None or st.st_ino != ino:
+                pending = emit(fh.read(), pending)  # the rest of the rotated file
+                fh.close()
+                fh, ino = opened(at_end=False) if st is not None else (None, None)
+            elif st.st_size < fh.tell():
+                fh.seek(0)  # truncated in place
+            time.sleep(AUTOPILOT_FOLLOW_POLL)
+    except KeyboardInterrupt:
+        return EXIT_OK
+    finally:
+        if fh:
+            fh.close()
+
+
+def autopilot_start(args, store, opts):
+    """Spawn this very helper as a detached `autopilot run --detached`."""
+    if autopilot_lock_held(store):
+        raise Stop(EXIT_POLICY, 'autopilot is already running on this server '
+                   '(`herdr-peers autopilot status`, `herdr-peers autopilot stop`)')
+    log_path, _ = autopilot_files(store)
+    fd = open_autopilot_log(store)
+    os.write(fd, ('%s autopilot start requested\n' % now_iso()).encode('utf-8'))
+    env = dict(os.environ)
+    if env.get('HERDR_PEERS_LOG'):  # the daemon runs from the state directory
+        env['HERDR_PEERS_LOG'] = os.path.abspath(env['HERDR_PEERS_LOG'])
+    argv = [sys.executable, '-B', os.path.abspath(__file__), 'autopilot', 'run', '--detached']
+    argv += autopilot_option_argv(opts)
+    try:
+        child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=fd, stderr=fd,
+                                 cwd=store.dir, env=env, close_fds=True,
+                                 start_new_session=True)
+    finally:
+        os.close(fd)
+    deadline = time.monotonic() + AUTOPILOT_START_WAIT
+    while True:
+        if autopilot_pid(store) == child.pid:
+            print('autopilot: started in the background (pid %d)' % child.pid)
+            print('  options: %s' % safe(' '.join(autopilot_option_argv(opts))))
+            print('  log: %s' % log_path)
+            print('  status: `herdr-peers autopilot status`; stop: `herdr-peers autopilot stop`')
+            return EXIT_OK
+        code = child.poll()
+        if code is not None:
+            tail = log_tail(log_path)
+            if tail:
+                sys.stderr.write('--- %s (tail) ---\n%s\n' % (log_path, tail))
+            raise Stop(EXIT_HERDR, 'autopilot did not start (it exited with %d); see %s'
+                       % (code, log_path))
+        if time.monotonic() >= deadline:
+            raise Stop(EXIT_TIMEOUT, 'autopilot (pid %d) did not confirm within %ds; check '
+                       '`herdr-peers autopilot status` and %s'
+                       % (child.pid, AUTOPILOT_START_WAIT, log_path))
+        time.sleep(0.1)
 
 
 def cmd_autopilot(args):
@@ -3003,23 +3246,20 @@ def cmd_autopilot(args):
     import autopilot
     store = Store()
     store.ensure()
-    verb = args.autopilot_verb or 'run'
+    verb = {'on': 'start', 'off': 'stop'}.get(args.autopilot_verb, args.autopilot_verb or 'run')
     if verb == 'status':
-        pid = autopilot_pid(store)
-        print('autopilot: %s' % ('running (pid %d)' % pid if pid else 'not running'))
-        for rec in [r for r in store.records() if r.get('role') == 'autopilot'][-10:]:
-            print('%s %s %s %s %s' % (safe(rec.get('ts')), safe(rec.get('state')),
-                                      safe(rec.get('target')), safe(rec.get('reason')),
-                                      safe(rec.get('note'))))
-        return EXIT_OK
+        return autopilot_status(store)
     if verb == 'stop':
-        pid = autopilot_pid(store)
-        if not pid:
-            print('autopilot: not running')
-            return EXIT_OK
-        os.kill(pid, signal.SIGTERM)
-        print('autopilot: stop sent to pid %d' % pid)
-        return EXIT_OK
+        return autopilot_stop(store)
+    if verb == 'logs':
+        if args.lines is not None and args.lines < 0:
+            raise Stop(EXIT_USAGE, '--lines is at least 0')
+        return autopilot_logs(store, 50 if args.lines is None else args.lines, args.follow)
+    if args.follow or args.lines is not None:
+        raise Stop(EXIT_USAGE, '--follow and --lines are for `autopilot logs`')
+    if verb == 'start' and (args.once or args.passes is not None or args.detached):
+        raise Stop(EXIT_USAGE, 'autopilot start runs until stopped; --once and --passes are '
+                   'for the foreground run')
     interval = args.interval if args.interval is not None else autopilot.DEFAULT_INTERVAL
     passes = 1 if args.once else args.passes
     if passes is not None and passes < 1:
@@ -3038,10 +3278,16 @@ def cmd_autopilot(args):
         if addr is None:
             raise Stop(EXIT_USAGE, '--exclude takes <machine_id>:<pane_id>')
         exclude.add(fmt_address(resolve_machine(addr)))
+    # The only call that needs the starting pane alive; the loop never makes it.
     current = herdr_json(['pane', 'current', '--current'], timeout=8)
     me = ((current.get('result') or {}).get('pane') or {})
     if not (isinstance(me.get('pane_id'), str) and re.fullmatch(PANE_RE, me['pane_id'])):
         raise Stop(EXIT_ENV, 'cannot tell which pane this is; run autopilot inside a Herdr pane')
+    opts = {'interval': interval, 'dry_run': bool(args.dry_run),
+            'no_nudge': bool(args.no_nudge), 'catch_up': bool(args.catch_up),
+            'exclude': sorted(exclude), 'scope': args.scope or None}
+    if verb == 'start':
+        return autopilot_start(args, store, opts)
     io = AutopilotIO(store, me.get('pane_id'), me.get('terminal_id'), scope_from(args))
     lock_path, pid_path = autopilot_paths(store)
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600)
@@ -3056,9 +3302,21 @@ def cmd_autopilot(args):
             os.close(fd)
             raise Stop(EXIT_POLICY, 'autopilot is already running on this server '
                        '(`herdr-peers autopilot status`, `herdr-peers autopilot stop`)')
-    write_private(pid_path, '%d\n' % os.getpid())  # at once: `stop` reads it while the lock is held
+    _, opts_path = autopilot_files(store)
+    try:
+        write_private(pid_path, '%d\n' % os.getpid())  # at once: `stop` reads it under the lock
+        write_private(opts_path, json.dumps({
+            'pid': os.getpid(), 'since': now_iso(),
+            'mode': 'background' if args.detached else 'foreground',
+            'pane': 'local:%s' % me['pane_id'], 'options': opts}, sort_keys=True) + '\n')
+    except Stop:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+        raise
 
-    class Halt(Exception):
+    class Halt(BaseException):
+        # Not an Exception: a pass catches Exception per pane and per machine,
+        # and a stop that lands mid-pass must end the loop, not one pane.
         pass
 
     def halt(_signum, _frame):
@@ -3075,8 +3333,16 @@ def cmd_autopilot(args):
             sys.stdout.flush()
         done = 0
         while True:
+            if args.detached:
+                rotate_autopilot_output(store)
             try:
-                loop.run_pass()
+                summary = loop.run_pass()
+                # Alive, not noisy: a line when something happened, else every 10th pass.
+                if summary['actions'] or summary['pass'] % 10 == 1:
+                    print('%s pass %d: %d machines, %d agents, %d actions, %.1f s' % (
+                        now_iso(), summary['pass'], summary['machines'], summary['agents'],
+                        summary['actions'], summary['seconds']))
+                    sys.stdout.flush()
             except (Stop, OSError) as exc:
                 if passes is not None:
                     raise
@@ -3091,10 +3357,11 @@ def cmd_autopilot(args):
         print('autopilot: stopped')
     finally:
         signal.signal(signal.SIGTERM, previous)
-        try:
-            os.unlink(pid_path)
-        except OSError:
-            pass
+        for path in (opts_path, pid_path):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
         fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
     if passes is not None:
@@ -3283,8 +3550,15 @@ def build_parser():
     ap = sub.add_parser('autopilot', help='answer every waiting agent on every enabled machine: '
                         'accept the recommended option, continue an agent that stopped to ask '
                         '(started by a human only)')
-    ap.add_argument('autopilot_verb', nargs='?', choices=['run', 'stop', 'status'],
-                    help='run (default), stop the running autopilot, or show its last actions')
+    ap.add_argument('autopilot_verb', nargs='?',
+                    choices=['run', 'start', 'on', 'stop', 'off', 'status', 'logs'],
+                    help='run in this pane (default); start (on) in the background; stop (off) '
+                    'the running autopilot; status: whether it runs, how, and its last actions; '
+                    'logs: the background log')
+    ap.add_argument('--lines', type=int, help='logs: how many last lines (default 50)')
+    ap.add_argument('-f', '--follow', action='store_true',
+                    help='logs: keep printing new lines until Ctrl-C')
+    ap.add_argument('--detached', action='store_true', help=argparse.SUPPRESS)
     ap.add_argument('--once', action='store_true', help='one pass, then exit')
     ap.add_argument('--dry-run', action='store_true',
                     help='decide and record, send nothing')

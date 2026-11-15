@@ -68,7 +68,7 @@ The skill (the helper ships inside it, at
 `~/.agents/skills/herdr-peers/scripts/herdr-peers` for a global install):
 
 ```bash
-npx --yes skills add DailybotHQ/herdr-peers@v1.2.3 --skill herdr-peers -g -y
+npx --yes skills add DailybotHQ/herdr-peers@v1.2.4 --skill herdr-peers -g -y
 ```
 
 Herdr's official skill, which this one depends on — pinned, or use the
@@ -82,11 +82,11 @@ Every machine whose agents should answer needs the skill too. From a
 checkout of the tag instead, verified against the release's `SHA256SUMS`:
 
 ```bash
-git clone --branch v1.2.3 https://github.com/DailybotHQ/herdr-peers
+git clone --branch v1.2.4 https://github.com/DailybotHQ/herdr-peers
 cd herdr-peers
-curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v1.2.3/SHA256SUMS
+curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v1.2.4/SHA256SUMS
 shasum -a 256 -c SHA256SUMS      # every shipped file: OK
-bin/herdr-peers --version        # herdr-peers 1.2.3 (protocol 1)
+bin/herdr-peers --version        # herdr-peers 1.2.4 (protocol 1)
 ```
 
 Requirements: Herdr ≥ 0.9.1, `bash`, `python3` ≥ 3.9 (standard library
@@ -184,18 +184,24 @@ next (folder trust only, on a pane you launched yourself, under the user's stand
 | `lanes [--json] [--all] [--plan P]` | One row per peer you asked or your lead record lists: agent, vendor, profile, live state, screen class, open asks, last reported capacity, last ask. `--json` is the contract [`herdr-peers/lanes-v1`](docs/schema/lanes-v1.json) (0.3.0 adds `plan`, `lead`, `epoch`, `capacity`); consumers ignore unknown keys. |
 | `lead claim\|show\|handover\|takeover\|release` | A plan's lead record [`herdr-peers/lead-v1`](docs/schema/lead-v1.json): who leads, the epoch, the ordered succession, the lanes notified on every change. Only the highest epoch leads; a stale lead steps down. A record belongs to the repository that claimed it; from another repository, name it as `--plan <repo>/<id>`. |
 | `debate tally\|claims\|anon\|filings\|panel` | A debate lead's tools ([debate.md](skills/herdr-peers/debate.md)) — decide, research, stress-test, verify, generate: count a [`ballots-v1`](docs/schema/ballots-v1.json) file, or a directory of per-pane ballots, into [`tally-v1`](docs/schema/tally-v1.json); merge lanes' [`claims-v1`](docs/schema/claims-v1.json) ledgers, across rounds with `--rounds`, into a [`claims-report-v1`](docs/schema/claims-report-v1.json) (established, agreed, contested, partial, single, unsupported, disputed, refuted — a quorum count, not a verification — with coverage; `--anonymous` blinds lanes, angles, claim text and sources); copy filings to anonymized `Filing_A.md`… in an order only the key can rebuild (a filing carrying a secret is refused); list missing or short filings (exit 5); propose a panel ([`panel-v1`](docs/schema/panel-v1.json)) from idle panes and `ak pick` — read-only, it runs nothing. |
-| `autopilot [run\|stop\|status]` | **You start it; no agent or message can.** Accepts the recommended option for every waiting agent on every enabled machine, follows multi-step dialogs, continues agents that stopped to ask, retries a usage limit every 30 minutes; never a login. `--dry-run`, `--once`, `--interval S`, `--exclude`, `--scope`, `--no-nudge`, `--catch-up` ([autopilot.md](skills/herdr-peers/autopilot.md)). |
+| `autopilot [run\|start\|stop\|status\|logs]` | **You start it; no agent or message can.** `start` / `stop` (aliases `on` / `off`) run it in the background, `status` and `logs -f` watch it. Accepts the recommended option for every waiting agent on every enabled machine, follows multi-step dialogs, continues agents that stopped to ask, retries a usage limit every 30 minutes; never a login. `--dry-run`, `--once`, `--interval S`, `--exclude`, `--scope`, `--no-nudge`, `--catch-up` ([autopilot.md](skills/herdr-peers/autopilot.md)). |
 | `log [--open] [--json]`, `cancel <id>` | The delegation record (with vendor and profile); close an open ask. |
 | `--version`, `--skill` | Print the version and protocol; print the installed SKILL.md. |
 
 ### Autopilot: no agent waits for you
 
 ```bash
-herdr-peers autopilot --dry-run   # see what it would accept; sends nothing
-herdr-peers autopilot             # run it in a pane of its own
-herdr-peers autopilot status      # running? and its last actions
+herdr-peers autopilot start --dry-run   # in the background: see what it would accept; sends nothing
+herdr-peers autopilot logs -f           # watch it live
 herdr-peers autopilot stop
+herdr-peers autopilot start             # in the background; the pane can close (alias: on)
+herdr-peers autopilot status            # running? since when, its options, last actions
+herdr-peers autopilot stop              # alias: off
+herdr-peers autopilot                   # or in the foreground of a pane of its own
 ```
+
+The background autopilot survives the pane that started it, not a reboot or
+a Herdr restart: run `herdr-peers autopilot start` again after one.
 
 Autopilot looks at every agent once a minute. When one waits at a menu it
 presses the keys that accept an option — the one marked recommended, else

@@ -9,6 +9,42 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-11-15
+
+This release adds features, which by the book is a minor version. It stays in
+1.2.x on purpose: 1.3.0 is reserved for the loop programme.
+
+### Added
+
+- **Autopilot in the background.** `herdr-peers autopilot start` (alias
+  `on`) starts autopilot as a detached process that survives the pane that
+  started it; `autopilot stop` (alias `off`) stops it and waits until it
+  exits; `autopilot status` shows, from any pane, whether it runs, its pid,
+  since when, how it was started (background or a foreground pane), its
+  options, its log and its last ten actions. `autopilot` with no verb is the
+  foreground mode, unchanged. Start takes the same options as the foreground
+  run except `--once` / `--passes`, refuses while one runs (exit 4), and
+  fails with the log's tail if the process dies at once. No login item or
+  service is installed: after a reboot or a Herdr restart, run
+  `autopilot start` again.
+- **`herdr-peers autopilot logs`** prints the last lines of the background
+  log (`--lines N`, default 50) and with `-f` / `--follow` keeps printing new
+  ones across a rotation, read-only and through `safe()`.
+- `autopilot.out` (the background log, `0600`, rotated to `autopilot.out.1`
+  at 1 MB) and `autopilot.json` (the options it runs with, `0600`), in the
+  state directory, never opened through a symlink. Threat model row T39.
+- A pass line, `pass N: M machines, K agents, A actions, T s`, when a pass
+  acted, and on every tenth idle pass so a watcher can see it is alive.
+
+### Fixed
+
+- **A stop that landed during a pass could be swallowed.** The signal
+  handler raised an exception that the per-pane guard caught, so `stop`
+  ended one pane's visit instead of the loop. It now always ends the loop,
+  and `stop` waits up to 10 seconds to confirm it.
+- **The own-pane skip matches the terminal too**, so a new pane that reuses
+  the id of the pane autopilot started from is not skipped.
+
 ## [1.2.3] - 2026-11-15
 
 ### Fixed
