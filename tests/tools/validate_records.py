@@ -16,7 +16,8 @@ import sys
 
 KNOWN = {'$schema', '$id', 'title', 'description', 'type', 'required',
          'additionalProperties', 'properties', 'const', 'enum', 'pattern', 'items'}
-TYPES = {'string': str, 'object': dict, 'integer': int, 'null': type(None), 'array': list}
+TYPES = {'string': str, 'object': dict, 'integer': int, 'null': type(None), 'array': list,
+         'boolean': bool}
 
 
 def check_keywords(node, where):

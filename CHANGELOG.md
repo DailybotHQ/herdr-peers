@@ -9,6 +9,50 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Added
+
+- **`autopilot --loop`: every open plan runs to its end.** The daemon a
+  human starts now also watches every plan that has a lead record, on
+  every enabled machine. The idle lead of a plan that is not finished gets
+  one fixed prompt to continue it — after its pane has been unchanged for
+  5 minutes, never while its lanes work or it awaits a reply, never over a
+  draft, a dialog or a login. A blocked plan is left and recorded; three
+  prompts without progress stop the plan (`plan_stalled`); a lead that is
+  gone has its first reachable successor asked to run `lead takeover`
+  (once per epoch), or the plan is recorded `plan_no_lead`. The daemon
+  never writes a lead record, sends no protocol message and launches no
+  agent. Without `--loop` nothing changes.
+- **One daemon for every machine.** Each machine reports its own plans:
+  the daemon reads its own in process and, for every other saved machine,
+  sends a self-contained report module on standard input to `python3` over
+  that machine's SSH target (`ssh -o BatchMode=yes … -- <target> python3
+  -`). Nothing is installed or required on the other machine but python3.
+- **`herdr-peers plans [--json]`** (`plans-v1`): the plans led on this
+  machine with their class (`open`, `blocked`, `completed`, `unreadable`)
+  and progress. Works outside a Herdr pane.
+- **`herdr-peers fleet [--json]`** (`fleet-v1`): the loop's map of every
+  machine, its agents with repository and branch, the plans and each
+  agent's role in them. The daemon leaves every machine a copy, so any
+  agent on any machine can read it.
+- **`--notify "<command>"`**: with `--loop`, run a command (no shell, its
+  own process group, a minimal environment, `--notify-env NAME` to pass a
+  variable) with a `plan-event-v1` object when a plan stalls, is blocked,
+  loses its lead, its lead record goes stale, or it completes.
+- `HERDR_PEERS_AUTOPILOT_GRACE`, `HERDR_PEERS_AUTOPILOT_SSH_TIMEOUT` and
+  `HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT`.
+
+### Changed
+
+- A bounded dry run (`autopilot --dry-run --once` or `--passes N`) no
+  longer takes the single-instance lock, so it can run beside a running
+  autopilot; it writes no map and runs no notify command.
+
+### Security
+
+- Threat model rows T34–T38 (`docs/SECURITY.md`): the loop's `ssh` command,
+  a hostile answer from a machine, a hostile lead record or plan state, the
+  map written on other machines, and the notify command.
+
 ## [1.2.4] - 2026-11-15
 
 This release adds features, which by the book is a minor version. It stays in

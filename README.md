@@ -185,6 +185,8 @@ next (folder trust only, on a pane you launched yourself, under the user's stand
 | `lead claim\|show\|handover\|takeover\|release` | A plan's lead record [`herdr-peers/lead-v1`](docs/schema/lead-v1.json): who leads, the epoch, the ordered succession, the lanes notified on every change. Only the highest epoch leads; a stale lead steps down. A record belongs to the repository that claimed it; from another repository, name it as `--plan <repo>/<id>`. |
 | `debate tally\|claims\|anon\|filings\|panel` | A debate lead's tools ([debate.md](skills/herdr-peers/debate.md)) — decide, research, stress-test, verify, generate: count a [`ballots-v1`](docs/schema/ballots-v1.json) file, or a directory of per-pane ballots, into [`tally-v1`](docs/schema/tally-v1.json); merge lanes' [`claims-v1`](docs/schema/claims-v1.json) ledgers, across rounds with `--rounds`, into a [`claims-report-v1`](docs/schema/claims-report-v1.json) (established, agreed, contested, partial, single, unsupported, disputed, refuted — a quorum count, not a verification — with coverage; `--anonymous` blinds lanes, angles, claim text and sources); copy filings to anonymized `Filing_A.md`… in an order only the key can rebuild (a filing carrying a secret is refused); list missing or short filings (exit 5); propose a panel ([`panel-v1`](docs/schema/panel-v1.json)) from idle panes and `ak pick` — read-only, it runs nothing. |
 | `autopilot [run\|start\|stop\|status\|logs]` | **You start it; no agent or message can.** `start` / `stop` (aliases `on` / `off`) run it in the background, `status` and `logs -f` watch it. Accepts the recommended option for every waiting agent on every enabled machine, follows multi-step dialogs, continues agents that stopped to ask, retries a usage limit every 30 minutes; never a login. `--dry-run`, `--once`, `--interval S`, `--exclude`, `--scope`, `--no-nudge`, `--catch-up` ([autopilot.md](skills/herdr-peers/autopilot.md)). |
+| `autopilot --loop [--notify "<command>"]` | The same daemon also keeps **every open plan running to its end**, on every enabled machine: it asks the idle lead of a plan that is not finished to continue it, leaves a blocked plan, stops after three prompts without progress, asks a successor to take over a lead that is gone, and can run a command of yours when a plan needs you. |
+| `plans [--json]`, `fleet [--json]` | This machine's plans and their state ([`plans-v1`](docs/schema/plans-v1.json)); the loop's map of every machine, agent, repository and plan ([`fleet-v1`](docs/schema/fleet-v1.json)), readable on any machine. |
 | `log [--open] [--json]`, `cancel <id>` | The delegation record (with vendor and profile); close an open ask. |
 | `--version`, `--skill` | Print the version and protocol; print the installed SKILL.md. |
 
@@ -198,6 +200,8 @@ herdr-peers autopilot start             # in the background; the pane can close 
 herdr-peers autopilot status            # running? since when, its options, last actions
 herdr-peers autopilot stop              # alias: off
 herdr-peers autopilot                   # or in the foreground of a pane of its own
+herdr-peers autopilot --loop      # also keep every open plan running to its end
+herdr-peers fleet                 # who is where, on which plan
 ```
 
 The background autopilot survives the pane that started it, not a reboot or

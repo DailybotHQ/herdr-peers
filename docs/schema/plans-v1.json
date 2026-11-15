@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "herdr-peers/plans-v1",
+  "title": "herdr-peers machine report (plans-v1)",
+  "description": "What `herdr-peers plans --json` prints and what the autopilot daemon collects from every machine: the plans that have a lead record on this machine, each with its state as read from the plan's own state.json at the path that is valid here, and the repository of each agent pane it was told about. Read-only. Addresses are as this machine names them (its own panes are `local:`). Never carries screen text, file content, prompt text or secrets.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "report_version",
+    "generated_at",
+    "state",
+    "reason",
+    "plans",
+    "agents"
+  ],
+  "properties": {
+    "schema": {
+      "const": "herdr-peers/plans-v1"
+    },
+    "report_version": {
+      "type": "integer",
+      "description": "Version of the report module that answered."
+    },
+    "generated_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+    },
+    "state": {
+      "enum": [
+        "ok",
+        "unknown"
+      ],
+      "description": "`unknown` when the state root could not be read: the plans list is then not an answer."
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "plans": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "plan",
+          "server",
+          "lead",
+          "epoch",
+          "succession",
+          "lanes",
+          "repo_root",
+          "plan_dir",
+          "class",
+          "blocker_class",
+          "progress",
+          "state_updated_at",
+          "updated_at",
+          "open_asks",
+          "lead_in_repo"
+        ],
+        "properties": {
+          "plan": {
+            "type": "string",
+            "pattern": "^(?=.{1,128}$)[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$"
+          },
+          "server": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "The state directory (one per Herdr server) the lead record was read from."
+          },
+          "lead": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^(local|[A-Za-z0-9._-]{1,64}):[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}$",
+            "description": "null after `lead release`."
+          },
+          "epoch": {
+            "type": "integer"
+          },
+          "succession": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(local|[A-Za-z0-9._-]{1,64}):[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}$"
+            }
+          },
+          "lanes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(local|[A-Za-z0-9._-]{1,64}):[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}$"
+            }
+          },
+          "repo_root": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^/.{0,4095}$",
+            "description": "The lead record's repository root, as this machine sees it."
+          },
+          "plan_dir": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^/.{0,4095}$",
+            "description": "Where the plan's state.json was found; null when it was not."
+          },
+          "class": {
+            "enum": [
+              "open",
+              "blocked",
+              "completed",
+              "unreadable"
+            ],
+            "description": "`unreadable`: no state.json inside the repository, or one that is not a valid plan state. Never guessed."
+          },
+          "blocker_class": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^C[1-7]$",
+            "description": "The escalation class the blocker names, when it names one."
+          },
+          "progress": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{16}$",
+            "description": "Digest of status, task statuses, satisfied criteria, checkpoint and blocker: it changes when the plan advances and not otherwise."
+          },
+          "state_updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+          },
+          "updated_at": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+            "description": "When the lead record was last written."
+          },
+          "open_asks": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Asks the lead still awaits (launched within the last two hours); null when the lead is not a pane of this machine or the log cannot be counted."
+          },
+          "lead_in_repo": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the lead's pane on this machine still works inside the plan's repository; false means the record names a pane that now does something else (a reused pane id), and the loop never prompts it. null when unknown."
+          }
+        }
+      }
+    },
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pane",
+          "cwd",
+          "repo_root",
+          "branch"
+        ],
+        "properties": {
+          "pane": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}$"
+          },
+          "cwd": {
+            "type": "string",
+            "pattern": "^/.{0,4095}$"
+          },
+          "repo_root": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^/.{0,4095}$",
+            "description": "git top level of cwd; null outside git."
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "fleet": {
+      "enum": [
+        "stored",
+        "unchanged",
+        "failed"
+      ],
+      "description": "Present only when the daemon sent its snapshot along: what happened to this machine's copy."
+    }
+  }
+}
