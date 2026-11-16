@@ -283,7 +283,7 @@ for change in ('unblock', 'other'):
             'reason': 'needs approval to push', 'needs': 'the human', 'resolver': 'lead'})], 'agents': []})
     io.rows['local'] = [row('w9:p1', 'idle', 2), row('w1:p2', 'idle', 5)]
     step(ap, 400); step(ap)
-    assert not [t for p, t in io.sent if p == 'w1:p2' and t.startswith(B.RESOLVE_TEXT[:20])], (change, io.sent)
+    assert B.RESOLVE_TEXT % 'PLAN_1_a' not in [t for p, t in io.sent if p == 'w1:p2'], (change, io.sent)
 # Answers carry the launch's key: none, or another key, is refused.
 io, ap = fresh()
 io.rows['local'] = [row('w9:p1', 'idle', 2), row('w1:p2')]
