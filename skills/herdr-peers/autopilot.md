@@ -156,6 +156,7 @@ one of those, it moves to the first row that is not.
 | A usage limit (the CLI's own banner; a `429` in a command's output is not one) | Leaves it; every 30 minutes accepts the option shown (if any) and asks the agent to continue its pending plan — for at most a day, never over a draft on the input line, and not with `--no-nudge`. |
 | A login, a sign-in, an API-key or device-code prompt | **Never touched.** A human signs in. |
 | Claude's bypass-permissions acknowledgement | **Never touched.** The developer accepts it once per profile. |
+| A menu where every row refuses or widens permissions | **Denied, never left blocked:** its first refusal row (`No`, `Deny`, `Cancel` — never an exit row), else `esc`; recorded `denied`. Once the agent is idle again it is told once, with a fixed prompt, to continue another way within its plan's gates. |
 | A blocked pane with no menu it recognises | Left, and recorded as `unknown`. |
 
 Verified on real panes of Claude Code, Codex, Cursor, Grok, Pi and
@@ -181,7 +182,9 @@ selected; otherwise it is left alone.
 - Touch its own pane, an excluded pane, or a machine outside the scope.
 - Read, store or print screen text. The record holds the screen class, the
   option number and the keys.
-- Send `esc`: on a working agent it interrupts the turn.
+- Send `esc` to a working agent: it would interrupt the turn. `esc` goes only
+  to a blocked dialog being denied, when it has no refusal row or the
+  refusal row did not take.
 
 ## 5. The plan loop (`--loop`)
 
@@ -423,8 +426,14 @@ the lines between the two rules right above "Do you want to proceed?" — is
 exactly one line, `herdr-peers autopilot answer q-<12 hex> <word>`, by name
 and nothing else, with "Yes" as its first option. Any other layout, any
 other kind of agent (until it has its own verified fixture), any extra or
-wrapped line, any path, refuses: the approval is left, recorded
-(`brain_permission_refused`) and you are told once. For now that makes
+wrapped line, any path, is **denied, never left waiting**: the
+dialog's refusal row (else `esc`; never Yes, a widening row or auto mode),
+recorded `brain_permission_denied`. Once idle, the brain is reminded once,
+with a fixed prompt, that the only command it may run is `herdr-peers
+autopilot answer <qid> <action>` and that the question carries all it
+needs. Three denials in an hour retire it as misbehaving (`brain_replaced
+why=misbehaving`), and a replacement is launched within the hourly cap. Its
+brief says so up front: one command, nothing else approved. For now that makes
 Claude the only kind whose brain can answer; others are launched but their
 answers are never approved. An injected brain can
 still choose any allowed action for an open question — that is the

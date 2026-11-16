@@ -9,6 +9,23 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Nothing is left blocked, not even the brain.** A request in the brain's
+  pane that the daemon will not approve (anything but its own answer
+  command) was left at "Do you want to proceed?", so the brain sat there
+  and every later question fell to its default. It is now **denied**: the
+  dialog's refusal row, else `esc` — never Yes, a widening row or auto mode
+  (`brain_permission_denied`). Once idle, the brain is reminded once of the
+  one allowed command; three denials in an hour retire it
+  (`brain_replaced why=misbehaving`) and a replacement launches within the
+  cap. The brief now names the single allowed command and says nothing
+  else is approved and the question carries all the context. Outside the
+  brain, a menu whose every row refuses or widens permissions is denied the
+  same way (`denied`) instead of left blocked, and the agent is told once,
+  when idle, to continue another way. Login, the bypass-permissions consent
+  and folder trust stay the human's.
+
 ### Added
 
 - **`fleet ui` views: one facet model in every grouping.** A second row

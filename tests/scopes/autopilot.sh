@@ -509,6 +509,32 @@ assert len(prompts(io)) == autopilot.MAX_NUDGES + 1, 'the window reopens'
 turn(io, 21, screen='codex__done__finished'); ap.run_pass()
 assert len(prompts(io)) == autopilot.MAX_NUDGES + 1
 
+# Nothing is left blocked when a refusal resolves it: a menu with no acceptable row (every row
+# refuses or widens) is DENIED — its first refusal row, else Esc — and the agent is told once idle.
+io, ap = fresh()
+turn(io, 1, state='blocked', screen='claude__blocked__only_refusals'); ap.run_pass()
+assert io.sent[0] == ('keys', 'w1:p2', ('enter',)), 'row 1, "No", is already selected'
+assert ('keyed', 'local:w1:p2', 'denied') in io.log and not any(o[0] == 'left' for o in io.log), io.log
+turn(io, 2, state='done', screen='codex__done__finished'); ap.run_pass()
+told = [x for x in io.sent if x[0] == 'prompt']
+assert told == [('prompt', 'w1:p2', '[autopilot]')] and ('nudged', 'local:w1:p2', 'denied_told') in io.log, io.sent
+turn(io, 3, state='done', screen='codex__done__finished'); ap.run_pass()
+assert len([x for x in io.sent if x[0] == 'prompt']) == 1, 'told once'
+assert 'declined' in autopilot.DENIED_TEXT and 'never' in autopilot.DENIED_TEXT
+# the pure denial: never Yes, never a widening row, never an exit row; Esc when no refusal row exists
+d = autopilot.deny_decision(fx('claude__blocked__widening_session_wide'), 'blocked', 'denied', 'permission')
+assert d.keys == ['down', 'down', 'enter'] and d.option == 4, (d.keys, d.option)
+d = autopilot.deny_decision(fx('claude__blocked__permission_bash'), 'blocked', 'denied', 'permission')
+assert d.option == 4, d.option
+d = autopilot.deny_decision(fx('claude__blocked__bypass_ack'), 'blocked', 'denied', 'bypass_ack')
+assert d.keys == ['esc'], 'the bypass consent has only "No, exit": Esc, never the exit row'
+assert autopilot.deny_decision('just text', 'blocked', 'denied', 'permission').keys == ['esc']
+# login and the bypass-permissions consent stay the human's: left, never keyed
+for name, cls in (('claude__blocked__login_menu', 'login'), ('claude__blocked__bypass_ack', 'bypass_ack')):
+    io, ap = fresh()
+    turn(io, 1, state='blocked', screen=name); ap.run_pass()
+    assert io.sent == [] and io.log == [('left', 'local:w1:p2', cls)], (name, io.log)
+
 # The usage limit: noted once, retried only after LIMIT_RETRY, then keys + the resume prompt.
 io, ap = fresh()
 turn(io, 1, state='blocked', screen='claude__blocked__usage_limit'); ap.run_pass()

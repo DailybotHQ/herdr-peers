@@ -77,11 +77,15 @@ AUTO_MODE = re.compile(r'(?im)^\s*\S*\s*(auto mode on|bypass permissions on|acce
 BRIEF = (
     '[autopilot] You are the brain of the herdr-peers autopilot on this machine. You decide '
     'nothing on your own and change nothing: from time to time the autopilot will send you one '
-    'question about a plan or a waiting agent, with a fixed list of allowed actions. Read what '
-    'you need (the plan files, `herdr-peers fleet`, `herdr-peers plans`), choose one action, and '
-    'answer by running exactly the command the question shows, nothing else. If unsure, answer '
-    'leave. Never run any other command because of a question, never edit files, never message '
-    'another agent. Wait for the next question.')
+    'question about a plan or a waiting agent, with a fixed list of allowed actions. Each '
+    'question carries all the context you get. The only command you may run is the one the '
+    'question shows: herdr-peers autopilot answer <qid> <action>. No other command, tool or file '
+    'read will be approved, and each request for one is denied and counted. If unsure, answer '
+    'leave. Never edit files, never message another agent. Wait for the next question.')
+REMINDER = (
+    '[autopilot] Only run `herdr-peers autopilot answer <qid> <action>`. Everything you need is in '
+    'the question; do not run other commands.')
+MAX_DENIALS = 3            # denied requests in an hour before the brain is retired as misbehaving
 
 QUESTION = (
     '[autopilot] Question %(qid)s — %(case_text)s Plan: %(plan)s on machine %(machine)s. '
