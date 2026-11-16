@@ -9,6 +9,11 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-11-16
+
+A patch on 2.0.0: why a brain was retired, a Claude-only default brain, and
+queue-state hygiene. Protocol 2, unchanged.
+
 ### Changed
 
 - **The default `--brain-kinds` is `claude`** (was `claude,codex,grok`):
@@ -886,7 +891,8 @@ First release. Interface version: **protocol 1** (`metadata.protocol: 1` in
   `harness lint protocol helper skill templates security live`; CI on Ubuntu
   and macOS.
 
-[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/DailybotHQ/herdr-peers/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/DailybotHQ/herdr-peers/compare/v1.3.1...v2.0.0
 [1.3.1]: https://github.com/DailybotHQ/herdr-peers/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/DailybotHQ/herdr-peers/compare/v1.2.4...v1.3.0
