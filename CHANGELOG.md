@@ -9,6 +9,34 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-11-16
+
+### Fixed
+
+- **The protocol text now defines the address alias the helper has accepted
+  since 1.2.3** ([#42](https://github.com/DailybotHQ/herdr-peers/issues/42)).
+  `protocol.md` §2 says that `local:<pane>` and `<this server's own saved
+  id>:<pane>` name the same pane, and rule 7 matches a reply's `from=`
+  against the asked peer or that alias. A pane on any other machine is
+  never an alias. Doc only, no wire change.
+- **The notify budget of a pass is real**
+  ([#43](https://github.com/DailybotHQ/herdr-peers/issues/43)). All notify
+  commands of one pass share `HERDR_PEERS_AUTOPILOT_NOTIFY_BUDGET` (default
+  20 s, 1–120); a larger per-event `HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT`
+  no longer widens the pass.
+- **Schema links work in an installed skill**
+  ([#44](https://github.com/DailybotHQ/herdr-peers/issues/44)). `autopilot.md`
+  linked `../../docs/schema/`, which only exists in this repository; the
+  `fleet-v1` and `plan-event-v1` schemas now ship in `skills/herdr-peers/schemas/`
+  (kept byte-identical to `docs/schema/` by a test), and the `skill` scope
+  refuses a link that leaves the skill directory.
+- **One validator for the fleet map** (#44). The writer (`store_fleet`), the
+  reader (`fleet`) and the watcher (`fleet ui`) use the same `valid_fleet`,
+  so a map is never printed by one and refused by another.
+- The unused `GONE_REASONS` constant is removed (#44).
+- The test runner checks that every scope file parses before running it:
+  a scope that bash cannot parse no longer stops early and looks green.
+
 ## [1.3.0] - 2026-11-15
 
 ### Added
