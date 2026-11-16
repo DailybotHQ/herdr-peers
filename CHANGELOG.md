@@ -46,7 +46,8 @@ changes bumped the minor version).
   commit `ff96b9e`, all 188 files verified against the release
   `SHA256SUMS`, digest `cb877b16…`), and the registry's herdr addon version
   moved to v2.1.0, the release the pack pins (skills-lock.json,
-  .dwp/config.json).
+  .dwp/config.json). AGENTS.md now declares DWP standard 8.0.0, re-stamped
+  through the pack's upgrade flow; existing plans keep their generation.
 
 ## [2.1.0] - 2026-11-16
 

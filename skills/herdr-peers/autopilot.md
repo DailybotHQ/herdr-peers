@@ -520,8 +520,9 @@ record can take over, by launching **one** fresh agent:
   workspace of its own whose shell starts in the plan's checkout. Once the agent
   is up the daemon writes a one-time ticket and sends one fixed prompt: run
   `herdr-peers lead takeover --plan P --reason revive`, then `lead verify`, then
-  resume the plan from its state. The helper checks the ticket, the running
-  `--revive` daemon and its own two probes (protocol.md §12, *Revive*).
+  resume the plan from its state. The helper checks the ticket, that the pane is
+  in the workspace the daemon created, the running `--revive` daemon, the caps in
+  the lead record and its own two probes (protocol.md §12, *Revive*).
 - **A stalled plan whose lead is alive** is never taken from it: the fresh agent
   is launched and the stalled lead is asked once to `lead handover` to it; when
   it does, the new lead is told to resume.

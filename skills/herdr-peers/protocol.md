@@ -488,12 +488,16 @@ this one path, and only on the daemon's own machine.
 - **Consent.** The human starting the daemon with `autopilot --loop --revive`
   is the standing grant. The daemon launches the agent itself (coding-agents-kit,
   ask mode, a workspace in the plan's checkout) and, once it is up, writes a
-  **one-time ticket** naming the plan, the new pane and the stored epoch (`0600`,
-  created exclusively, never through a symlink, 10 minutes).
+  **one-time ticket** naming the plan, the new pane, the stored epoch, the
+  workspace it created and its own pid (`0600`, created exclusively, never
+  through a symlink, 10 minutes). The ticket holds no secret: a process of the
+  same user could write one, so it is one check among several, never the only one.
 - **The revived agent acts itself**: `lead takeover --plan P --reason revive`
-  accepts only with a matching unexpired ticket, a running autopilot whose
-  recorded options include `--revive` and whose pid issued the ticket, the plan's
-  repository, and its own two probes, a minute apart, that find the lead, every
+  accepts only with a matching unexpired ticket, from a pane inside the
+  ticket's workspace (`herdr pane list`), a ticket naming the running
+  autopilot's pid with `--revive` among its recorded options, fewer than two
+  revives of the plan and none in the last six hours (counted in the lead record:
+  `revives`, `revived_at`), the plan's repository, and its own two probes, a minute apart, that find the lead, every
   successor and every lane gone — strongly, or (the lead or a member) at a usage
   limit whose own banner resets more than 30 minutes away (weak evidence,
   recorded). An unreachable machine is not proof. The ticket is consumed before
