@@ -69,6 +69,9 @@ TAKEOVER_TEXT = (
     'gone. If it accepts, continue executing the plan to its end, respecting its gates. If it '
     'refuses, do nothing more.')
 
+QUEUE_TEXT = ("Plan %s is next in this repository's queue and approved; execute it to its end, "
+              "respecting its gates.")
+
 BOX = {ord(c): ' ' for c in '│┃█'}
 CURSORS = '❯›>→▶'
 ROW_NUM = re.compile(r'^(?P<ind>\s*)(?:(?P<cur>[%s])\s+)?(?P<num>\d{1,2})[.)]\s+(?P<rest>\S.*)$'
@@ -720,6 +723,8 @@ class PlanLoop(object):
         self.machines = {}     # machine -> {'at', 'state', 'report'}
         self.memos = {}        # (machine, plan id) -> PlanMemo
         self.resolve = set()        # (machine, plan) the brain allowed to ask its lead to resolve
+        self.queued = set()         # (machine, repo, plan) whose lead was prompted to start it
+        self.queue_told = {}        # (machine, repo, plan) -> the blocked reason already reported
         self.fleet_text = None      # the daemon's own map
         self.remote_text = None     # the reduced copy left on other machines
         self.fleet_key = None
@@ -803,6 +808,11 @@ class PlanLoop(object):
                     self.consider(machine, plan, by_pane, now, prompted)
                 except Exception as exc:  # one plan never stops the pass
                     self.io.warn('%s:%s' % (machine, plan.get('plan')), exc)
+            for queue in info['report'].get('queues') or []:
+                try:
+                    self.consider_queue(machine, queue, by_pane, now, prompted)
+                except Exception as exc:  # one queue never stops the pass
+                    self.io.warn('%s:queue' % machine, exc)
         self.publish(listed, now)
         flush = getattr(self.io, 'flush_events', None)
         if flush is not None:
@@ -904,6 +914,47 @@ class PlanLoop(object):
                        'nudged', plan=plan['plan'])
         if not self.ap.dry_run:
             self.io.prompt(machine, pane, LOOP_TEXT % plan['plan'])
+
+    def consider_queue(self, machine, queue, by_pane, now, prompted):
+        """Start the next ready item of a repository's queue: one fixed prompt to
+        its named lead, once. The queue is the pack's; the daemon only reads it.
+        A queued item that cannot start for a reason the human must fix is
+        reported once per reason."""
+        repo = queue.get('repo_root')
+        for item in queue.get('items') or []:
+            key = (machine, repo, item['plan'])
+            if item.get('state') != 'queued':
+                self.queued.discard(key)
+                self.queue_told.pop(key, None)
+                continue
+            reason = item.get('blocked_reason')
+            if reason and not reason.startswith('waiting for') and not reason.startswith('another plan'):
+                if self.queue_told.get(key) != reason:
+                    self.queue_told[key] = reason
+                    self.ap.record('%s:-' % machine, None, Decision('leave', 'queue_blocked', reason),
+                                   'left', plan=item['plan'])
+                    self.io.event({'schema': EVENT_SCHEMA, 'event': 'queue_blocked',
+                                   'plan': item['plan'], 'machine': machine, 'lead': item.get('lead'),
+                                   'repo_root': repo, 'blocker_class': None}, self.ap.dry_run)
+                continue
+            if not item.get('ready'):
+                continue
+            if key in self.queued:
+                if not queue.get('parallel'):
+                    return  # its start is in flight: one at a time per repository
+                continue
+            pane = local_pane(item.get('lead'))
+            if pane is None:
+                continue
+            addr = '%s:%s' % (machine, pane)
+            if self.prompt_lead(machine, {'plan': item['plan']}, pane, addr, by_pane, now, prompted,
+                                QUEUE_TEXT % item['plan'], 'plan_queued_started'):
+                self.queued.add(key)
+                self.io.event({'schema': EVENT_SCHEMA, 'event': 'plan_queued_started',
+                               'plan': item['plan'], 'machine': machine, 'lead': item.get('lead'),
+                               'repo_root': repo, 'blocker_class': None}, self.ap.dry_run)
+            if not queue.get('parallel'):
+                return  # one at a time per repository
 
     def prompt_lead(self, machine, plan, pane, addr, by_pane, now, prompted, text, cls):
         """One fixed prompt to a plan's lead, under the same guards as the
@@ -1025,10 +1076,18 @@ class PlanLoop(object):
                               'current_task': plan.get('current_task'),
                               'detail': plan.get('detail'),
                               'situation': memo.situation if memo else None})
+            queues = []
+            for q in report.get('queues') or []:
+                queues.append({'repo_root': q.get('repo_root'), 'parallel': bool(q.get('parallel')),
+                               'invalid': bool(q.get('invalid')),
+                               'items': [{'plan': it['plan'], 'state': it['state'], 'after': it.get('after'),
+                                          'lead': it.get('lead'), 'ready': it['ready'],
+                                          'blocked_reason': it.get('blocked_reason')}
+                                         for it in q.get('items') or []]})
             machines.append({'machine': machine, 'label': self.io.label(machine),
                              'agents_state': 'unknown' if rows is None else 'ok',
                              'plans_state': info.get('state') or 'unknown',
-                             'agents': agents, 'plans': plans})
+                             'agents': agents, 'plans': plans, 'queues': queues})
         daemon = dict(self.io.identity())
         daemon['brain'] = self.ap.brain.status(now) if self.ap.brain is not None else None
         body = {'schema': FLEET_SCHEMA, 'daemon': daemon, 'machines': machines}

@@ -150,7 +150,8 @@
           "agents_state",
           "plans_state",
           "agents",
-          "plans"
+          "plans",
+          "queues"
         ],
         "properties": {
           "machine": {
@@ -529,6 +530,83 @@
                     "null"
                   ],
                   "description": "When its lead record was last written."
+                }
+              }
+            }
+          },
+          "queues": {
+            "type": "array",
+            "description": "Each repository's plan queue (.dwp/queue.json, written by the pack, read only): plan ids, states, readiness and why an item cannot start. No plan content.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "repo_root",
+                "parallel",
+                "invalid",
+                "items"
+              ],
+              "properties": {
+                "repo_root": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "parallel": {
+                  "type": "boolean"
+                },
+                "invalid": {
+                  "type": "boolean"
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "plan",
+                      "state",
+                      "after",
+                      "lead",
+                      "ready",
+                      "blocked_reason"
+                    ],
+                    "properties": {
+                      "plan": {
+                        "type": "string"
+                      },
+                      "state": {
+                        "enum": [
+                          "queued",
+                          "started",
+                          "done",
+                          "skipped"
+                        ]
+                      },
+                      "after": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "lead": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "ready": {
+                        "type": "boolean"
+                      },
+                      "blocked_reason": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
                 }
               }
             }

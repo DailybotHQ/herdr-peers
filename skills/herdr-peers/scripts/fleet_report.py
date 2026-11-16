@@ -25,6 +25,12 @@ import time
 import unicodedata
 
 SCHEMA = 'herdr-peers/plans-v1'
+QUEUE_SCHEMA = 'dwp-queue-v1'
+MAX_QUEUE_BYTES = 64 * 1024
+MAX_QUEUE_ITEMS = 64
+MAX_JOURNAL_BYTES = 8 * 1024 * 1024
+QUEUE_STATES = ('queued', 'started', 'done', 'skipped')
+QUEUE_STARTS = ('prompt-lead', 'launch')
 FLEET_SCHEMA = 'herdr-peers/fleet-v1'
 FLEET_FILE = 'fleet.json'
 MAX_FLEET_BYTES = 2 * 1024 * 1024
@@ -791,6 +797,26 @@ def valid_report(doc):
         stamp = plan.get('state_updated_at')
         if stamp is not None and not (isinstance(stamp, str) and TS_RE.fullmatch(stamp)):
             return False
+    queues = doc.get('queues', [])
+    if not isinstance(queues, list) or len(queues) > MAX_PANES:
+        return False
+    for q in queues:
+        if not isinstance(q, dict) or clean_path(q.get('repo_root')) is None \
+                or not isinstance(q.get('items'), list) or len(q['items']) > MAX_QUEUE_ITEMS:
+            return False
+        for it in q['items']:
+            if not isinstance(it, dict) or not isinstance(it.get('plan'), str) \
+                    or not PLAN_RE.fullmatch(it['plan']) or it.get('state') not in QUEUE_STATES \
+                    or it.get('start') not in QUEUE_STARTS or not isinstance(it.get('ready'), bool) \
+                    or it.get('approved') not in (True, False, None) \
+                    or it.get('class') not in ('open', 'blocked', 'completed', 'unreadable'):
+                return False
+            if it.get('lead') is not None and not (isinstance(it['lead'], str) and ADDR_RE.match(it['lead'])):
+                return False
+            if it.get('after') is not None and not (isinstance(it['after'], str) and PLAN_RE.fullmatch(it['after'])):
+                return False
+            if not valid_line(it.get('blocked_reason'), 120):
+                return False
     for agent in agents:
         if not isinstance(agent, dict) or not AGENT_KEYS <= set(agent):
             return False
@@ -846,6 +872,115 @@ def valid_detail(detail):
     return stamp is None or (isinstance(stamp, str) and TS_RE.fullmatch(stamp) is not None)
 
 
+def plan_approved(plan_dir):
+    """True when the plan's journal holds an approval and no amendment came
+    after the last one (a pending revision voids the start); False when it
+    does not; None when there is no readable journal (a v5 plan, say)."""
+    path = os.path.join(plan_dir, 'journal.ndjson')
+    try:
+        fd = os.open(path, os.O_RDONLY | NOFOLLOW)
+    except OSError:
+        return None
+    last = None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_JOURNAL_BYTES:
+            return None
+        with os.fdopen(fd, 'rb') as fh:
+            fd = None
+            for line in fh:
+                if b'"approval"' not in line and b'"amendment"' not in line:
+                    continue
+                try:
+                    event = json.loads(line.decode('utf-8'))
+                except (ValueError, UnicodeDecodeError):
+                    continue
+                if isinstance(event, dict) and event.get('type') in ('approval', 'amendment'):
+                    last = event['type']
+    except OSError:
+        return None
+    finally:
+        if fd is not None:
+            os.close(fd)
+    return last == 'approval'
+
+
+def valid_queue(doc):
+    """True when `doc` is a dwp-queue-v1 document the daemon may read."""
+    if not isinstance(doc, dict) or doc.get('schema') != QUEUE_SCHEMA:
+        return False
+    if not isinstance(doc.get('parallel', False), bool):
+        return False
+    items = doc.get('items')
+    if not isinstance(items, list) or len(items) > MAX_QUEUE_ITEMS:
+        return False
+    seen = set()
+    for item in items:
+        if not isinstance(item, dict):
+            return False
+        plan = item.get('plan')
+        if not isinstance(plan, str) or not PLAN_RE.fullmatch(plan) or '/' in plan or plan in seen:
+            return False
+        seen.add(plan)
+        after = item.get('after')
+        if after is not None and not (isinstance(after, str) and PLAN_RE.fullmatch(after) and '/' not in after):
+            return False
+        if item.get('state') not in QUEUE_STATES or item.get('start', 'prompt-lead') not in QUEUE_STARTS:
+            return False
+        lead = item.get('lead')
+        if lead is not None and not (isinstance(lead, str) and ADDR_RE.match(lead)):
+            return False
+    return True
+
+
+def read_queue(base):
+    """(state, queue) of `<base>/.dwp/queue.json`: ('none', None) without
+    one; ('invalid', None) when it is not a regular file of at most 64 KiB
+    with the dwp-queue-v1 shape; ('ok', {...}) with each item judged."""
+    path = os.path.join(base, '.dwp', 'queue.json')
+    if not os.path.lexists(path):
+        return 'none', None
+    doc = load_json(path, MAX_QUEUE_BYTES)
+    if not valid_queue(doc):
+        return 'invalid', None
+    items, open_now = [], False
+    plans_dir = os.path.join(base, '.dwp', 'plans')
+    classes = {}
+    for item in doc['items']:
+        path = plan_state_path(base, item['plan'])
+        state = load_json(path, MAX_STATE_BYTES) if path else None
+        classes[item['plan']] = classify(state)[0] if state is not None else 'unreadable'
+        if item['state'] == 'started' and classes[item['plan']] in ('open', 'blocked'):
+            open_now = True
+    for item in doc['items']:
+        plan = item['plan']
+        cls = classes[plan]
+        approved = plan_approved(os.path.join(plans_dir, plan)) \
+            if os.path.isdir(os.path.join(plans_dir, plan)) else None
+        after = item.get('after')
+        after_done = after is None or classes.get(after) == 'completed' or (
+            after not in classes and classify(load_json(plan_state_path(base, after), MAX_STATE_BYTES)
+                                              if plan_state_path(base, after) else None)[0] == 'completed')
+        blocked = None
+        if item['state'] == 'queued':
+            if not after_done:
+                blocked = 'waiting for %s' % after
+            elif open_now and not doc.get('parallel'):
+                blocked = 'another plan of this repository is running'
+            elif approved is not True:
+                blocked = 'not approved' if approved is False else 'approval not readable'
+            elif item.get('start', 'prompt-lead') == 'launch':
+                blocked = 'launch is not available yet'
+            elif not item.get('lead'):
+                blocked = 'no lead named'
+        items.append({'plan': plan, 'after': after, 'state': item['state'], 'lead': item.get('lead'),
+                      'start': item.get('start', 'prompt-lead'), 'class': cls,
+                      'approved': approved,
+                      'ready': item['state'] == 'queued' and blocked is None,
+                      'blocked_reason': blocked})
+    return 'ok', {'repo_root': base, 'parallel': bool(doc.get('parallel')), 'items': items}
+
+
 def report(panes=None, root=None, now=None, servers=None):
     """The plans-v1 report of this machine. `panes` maps a pane id to its
     working directory, as Herdr lists them; it lets the report resolve each
@@ -855,7 +990,7 @@ def report(panes=None, root=None, now=None, servers=None):
     git = Git()
     out = {'schema': SCHEMA, 'report_version': REPORT_VERSION,
            'generated_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now)),
-           'state': 'ok', 'reason': None, 'plans': [], 'agents': []}
+           'state': 'ok', 'reason': None, 'plans': [], 'agents': [], 'queues': []}
     try:
         found = lead_records(root, servers)
     except OSError as exc:
@@ -867,6 +1002,20 @@ def report(panes=None, root=None, now=None, servers=None):
     for pane in sorted(panes):
         top, branch = git.lookup(panes[pane])
         out['agents'].append({'pane': pane, 'cwd': panes[pane], 'repo_root': top, 'branch': branch})
+    # Each repository this machine knows (lead records, agents' directories) may keep a
+    # queue of plans; the pack writes it, the daemon only reads it.
+    roots = []
+    for item in out['plans'] + out['agents']:
+        for key in ('repo_root',):
+            if item.get(key) and item[key] not in roots:
+                roots.append(item[key])
+    out['queues'] = []
+    for base in roots[:MAX_PANES]:
+        qstate, queue = read_queue(base)
+        if qstate == 'ok':
+            out['queues'].append(queue)
+        elif qstate == 'invalid':
+            out['queues'].append({'repo_root': base, 'parallel': False, 'items': [], 'invalid': True})
     return out
 
 
