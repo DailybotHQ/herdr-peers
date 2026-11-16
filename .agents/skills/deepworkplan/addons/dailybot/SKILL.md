@@ -1,7 +1,7 @@
 ---
 name: deepworkplan-addon-dailybot
-description: Optional DeepWorkPlan addon that connects an AI-first repo to the developer's Dailybot team — installing (with consent) the Dailybot agent skill (DailybotHQ/agent-skill, currently 3.23.17) and/or the Dailybot CLI (DailybotHQ/cli, >= 3.9.0), wiring the plan lifecycle into best-effort agent updates - kickoff when a plan starts, significant task completions, a blocked report when an unattended run halts, and a milestone on plan completion - with payloads derived from the plan's state layer, and optionally committing the Dailybot skill's deterministic hook enforcement (dailybot hook lifecycle hooks) so the agent harness itself reminds agents about unreported work. Opt-in, never required, never blocks the work, reconciles existing setups instead of clobbering them, and defers all auth to the Dailybot skill's own consent flow. Use when the developer or team already uses Dailybot and wants DWP progress visible to humans.
-version: "7.8.1"
+description: Optional DeepWorkPlan addon that connects an AI-first repo to the developer's Dailybot team — installing (with consent) the Dailybot agent skill (DailybotHQ/agent-skill, currently 3.23.20) and/or the Dailybot CLI (DailybotHQ/cli, >= 3.9.0), wiring the plan lifecycle into best-effort agent updates - kickoff when a plan starts, significant task completions, a blocked report when an unattended run halts, and a milestone on plan completion - with payloads derived from the plan's state layer, and optionally committing the Dailybot skill's deterministic hook enforcement (dailybot hook lifecycle hooks) so the agent harness itself reminds agents about unreported work. Opt-in, never required, never blocks the work, reconciles existing setups instead of clobbering them, and defers all auth to the Dailybot skill's own consent flow. Use when the developer or team already uses Dailybot and wants DWP progress visible to humans.
+version: "8.0.0"
 documentation_url: https://deepworkplan.com
 user-invocable: true
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write
@@ -17,7 +17,7 @@ be AI-first, and it **never blocks** the actual work.
 
 > ## The rule that overrides everything: this addon DEFERS, it does not reinvent
 >
-> The official **Dailybot agent skill** (currently **3.23.17**) already owns
+> The official **Dailybot agent skill** (currently **3.23.20**) already owns
 > install, consent, auth, context detection, the writing style, and the
 > non-blocking guarantee. It exposes **17 coordinated capabilities** (report,
 > ask, messages, email, chat, conversations, health, check-ins, kudos, teams,
@@ -102,8 +102,8 @@ without their explicit acceptance** — and where the Dailybot skill's own conse
 flow applies, defer to it rather than prompting yourself.
 
 - **Dailybot agent skill** (the recommended path — it brings the consent/auth
-  flow and the full 17-capability pack; currently **3.23.17**):
-  - `npx --yes skills add https://github.com/DailybotHQ/agent-skill/tree/v3.23.17 --skill dailybot -y`
+  flow and the full 17-capability pack; currently **3.23.20**):
+  - `npx --yes skills add https://github.com/DailybotHQ/agent-skill/tree/v3.23.20 --skill dailybot -y`
     (cross-agent, recommended — **pinned to a published tag** so the exact
     content is reproducible; both `--yes` and `-y` are required in non-TTY
     contexts), or
@@ -161,8 +161,10 @@ This is the integration value. Reasoning guidance is in
   2. **Significant task** (MAY, regular) — a feature/bug fix/major refactor
      completes; intermediate setup tasks are never reported.
   3. **Blocked** (SHOULD, regular with `blockers`) — the plan halts on a stop
-     condition and `state.json.blocked` is populated (typical of unattended
-     runs): the team sees *what is stuck and what it needs* in the standup
+     condition and `state.json.blocked` is populated — on a v8 plan,
+     `state.json.blocker` (the v8 snapshot has no `blocked` object, and its
+     held task reads `blocked`, not `in_progress`) — typical of unattended
+     runs: the team sees *what is stuck and what it needs* in the standup
      instead of discovering a silent overnight halt.
   4. **Completion** (SHOULD, the only **milestone**) — via the dailybot
      `report` sub-skill (`dailybot agent update ... --milestone --json-data
@@ -175,7 +177,9 @@ This is the integration value. Reasoning guidance is in
 - Where the plan carries the machine-readable state layer
   (`../../spec/PLAN_STATE.md`), derive the `--json-data` payload from
   `state.json`: `completed` from completed tasks (phrased as outcomes),
-  `in_progress` from the current task, `blockers` from `state.json.blocked`.
+  `in_progress` from the current task, `blockers` from `state.json.blocked`
+  (on a v8 plan, `state.json.blocker`, and the blocked task is the current
+  one).
 - Every event MUST be **best-effort and conditional**: it fires only if the
   Dailybot skill/CLI is present, authenticated and reporting is authorized, and it **MUST NOT block**
   `create` or `execute` if Dailybot is absent, unauthenticated, or unreachable —
@@ -192,7 +196,7 @@ This is the integration value. Reasoning guidance is in
 
 ### Step 3b — Offer deterministic hook enforcement (OPT-IN, defer to the Dailybot skill)
 The lifecycle wiring above is prompt-layer: it relies on the model remembering
-to report. With `dailybot-cli` **>= 3.9.0** (included in the current **3.23.17**
+to report. With `dailybot-cli` **>= 3.9.0** (included in the current **3.23.20**
 skill pack), the Dailybot skill ships **deterministic hook enforcement**
 (`report/hooks.md`): harness lifecycle hooks (`dailybot hook session-start |
 activity | post-commit | stop | dismiss`) backed by a local per-repo report
