@@ -4,8 +4,8 @@
 
 | Version | Supported |
 | --- | --- |
-| 1.3.x (latest: 1.3.1) | yes |
-| < 1.3 | no |
+| 2.0.x (latest: 2.0.0) | yes |
+| < 2.0 | no |
 
 Only the latest release receives fixes. Fixes
 land on `main` first and ship in the next tag (see [CHANGELOG.md](CHANGELOG.md)).
