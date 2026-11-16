@@ -261,7 +261,7 @@ lead = [t for p, t in io.sent if p == 'w1:p2']
 assert lead == [B.RESOLVE_TEXT % 'PLAN_1_a'], lead
 # The answer is bound to the blocker it was about: the plan unblocks and blocks again,
 # or its blocker becomes another one, before the prompt: nothing is sent.
-for change in ('unblock', 'other'):
+for change in ('unblock', 'other', 'another askable'):
     io, ap = fresh()
     io.rows['local'] = [row('w9:p1', 'idle', 2), row('w1:p2')]
     ap.run_pass(); step(ap)
@@ -278,6 +278,9 @@ for change in ('unblock', 'other'):
         step(ap, 400)
         assert not ap.plans.resolve, 'an unblocked plan drops the answer'
         io.reports['local'] = ('ok', {'plans': [askable], 'agents': []})
+    elif change == 'another askable':   # still one the lead may resolve, but not the one asked about
+        io.reports['local'] = ('ok', {'plans': [plan(cls='blocked', blocker={
+            'reason': 'a lint error', 'needs': 'a fix', 'resolver': 'lead'})], 'agents': []})
     else:
         io.reports['local'] = ('ok', {'plans': [plan(cls='blocked', block='C1', blocker={
             'reason': 'needs approval to push', 'needs': 'the human', 'resolver': 'lead'})], 'agents': []})
