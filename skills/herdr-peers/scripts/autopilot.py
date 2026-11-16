@@ -1355,7 +1355,7 @@ class BrainKeeper(object):
                            'left')
             return
         try:
-            info = self.io.brain_launch(self.opts.get('kinds') or ('claude', 'codex', 'grok'),
+            info = self.io.brain_launch(self.opts.get('kinds') or brain_mod().DEFAULT_KINDS,
                                         self.opts.get('models') or {}, sorted(self.excluded))
         except Exception as exc:  # a refusal or a tool failure: recorded, retried within the cap
             b.state = 'failed'

@@ -21,6 +21,9 @@ import time
 
 PICK_SCHEMA = 'pick-v2'
 AK_MIN = (1, 3, 0)          # coding-agents-kit with `ak pick --kinds` (pick-v2)
+# Kinds whose answer approval has a verified fixture (approval_is_answer): the default
+# brain kinds. Another kind may be named, but its answers are never approved.
+DEFAULT_KINDS = ('claude',)
 AK_INTERFACE = 1
 WORKSPACE_LABEL = 'autopilot brain'
 LEASE_TTL = '4h'

@@ -312,14 +312,23 @@ starts next or why it cannot; a plan's own row shows its place (`queue 2/3`).
 ## 6. The brain (`--brain`)
 
 ```bash
-herdr-peers autopilot start --loop --brain                         # brain on claude, then codex, then grok
-herdr-peers autopilot start --loop --brain --brain-kinds codex,claude --brain-model claude=sonnet
+herdr-peers autopilot start --loop --brain                         # a Claude brain (the default)
+herdr-peers autopilot start --loop --brain --brain-model claude=sonnet
 ```
 
 The rules of §5 decide almost everything. For the few cases they cannot,
 the daemon keeps a **brain**: one dedicated agent it launches itself, asks,
 and obeys only within a closed list of actions. Nothing is asked of you to
 set it up beyond the flag; it needs coding-agents-kit 1.3.0 or later (`ak`).
+The default kind is Claude only: it is, for now, the only kind whose answer
+the daemon approves (§6.2), so a brain of another kind would only spend the
+launch cap. `--brain-kinds` can still name others, in priority order.
+**coding-agents-kit before 1.4.1** does not pass Claude's own ask flag, so a
+profile whose default is auto mode starts in auto mode even through `ak
+--ask`; the daemon sees it, retires that brain (`why=permission_mode
+hint=upgrade_coding_agents_kit`), excludes the profile and tells you —
+fail-closed, but it spends a launch. Upgrade the kit (`ak update`), or give
+the profile an ask-mode default.
 **Fail-closed:** with `--brain`, a missing `ak` or one older than 1.3.0
 makes the daemon refuse to start at all, with a message naming the version
 it needs — it never runs a brainless daemon you asked to have a brain.

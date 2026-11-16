@@ -3813,7 +3813,11 @@ class AutopilotIO(object):
             # Why a brain was retired and which profile was excluded: fixed words or a
             # checked profile name, never free text.
             'why=%s' % choice.why if choice.cls in BRAIN_WHY_CLASSES and isinstance(choice.why, str)
-            and BRAIN_WHY_RE.fullmatch(choice.why) else None]))
+            and BRAIN_WHY_RE.fullmatch(choice.why) else None,
+            # The likely cause of a brain that started without approvals: a coding-agents-kit
+            # that does not pass the CLI's own ask flag (fixed in 1.4.1).
+            'hint=upgrade_coding_agents_kit' if choice.cls == 'brain_replaced'
+            and choice.why == 'permission_mode' else None]))
         self.store.append(make_record(outcome, 'autopilot', new_ulid(), addr,
                                       'local:%s' % self.pane, kind=kind, reason=choice.cls,
                                       note=note, plan=plan))
@@ -3977,6 +3981,11 @@ def autopilot_status(store):
                     safe(', '.join(str(p) for p in brain.get('excluded') or []) or 'none'),
                     safe('%s (%s, %s)' % (retired.get('why'), retired.get('profile') or '-', retired.get('at'))
                          if retired else 'never')))
+                if retired.get('why') == 'permission_mode' or brain.get('excluded'):
+                    print('  brain: a profile started in a mode that skips approvals; coding-agents-kit '
+                          'before 1.4.1 does not pass the CLI\'s own ask flag, so upgrade it '
+                          '(`ak update`), or give the profile an ask-mode default, then restart '
+                          'autopilot')
     for rec in [r for r in store.records() if r.get('role') == 'autopilot'][-10:]:
         print('%s %s %s %s %s' % (safe(rec.get('ts')), safe(rec.get('state')),
                                   safe(rec.get('target')), safe(rec.get('reason')),
@@ -4289,10 +4298,10 @@ def cmd_autopilot(args):
         if not args.brain:
             raise Stop(EXIT_USAGE, '--brain-kinds and --brain-model need --brain')
         import brain as brain_module
-        kinds = [k for k in (args.brain_kinds or 'claude,codex,grok').split(',') if k]
+        kinds = [k for k in (args.brain_kinds or ','.join(brain_module.DEFAULT_KINDS)).split(',') if k]
         if not kinds or len(kinds) > 8 or not all(brain_module.KIND_RE.fullmatch(k) for k in kinds):
             raise Stop(EXIT_USAGE, '--brain-kinds takes agent kinds in priority order, e.g. '
-                       'claude,codex,grok')
+                       'claude,codex')
         models = {}
         for raw in args.brain_model or []:
             kind, _, model = raw.partition('=')
@@ -4662,7 +4671,8 @@ def build_parser():
                     help='with --loop: launch and keep a dedicated decision agent (ask mode) and '
                     'ask it what the rules cannot decide; it chooses among fixed actions only')
     ap.add_argument('--brain-kinds', metavar='KINDS',
-                    help='with --brain: agent kinds in priority order (default claude,codex,grok)')
+                    help='with --brain: agent kinds in priority order (default claude: the only kind whose '
+                         'answers the daemon approves for now)')
     ap.add_argument('--brain-model', action='append', metavar='KIND=MODEL',
                     help='with --brain: the model for a kind, e.g. claude=sonnet (repeatable)')
     ap.add_argument('--notify-env', action='append', metavar='NAME',

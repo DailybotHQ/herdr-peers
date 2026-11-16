@@ -184,6 +184,11 @@ def last_q(io):
 io, ap = fresh()
 ap.run_pass()
 assert io.launched == [(('claude', 'codex'), {'claude': 'sonnet'})], io.launched
+# Without --brain-kinds the brain is Claude only: the one kind whose answers are approved.
+io2 = IO()
+ap2 = autopilot.Autopilot(io2, clock=lambda: now[0], sleep=lambda s: None, confirm=0, loop=True, grace=0, brain={'models': {}})
+ap2.run_pass()
+assert io2.launched == [(('claude',), {})], io2.launched
 assert ap.brain.b.state == 'starting'
 io.rows['local'] = [row('w9:p1', 'working')]
 step(ap)
@@ -474,7 +479,7 @@ KEYS_IN_ARGV=$(printf '%s' "$WSLOG0$(cat "$FAKE_HERDR_DIR/local/runs.log")" | gr
 assert_eq "no key on any command line" "" "$KEYS_IN_ARGV"
 if ls "$(state_dir)"/brain-key-* >/dev/null 2>&1; then t_fail "the key file is removed when the brain is closed"; else t_ok "the key file is removed when the brain is closed"; fi
 assert_contains "pick runs in ask mode" "$(cat "$FAKE_AK_DIR/env.log")" "AGENTKIT_PERMISSIONS=ask"
-assert_contains "with the kinds, the model and the owner" "$(cat "$FAKE_AK_DIR/argv.log")" "pick --kinds claude,codex,grok --model-for claude=sonnet --owner local:w1:p1 --max-age 300 --json"
+assert_contains "with the kinds, the model and the owner" "$(cat "$FAKE_AK_DIR/argv.log")" "pick --kinds claude --model-for claude=sonnet --owner local:w1:p1 --max-age 300 --json"
 assert_contains "the account is leased first" "$(cat "$FAKE_AK_DIR/argv.log")" "lease claude @work1 --owner local:w1:p1 --ttl 4h --purpose brain"
 WSLOG=$(cat "$FAKE_HERDR_DIR/local/workspaces.log")
 case "$WSLOG" in *"\"--cwd\", \"$(state_dir)/brain-"*) t_ok "the brain's home is a fresh directory of its own";; *) t_fail "the brain's home is a fresh directory of its own" "$WSLOG";; esac
@@ -509,7 +514,7 @@ io.record('local:w9:p1', 'claude', autopilot.Decision('leave', 'brain_profile_ex
 io.record('local:w9:p1', 'claude', autopilot.Decision('leave', 'brain_replaced', 'free text; rm -rf'), 'left', False)
 io.record('local:w9:p1', 'claude', autopilot.Decision('leave', 'brain_launch_failed', 'no account'), 'left', False)
 notes = [r.get('note') for r in io.store.records() if r.get('role') == 'autopilot'][-4:]
-assert notes[0].endswith('why=permission_mode') and notes[1].endswith('why=@work1'), notes
+assert notes[0].endswith('why=permission_mode hint=upgrade_coding_agents_kit') and notes[1].endswith('why=@work1'), notes
 assert 'why=' not in notes[2] and 'why=' not in notes[3], notes
 base = {'schema': fleet_report.FLEET_SCHEMA, 'machines': [], 'daemon': {'brain': {
     'state': 'none', 'kind': None, 'profile': None, 'pane': None, 'asked_last_hour': 0, 'open_questions': 0,

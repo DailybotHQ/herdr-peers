@@ -97,8 +97,11 @@ The rules and the residual risk are in
    approvals (auto, bypass, accept edits) — the daemon retires such a brain —
    and that its own settings do not pre-allow tools (Bash on an allowlist,
    say): those run without any dialog the daemon could see.
-3. `herdr-peers autopilot start --loop --brain` (`--brain-kinds codex,claude`
-   to choose the order; `--brain-model claude=sonnet` for a model).
+3. `herdr-peers autopilot start --loop --brain` (a Claude brain; since
+   2.0.1 Claude is the only default kind, the only one whose answers are
+   approved for now; `--brain-model claude=sonnet` for a model). Use
+   coding-agents-kit 1.4.1 or later: an older kit starts a Claude profile
+   whose default is auto mode in auto mode, and the daemon retires it.
 
 What it may decide, and what it never does, is in
 [autopilot.md](../skills/herdr-peers/autopilot.md) §6. Its answers carry an

@@ -9,6 +9,13 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Changed
+
+- **The default `--brain-kinds` is `claude`** (was `claude,codex,grok`):
+  Claude is, for now, the only kind whose answers the daemon approves, so a
+  brain of another kind only spent the hourly launch cap. Other kinds can
+  still be named.
+
 ### Fixed
 
 - **Why a brain was retired is recorded**
@@ -18,7 +25,10 @@ changes bumped the minor version).
   starting in a mode that skips approvals is recorded as
   `brain_profile_excluded why=@profile`. The map's brain block gains
   `excluded` and `retired` (optional: a 2.0.0 map is still read), `fleet ui`
-  shows them, and `autopilot status` prints a brain line.
+  shows them, and `autopilot status` prints a brain line. A
+  `permission_mode` retirement names its likely cause and fix
+  (`hint=upgrade_coding_agents_kit`: a kit before 1.4.1 does not pass
+  Claude's own ask flag, so an auto-mode profile starts in auto mode).
 - **The loop forgets queue state it no longer needs**
   ([#51](https://github.com/DailybotHQ/herdr-peers/issues/51)): keys of
   items or queues a machine's report no longer lists are dropped (only after
