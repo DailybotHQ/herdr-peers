@@ -3653,15 +3653,22 @@ class AutopilotIO(object):
             import tempfile
             home = tempfile.mkdtemp(prefix='brain-', dir=self.store.dir)
             self.brain_home = home
-            # The per-launch answer key lives only in the brain's environment and the
-            # daemon's memory: never typed, never on a screen.
+            # The per-launch answer key: in the daemon's memory and in one private
+            # file (0600, created exclusively, never through a symlink) whose path —
+            # not the key — goes in the brain's environment. Never typed, never on a
+            # screen, never on a command line.
             key = binascii.hexlify(os.urandom(16)).decode('ascii')
+            keyfile = os.path.join(self.store.dir, 'brain-key-' + binascii.hexlify(os.urandom(8)).decode('ascii'))
+            fd = os.open(keyfile, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600)
+            self.brain_keyfile = keyfile
+            with os.fdopen(fd, 'w') as fh:
+                fh.write(key)
             # The brain answers with `herdr-peers` by name: put this very helper first on its PATH.
             helper_dir = os.path.dirname(os.path.abspath(__file__))
             made = herdr_json(['workspace', 'create', '--label', brain.WORKSPACE_LABEL, '--no-focus',
                                '--cwd', home, '--env',
                                'PATH=%s:%s' % (helper_dir, os.environ.get('PATH', '/usr/bin:/bin')),
-                               '--env', '%s=%s' % (brain.KEY_ENV, key)],
+                               '--env', '%s=%s' % (brain.KEY_FILE_ENV, keyfile)],
                               timeout=15)
             result = made.get('result') or {}
             pane = (result.get('root_pane') or {})
@@ -3700,6 +3707,14 @@ class AutopilotIO(object):
                 and os.path.dirname(home) == self.store.dir and not os.path.islink(home):
             shutil.rmtree(home, ignore_errors=True)
         self.brain_home = None
+        keyfile = getattr(self, 'brain_keyfile', None)
+        if keyfile and os.path.dirname(keyfile) == self.store.dir \
+                and re.fullmatch(r'brain-key-[0-9a-f]{16}', os.path.basename(keyfile)):
+            try:
+                os.unlink(keyfile)
+            except OSError:
+                pass
+        self.brain_keyfile = None
 
     def brain_owns(self, pane, ancestry):
         """True when the answer ran under the brain pane's own foreground
@@ -4115,7 +4130,20 @@ def autopilot_answer(args, store):
     me = ((current.get('result') or {}).get('pane') or {})
     if not isinstance(me.get('pane_id'), str) or not re.fullmatch(PANE_RE, me['pane_id']):
         raise Stop(EXIT_ENV, 'cannot tell which pane this is')
-    key = os.environ.get(brain.KEY_ENV) or ''
+    keyfile = os.environ.get(brain.KEY_FILE_ENV) or ''
+    key = ''
+    if keyfile and os.path.realpath(os.path.dirname(keyfile)) == os.path.realpath(store.dir) \
+            and brain.KEY_FILE_RE.fullmatch(os.path.basename(keyfile)):
+        try:
+            fd = os.open(keyfile, os.O_RDONLY | NOFOLLOW)
+            try:
+                info = os.fstat(fd)
+                if stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and info.st_size <= 64:
+                    key = os.read(fd, 64).decode('ascii', 'replace').strip()
+            finally:
+                os.close(fd)
+        except OSError:
+            key = ''
     if not brain.KEY_RE.fullmatch(key):
         raise Stop(EXIT_ENV, 'autopilot answer runs only in the brain the daemon launched')
     line = json.dumps({'qid': qid, 'action': action, 'pane': me['pane_id'],

@@ -22,8 +22,9 @@ changes bumped the minor version).
   screen — and acts only on one action from that case's closed list,
   answered with `herdr-peers autopilot answer <question> <action>` from the
   brain's own pane. Anything else, or silence, gives the case's default.
-- Brain answers carry an HMAC under a per-launch key that lives only in the
-  brain's environment; an `ask_lead_to_resolve` answer is bound to the
+- Brain answers carry an HMAC under a per-launch key held in a private key
+  file whose path alone is in the brain's environment (never on a command
+  line); an `ask_lead_to_resolve` answer is bound to the
   blocker it was about; a brain not up within two minutes is retired; a
   failed launch releases everything it took. `--brain` is fail-closed: a
   missing or older coding-agents-kit stops the daemon from starting.
