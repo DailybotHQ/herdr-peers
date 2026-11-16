@@ -12,7 +12,8 @@
     "state",
     "reason",
     "plans",
-    "agents"
+    "agents",
+    "queues"
   ],
   "properties": {
     "schema": {
@@ -382,6 +383,102 @@
         "failed"
       ],
       "description": "Present only when the daemon sent its snapshot along: what happened to this machine's copy."
+    },
+    "queues": {
+      "type": "array",
+      "description": "Each repository's plan queue, judged: the pack writes it, the daemon reads it.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "repo_root",
+          "parallel",
+          "items"
+        ],
+        "properties": {
+          "repo_root": {
+            "type": "string"
+          },
+          "parallel": {
+            "type": "boolean"
+          },
+          "invalid": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "plan",
+                "after",
+                "state",
+                "lead",
+                "start",
+                "class",
+                "approved",
+                "ready",
+                "blocked_reason"
+              ],
+              "properties": {
+                "plan": {
+                  "type": "string"
+                },
+                "after": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "state": {
+                  "enum": [
+                    "queued",
+                    "started",
+                    "done",
+                    "skipped"
+                  ]
+                },
+                "lead": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "start": {
+                  "enum": [
+                    "prompt-lead",
+                    "launch"
+                  ]
+                },
+                "class": {
+                  "enum": [
+                    "open",
+                    "blocked",
+                    "completed",
+                    "unreadable"
+                  ]
+                },
+                "approved": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "ready": {
+                  "type": "boolean"
+                },
+                "blocked_reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

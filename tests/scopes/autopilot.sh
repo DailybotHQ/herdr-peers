@@ -623,6 +623,8 @@ assert_rc "turn detection, the nudge cap, the usage-limit retry, backoff, repeat
 assert_eq "(scripted I/O ran to its end)" "ok" "$OUT"
 # shellcheck source-path=SCRIPTDIR source=autopilot_loop.sh
 . "$ROOT/tests/scopes/autopilot_loop.sh"
+# shellcheck source-path=SCRIPTDIR source=queue.sh
+. "$ROOT/tests/scopes/queue.sh"
 unset HERDR_PEERS_AUTOPILOT_CONFIRM
 
 # A failed test never leaves a background autopilot behind.

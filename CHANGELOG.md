@@ -25,6 +25,20 @@ Upgrading from 1.x: [docs/MIGRATING.md](docs/MIGRATING.md).
 
 ### Added
 
+- **The plan queue.** With `--loop`, when a repository's current plan
+  finishes, the next approved plan in its `.dwp/queue.json` (`dwp-queue-v1`,
+  written by the DeepWorkPlan pack, read only by the daemon) starts: its
+  named lead gets one fixed prompt naming the plan and the repository, once,
+  one plan at a time per repository unless the queue is parallel. A plan
+  starts only when its approval cites its live contract and plan digest as
+  they are now, its lead works in that repository and on no other open
+  plan, and it has not already begun (a restart never prompts twice). Items
+  that cannot start for a reason the developer must fix are reported once
+  (`queue_blocked`); a started item emits `plan_queued_started`. `fleet ui`
+  gains a Queues view (`u`) and each plan shows its place in its queue;
+  `herdr-peers fleet` lists the queues.
+- At start, under its lock, the daemon removes the brain key files and
+  brain directories a killed daemon left behind (never through a symlink).
 - **Lead appointment.** When a plan's lead and every successor are gone, the
   plan's first live lane may take the lead — only under the human's
   standing grant (`lead claim --allow-appointment [--any-kind]`,

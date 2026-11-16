@@ -3351,6 +3351,13 @@ def cmd_fleet(args):
                 ('  now: %s' % safe(current.get('title') or current.get('id'))[:60])
                 if (current.get('title') or current.get('id')) else '',
                 ('  [%s]' % safe(plan['situation'])) if plan.get('situation') else ''))
+        for queue in machine.get('queues') or []:
+            if not isinstance(queue, dict):
+                continue
+            items = [it for it in queue.get('items') or [] if isinstance(it, dict)]
+            print('  queue %s  %s' % (safe(queue.get('repo_root') or '-'), ', '.join(
+                '%s %s%s' % (safe(it.get('plan')), safe(it.get('state')),
+                             ' (ready)' if it.get('ready') is True else '') for it in items)))
         for agent in machine.get('agents') or []:
             roles = ', '.join('%s of %s' % (safe(r.get('role')), safe(r.get('plan')))
                               for r in agent.get('plans') or [])
@@ -4101,6 +4108,32 @@ def autopilot_start(args, store, opts):
 BRAIN_ANSWERS = 'brain-answers.ndjson'
 
 
+def sweep_brain_leftovers(store):
+    """Remove the key files and brain homes a daemon killed without its
+    cleanup (SIGKILL, a crash) left in the state directory. Called only while
+    holding the autopilot lock, so no live brain is anyone's but ours, and
+    before ours is launched. Never follows a symlink. Returns how many went."""
+    gone = 0
+    try:
+        names = os.listdir(store.dir)
+    except OSError:
+        return 0
+    for name in names:
+        path = os.path.join(store.dir, name)
+        if os.path.islink(path):
+            continue
+        try:
+            if re.fullmatch(r'brain-key-[0-9a-f]{16}', name) and os.path.isfile(path):
+                os.unlink(path)
+                gone += 1
+            elif re.fullmatch(r'brain-[A-Za-z0-9_]{8}', name) and os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+                gone += 1
+        except OSError:
+            pass
+    return gone
+
+
 def process_ancestry(limit=16):
     """This process's parent chain (pids), so the daemon can check that an
     answer ran under the brain's own process."""
@@ -4305,6 +4338,8 @@ def cmd_autopilot(args):
                 'pid': os.getpid(), 'since': now_iso(),
                 'mode': 'background' if args.detached else 'foreground',
                 'pane': 'local:%s' % me['pane_id'], 'options': opts}, sort_keys=True) + '\n')
+            if not args.dry_run:
+                sweep_brain_leftovers(store)  # under the lock: what a killed daemon left
         except Stop:
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)
