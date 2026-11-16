@@ -391,6 +391,8 @@ def pane_cmd(srv, verb, tail):
                            'terminal_title_stripped': 'brain', 'focused': False})
             with open(os.path.join(srv.dir, 'agents.json'), 'w', encoding='utf-8') as fh:
                 json.dump(agents, fh)
+    if verb == 'run':
+        return  # like the real server: success prints nothing
     if verb in ('close', 'run', 'send-text', 'send-keys', 'layout'):
         ok(cid, {'type': 'pane_' + verb.replace('-', '_')})
     usage_error("unrecognized subcommand 'pane %s'" % verb)

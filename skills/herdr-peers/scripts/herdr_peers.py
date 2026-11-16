@@ -3296,7 +3296,11 @@ class AutopilotIO(object):
             # Never type into a pane that is not a fresh shell of our own.
             self.brain_release(kind, profile, workspace)
             raise Stop(EXIT_HERDR, 'the new workspace did not give a fresh shell pane')
-        herdr_json(['pane', 'run', pane_id, line], timeout=15)
+        # `pane run` prints nothing on success (found live): its exit status decides.
+        rc, _out, _err = herdr(['pane', 'run', pane_id, line], timeout=15)
+        if rc != 0:
+            self.brain_release(kind, profile, workspace)
+            raise Stop(EXIT_HERDR, 'herdr pane run failed in the brain workspace')
         return {'pane': pane_id, 'terminal': terminal, 'workspace': workspace,
                 'kind': kind, 'profile': profile}
 
