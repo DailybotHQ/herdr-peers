@@ -92,9 +92,18 @@ if grep -rqiE 'deepworkplan|\.dwp/' "$SKILL_DIR"; then t_fail "standalone: no me
 broken=$(cd "$SKILL_DIR" && for f in *.md templates/*.md templates/debate/*.md; do
   [ -f "$f" ] || continue
   grep -Eo '\]\([^)#]+\)' "$f" | sed 's/^](//; s/)$//' | grep -v '://' |
-    while IFS= read -r l; do [ -e "$(dirname "$f")/$l" ] || echo "$f -> $l"; done
+    while IFS= read -r l; do
+      [ -e "$(dirname "$f")/$l" ] || { echo "$f -> $l"; continue; }
+      # An installed skill has nothing above its own directory (npx skills add).
+      at=$(cd "$(dirname "$f")/$(dirname "$l")" && pwd -P)/
+      top=$(cd "$SKILL_DIR" && pwd -P)/
+      [ "${at#"$top"}" != "$at" ] || echo "$f -> $l (outside the skill)"
+    done
 done)
-assert_eq "every relative link in the skill resolves" "" "$broken"
+assert_eq "every relative link in the skill resolves inside the skill" "" "$broken"
+for s in fleet-v1 plan-event-v1; do
+  check "the skill's copy of $s matches docs/schema" cmp -s "$SKILL_DIR/schemas/$s.json" "$ROOT/docs/schema/$s.json"
+done
 
 # The grant and reply clause in the docs match what the helper sends.
 grant=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import herdr_peers as h; print(h.GRANT_LINE)' "$SKILL_DIR/scripts")
