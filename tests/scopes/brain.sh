@@ -77,9 +77,14 @@ assert B.AUTO_MODE.search('  ⏵⏵ auto mode on (shift+tab to cycle) · ← for
 assert B.AUTO_MODE.search('  ⏵⏵ bypass permissions on (shift+tab to cycle)')
 assert not B.AUTO_MODE.search('  ? for shortcuts')
 # answers: only the brain's own pane and terminal, an open question, an allowed action
-b = B.Brain(); b.pane, b.terminal = 'w9:p1', 'term_w9p1'
+b = B.Brain(); b.pane, b.terminal, b.key = 'w9:p1', 'term_w9p1', 'c' * 32
 b.questions['q-0123456789ab'] = {'case': 'plan_stalled', 'key': 'k', 'at': 100.0, 'answered': False}
-ans = lambda **kw: dict({'qid': 'q-0123456789ab', 'action': 'leave', 'pane': 'w9:p1', 'terminal': 'term_w9p1'}, **kw)
+def ans(**kw):
+    rec = dict({'qid': 'q-0123456789ab', 'action': 'leave', 'pane': 'w9:p1', 'terminal': 'term_w9p1'}, **kw)
+    return dict(rec, mac=B.answer_mac('c' * 32, rec['qid'], rec['action'], rec['pane'], rec['terminal']))
+assert b.accept(dict(ans(), mac='0' * 64), 110) is None, 'a wrong proof'
+assert b.accept(dict(ans(), mac=None), 110) is None, 'no proof'
+assert b.accept(dict(ans(), mac=B.answer_mac('d' * 32, 'q-0123456789ab', 'leave', 'w9:p1', 'term_w9p1')), 110) is None, 'another key'
 assert b.accept(ans(pane='w1:p1'), 110) is None, 'another pane'
 assert b.accept(ans(terminal='term_other'), 110) is None, 'another terminal'
 assert b.accept(ans(action='merge_it'), 110) is None, 'an action outside the list'
@@ -142,7 +147,8 @@ class IO(object):
             raise RuntimeError('no account')
         self.launched.append((tuple(kinds), dict(models)))
         p = 'w9:p%d' % len(self.launched)
-        return {'pane': p, 'terminal': 'term_' + p, 'workspace': 'w9', 'kind': 'claude', 'profile': '@work1'}
+        return {'pane': p, 'terminal': 'term_' + p, 'workspace': 'w9', 'kind': 'claude', 'profile': '@work1',
+                'key': KEY}
     def brain_lease(self, k, p): return True
     def brain_release(self, k, p, w): self.released.append((k, p, w))
     owns = True
@@ -164,8 +170,13 @@ def fresh(**kw):
     return io, ap
 def step(ap, s=60):
     now[0] += s; ap.run_pass()
-def answer(io, qid, action, pane='w9:p1'):
-    io.answers.append('{"qid": "%s", "action": "%s", "pane": "%s", "terminal": "term_%s"}' % (qid, action, pane, pane))
+KEY = 'a' * 32
+def answer(io, qid, action, pane='w9:p1', key=KEY, mac=True):
+    rec = {'qid': qid, 'action': action, 'pane': pane, 'terminal': 'term_' + pane}
+    if mac:
+        rec['mac'] = B.answer_mac(key, qid, action, pane, 'term_' + pane)
+    import json as _j
+    io.answers.append(_j.dumps(rec))
 def last_q(io):
     return [t for p, t in io.sent if 'Question q-' in t][-1].split('Question ')[1].split(' ')[0]
 
@@ -248,6 +259,66 @@ answer(io, qid, 'ask_lead_to_resolve')
 step(ap); step(ap)
 lead = [t for p, t in io.sent if p == 'w1:p2']
 assert lead == [B.RESOLVE_TEXT % 'PLAN_1_a'], lead
+# The answer is bound to the blocker it was about: the plan unblocks and blocks again,
+# or its blocker becomes another one, before the prompt: nothing is sent.
+for change in ('unblock', 'other'):
+    io, ap = fresh()
+    io.rows['local'] = [row('w9:p1', 'idle', 2), row('w1:p2')]
+    ap.run_pass(); step(ap)
+    askable = plan(cls='blocked', blocker={'reason': 'a flaky test', 'needs': 'a retry', 'resolver': 'lead'})
+    io.reports['local'] = ('ok', {'plans': [askable], 'agents': []})
+    step(ap, 400)
+    qid = last_q(io)
+    io.rows['local'] = [row('w9:p1', 'idle', 2), row('w1:p2', 'working')]   # the lead is busy: no prompt yet
+    answer(io, qid, 'ask_lead_to_resolve')
+    step(ap)
+    assert ap.plans.resolve, 'the answer was accepted and waits for the lead'
+    if change == 'unblock':
+        io.reports['local'] = ('ok', {'plans': [plan()], 'agents': []})
+        step(ap, 400)
+        assert not ap.plans.resolve, 'an unblocked plan drops the answer'
+        io.reports['local'] = ('ok', {'plans': [askable], 'agents': []})
+    else:
+        io.reports['local'] = ('ok', {'plans': [plan(cls='blocked', block='C1', blocker={
+            'reason': 'needs approval to push', 'needs': 'the human', 'resolver': 'lead'})], 'agents': []})
+    io.rows['local'] = [row('w9:p1', 'idle', 2), row('w1:p2', 'idle', 5)]
+    step(ap, 400); step(ap)
+    assert not [t for p, t in io.sent if p == 'w1:p2' and t.startswith(B.RESOLVE_TEXT[:20])], (change, io.sent)
+# Answers carry the launch's key: none, or another key, is refused.
+io, ap = fresh()
+io.rows['local'] = [row('w9:p1', 'idle', 2), row('w1:p2')]
+ap.run_pass(); step(ap)
+io.reports['local'] = ('ok', {'plans': [plan(cls='blocked', blocker={'reason': 'a flaky test', 'resolver': 'lead'})], 'agents': []})
+step(ap, 400)
+qid = last_q(io)
+answer(io, qid, 'notify_human', mac=False)
+answer(io, qid, 'notify_human', key='b' * 32)
+step(ap)
+assert 'needs_human' not in io.events and sum(1 for o in io.log if o[2] == 'brain_answer_refused') == 2
+answer(io, qid, 'notify_human')
+step(ap)
+assert io.events.count('needs_human') == 1, 'the keyed answer counts'
+# A brain whose agent never comes up is retired after its start deadline, and the human told.
+io, ap = fresh()
+ap.run_pass()
+io.rows['local'] = [row('w9:p1', 'working')]
+step(ap, B.START_DEADLINE - 10)
+assert ap.brain.b.state == 'starting'
+step(ap, 20)
+assert any(o[2] == 'brain_replaced' and o[1] == 'local:w9:p1' for o in io.log), io.log[-3:]
+assert io.released and io.events.count('needs_human') == 1
+# A usage limit in the brain's own pane is never keyed or prompted by the screen pass.
+io, ap = fresh()
+io.rows['local'] = [row('w9:p1', 'idle', 2)]
+ap.run_pass(); step(ap)
+sent = len(io.sent)
+ap.panes.setdefault('local:w9:p1', autopilot.Pane())
+ap.limit('local', 'w9:p1', 'local:w9:p1', 'claude', ap.panes['local:w9:p1'],
+         autopilot.Decision('leave', 'usage_limit', 'x'), '', 'idle')
+now[0] += autopilot.LIMIT_RETRY + 1
+ap.limit('local', 'w9:p1', 'local:w9:p1', 'claude', ap.panes['local:w9:p1'],
+         autopilot.Decision('leave', 'usage_limit', 'x'), '', 'idle')
+assert len(io.sent) == sent and not ap.panes['local:w9:p1'].limit_at, 'the brain pane is not the limit retry'
 # ...but a sensitive blocker is never put to the brain.
 io, ap = fresh()
 io.rows['local'] = [row('w9:p1', 'idle', 2), row('w1:p2')]
@@ -365,15 +436,20 @@ assert_rc "--brain refuses a coding-agents-kit older than 1.3.0" 2
 assert_contains "and names the version it needs" "$ERR" "coding-agents-kit 1.3.0 or later"
 rm -f "$FAKE_AK_DIR/version"
 : >"$FAKE_AK_DIR/argv.log"
+mkdir -p "$(state_dir)"; printf '{"qid": "q-0123456789ab", "action": "leave"}\n' >"$(state_dir)/brain-answers.ndjson"
 run "$HELPER" autopilot --loop --once --brain --brain-model claude=sonnet
 assert_rc "a loop pass with a brain exits 0" 0
+assert_eq "a launch starts the answers file empty (an earlier brain's answers are void)" "0" "$(wc -c <"$(state_dir)/brain-answers.ndjson" | tr -d ' ')"
+WSLOG0=$(cat "$FAKE_HERDR_DIR/local/workspaces.log")
+assert_contains "the launch key is put in the brain's environment" "$WSLOG0" '"HERDR_PEERS_BRAIN_KEY='
+assert_not_contains "and never typed" "$(cat "$FAKE_HERDR_DIR/local/runs.log")" "HERDR_PEERS_BRAIN_KEY"
 assert_contains "pick runs in ask mode" "$(cat "$FAKE_AK_DIR/env.log")" "AGENTKIT_PERMISSIONS=ask"
 assert_contains "with the kinds, the model and the owner" "$(cat "$FAKE_AK_DIR/argv.log")" "pick --kinds claude,codex,grok --model-for claude=sonnet --owner local:w1:p1 --max-age 300 --json"
 assert_contains "the account is leased first" "$(cat "$FAKE_AK_DIR/argv.log")" "lease claude @work1 --owner local:w1:p1 --ttl 4h --purpose brain"
 WSLOG=$(cat "$FAKE_HERDR_DIR/local/workspaces.log")
 case "$WSLOG" in *"\"--cwd\", \"$(state_dir)/brain-"*) t_ok "the brain's home is a fresh directory of its own";; *) t_fail "the brain's home is a fresh directory of its own" "$WSLOG";; esac
 assert_not_contains "never the state directory itself" "$WSLOG" "\"--cwd\", \"$(state_dir)\"]"
-if ls -d "$(state_dir)"/brain-* >/dev/null 2>&1; then t_fail "its home is removed when the brain is closed"; else t_ok "its home is removed when the brain is closed"; fi
+if ls -d "$(state_dir)"/brain-*/ >/dev/null 2>&1; then t_fail "its home is removed when the brain is closed"; else t_ok "its home is removed when the brain is closed"; fi
 assert_contains "its shell finds this very helper first on PATH" "$WSLOG" "PATH=$ROOT/skills/herdr-peers/scripts:"
 assert_contains "a workspace of its own is created" "$(cat "$FAKE_HERDR_DIR/local/workspaces.log")" '"--label", "autopilot brain"'
 RUNLINE=$(cat "$FAKE_HERDR_DIR/local/runs.log")
@@ -385,6 +461,28 @@ run "$HELPER" fleet ui --snapshot --width 160
 assert_contains "and the watcher's header shows it" "$OUT" "brain ◎ claude @work1 starting"
 assert_contains "on stop the lease is released" "$(cat "$FAKE_AK_DIR/argv.log")" "lease release claude @work1 --owner local:w1:p1"
 assert_contains "and its own workspace closed" "$(cat "$FAKE_HERDR_DIR/local/workspaces.log")" '"verb": "close", "args": ["w9"]'
+# a launch that fails after the lease leaks nothing: lease released, home removed
+: >"$FAKE_AK_DIR/argv.log"
+run env FAKE_HERDR_FAIL="workspace create" "$HELPER" autopilot --loop --once --brain
+assert_rc "a failed workspace create does not fail the pass" 0
+assert_contains "the lease is released" "$(cat "$FAKE_AK_DIR/argv.log")" "lease release claude @work1"
+if ls -d "$(state_dir)"/brain-*/ >/dev/null 2>&1; then t_fail "and the brain home removed"; else t_ok "and the brain home removed"; fi
+# an answers line longer than a read never stalls the reader
+python3 - "$ROOT/skills/herdr-peers/scripts" <<'PY'
+import os, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import herdr_peers
+io = herdr_peers.AutopilotIO(herdr_peers.Store(), 'w1:p1', None, None, quiet=True)
+path = os.path.join(io.store.dir, herdr_peers.BRAIN_ANSWERS)
+open(path, 'w').write('x' * (70 * 1024))
+lines, off = io.brain_answers(0)
+assert lines == [] and off == 70 * 1024, (len(lines), off)
+open(path, 'a').write('{"qid": "q-0123456789ab", "action": "leave"}\n')
+lines, off = io.brain_answers(off)
+assert len(lines) == 1, lines
+PY
+assert_eq "an answers line longer than a read is skipped and later answers are read" "0" "$?"
 # an autonomous pick, a lease held by another owner: nothing typed
 for case in auto lease; do
   new_world "brain_$case"
@@ -400,8 +498,14 @@ done
 # the answer verb
 new_world brain_answer
 run "$HELPER" autopilot answer q-0123456789ab nudge_once_more
+assert_rc "autopilot answer outside the brain's environment is refused" 6
+if [ -e "$(state_dir)/brain-answers.ndjson" ]; then t_fail "and records nothing"; else t_ok "and records nothing"; fi
+export HERDR_PEERS_BRAIN_KEY=0123456789abcdef0123456789abcdef
+run "$HELPER" autopilot answer q-0123456789ab nudge_once_more
 assert_rc "autopilot answer records an answer" 0
 assert_contains "with its pane and terminal" "$(cat "$(state_dir)/brain-answers.ndjson")" '"pane": "w1:p1"'
+assert_contains "and the launch key's proof" "$(cat "$(state_dir)/brain-answers.ndjson")" '"mac": "'
+assert_not_contains "never the key itself" "$(cat "$(state_dir)/brain-answers.ndjson")" "$HERDR_PEERS_BRAIN_KEY"
 assert_eq "the answers file is private" "600" "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$(state_dir)/brain-answers.ndjson")"
 run "$HELPER" autopilot answer not-an-id leave
 assert_rc "a malformed question id is a usage error" 2
@@ -409,5 +513,6 @@ run "$HELPER" autopilot answer q-0123456789ab "rm -rf"
 assert_rc "an action that is not one word is a usage error" 2
 run "$HELPER" autopilot run q-0123456789ab
 assert_rc "answer arguments outside answer are a usage error" 2
+unset HERDR_PEERS_BRAIN_KEY
 export PATH=$OLDPATH
 unset FAKE_AK_DIR

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import contextlib
 import datetime
 import fcntl
@@ -3639,31 +3640,46 @@ class AutopilotIO(object):
                              '--ttl', brain.LEASE_TTL, '--purpose', 'brain'], b'', 0, 30)
         if rc != 0:
             raise Stop(EXIT_POLICY, 'the account %s %s could not be leased' % (kind, profile))
-        # A fresh, empty, private home: --trust-cwd trusts nothing the daemon relies on.
-        import tempfile
-        home = tempfile.mkdtemp(prefix='brain-', dir=self.store.dir)
-        self.brain_home = home
-        # The brain answers with `herdr-peers` by name: put this very helper first on its PATH.
-        helper_dir = os.path.dirname(os.path.abspath(__file__))
-        made = herdr_json(['workspace', 'create', '--label', brain.WORKSPACE_LABEL, '--no-focus',
-                           '--cwd', home, '--env',
-                           'PATH=%s:%s' % (helper_dir, os.environ.get('PATH', '/usr/bin:/bin'))],
-                          timeout=15)
-        result = made.get('result') or {}
-        pane = (result.get('root_pane') or {})
-        workspace = (result.get('workspace') or {}).get('workspace_id')
-        pane_id, terminal = pane.get('pane_id'), pane.get('terminal_id')
-        if not (isinstance(pane_id, str) and re.fullmatch(PANE_RE, pane_id)) or pane.get('agent'):
-            # Never type into a pane that is not a fresh shell of our own.
+        workspace = None
+        try:
+            # Answers of an earlier brain are void: the file starts empty for this one.
+            path = os.path.join(self.store.dir, BRAIN_ANSWERS)
+            with self.store.lock():
+                try:
+                    os.close(os.open(path, os.O_WRONLY | os.O_TRUNC | NOFOLLOW))
+                except FileNotFoundError:
+                    pass
+            # A fresh, empty, private home: --trust-cwd trusts nothing the daemon relies on.
+            import tempfile
+            home = tempfile.mkdtemp(prefix='brain-', dir=self.store.dir)
+            self.brain_home = home
+            # The per-launch answer key lives only in the brain's environment and the
+            # daemon's memory: never typed, never on a screen.
+            key = binascii.hexlify(os.urandom(16)).decode('ascii')
+            # The brain answers with `herdr-peers` by name: put this very helper first on its PATH.
+            helper_dir = os.path.dirname(os.path.abspath(__file__))
+            made = herdr_json(['workspace', 'create', '--label', brain.WORKSPACE_LABEL, '--no-focus',
+                               '--cwd', home, '--env',
+                               'PATH=%s:%s' % (helper_dir, os.environ.get('PATH', '/usr/bin:/bin')),
+                               '--env', '%s=%s' % (brain.KEY_ENV, key)],
+                              timeout=15)
+            result = made.get('result') or {}
+            pane = (result.get('root_pane') or {})
+            workspace = (result.get('workspace') or {}).get('workspace_id')
+            pane_id, terminal = pane.get('pane_id'), pane.get('terminal_id')
+            if not (isinstance(pane_id, str) and re.fullmatch(PANE_RE, pane_id)) or pane.get('agent'):
+                # Never type into a pane that is not a fresh shell of our own.
+                raise Stop(EXIT_HERDR, 'the new workspace did not give a fresh shell pane')
+            # `pane run` prints nothing on success (found live): its exit status decides.
+            rc, _out, _err = herdr(['pane', 'run', pane_id, line], timeout=15)
+            if rc != 0:
+                raise Stop(EXIT_HERDR, 'herdr pane run failed in the brain workspace')
+        except BaseException:
+            # Nothing leaks: the lease, the workspace and the home go with the failure.
             self.brain_release(kind, profile, workspace)
-            raise Stop(EXIT_HERDR, 'the new workspace did not give a fresh shell pane')
-        # `pane run` prints nothing on success (found live): its exit status decides.
-        rc, _out, _err = herdr(['pane', 'run', pane_id, line], timeout=15)
-        if rc != 0:
-            self.brain_release(kind, profile, workspace)
-            raise Stop(EXIT_HERDR, 'herdr pane run failed in the brain workspace')
+            raise
         return {'pane': pane_id, 'terminal': terminal, 'workspace': workspace,
-                'kind': kind, 'profile': profile, 'home': home}
+                'kind': kind, 'profile': profile, 'home': home, 'key': key}
 
     def brain_lease(self, kind, profile):
         ak = shutil.which('ak')
@@ -3714,6 +3730,8 @@ class AutopilotIO(object):
         finally:
             os.close(fd)
         cut = data.rfind(b'\n') + 1
+        if cut == 0 and len(data) >= 64 * 1024:
+            return [], size  # a line longer than any answer: skip it all, never stall
         lines = [l.decode('utf-8', 'replace') for l in data[:cut].split(b'\n') if l.strip()]
         return lines, offset + cut
 
@@ -4097,8 +4115,12 @@ def autopilot_answer(args, store):
     me = ((current.get('result') or {}).get('pane') or {})
     if not isinstance(me.get('pane_id'), str) or not re.fullmatch(PANE_RE, me['pane_id']):
         raise Stop(EXIT_ENV, 'cannot tell which pane this is')
+    key = os.environ.get(brain.KEY_ENV) or ''
+    if not brain.KEY_RE.fullmatch(key):
+        raise Stop(EXIT_ENV, 'autopilot answer runs only in the brain the daemon launched')
     line = json.dumps({'qid': qid, 'action': action, 'pane': me['pane_id'],
                        'terminal': me.get('terminal_id'), 'ancestry': process_ancestry(),
+                       'mac': brain.answer_mac(key, qid, action, me['pane_id'], str(me.get('terminal_id'))),
                        'ts': now_iso()}, sort_keys=True) + '\n'
     with store.lock():
         append_line(os.path.join(store.dir, BRAIN_ANSWERS), line)

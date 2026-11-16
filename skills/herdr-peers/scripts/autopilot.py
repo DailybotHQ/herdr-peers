@@ -651,6 +651,8 @@ class Autopilot(object):
         to go on. Never over a human's draft, never with --no-nudge, and not
         forever."""
         now = self.clock()
+        if self.brain is not None and self.brain.is_brain(addr):
+            return  # the brain's own limit is the keeper's to handle, never keyed
         if not memo.limit_at:
             memo.limit_at = now
             self.record(addr, kind, choice, 'left')
@@ -736,7 +738,7 @@ class PlanLoop(object):
         self.ap, self.io = ap, ap.io
         self.machines = {}     # machine -> {'at', 'state', 'report'}
         self.memos = {}        # (machine, plan id) -> PlanMemo
-        self.resolve = set()        # (machine, plan) the brain allowed to ask its lead to resolve
+        self.resolve = {}           # (machine, plan) -> the blocker the brain allowed its lead to resolve
         self.fleet_text = None      # the daemon's own map
         self.remote_text = None     # the reduced copy left on other machines
         self.fleet_key = None
@@ -851,11 +853,18 @@ class PlanLoop(object):
         memo.seen_open = True
         if cls == 'blocked':
             self.enter(memo, machine, plan, 'plan_blocked', addr, 'left')
-            if (machine, plan['plan']) in self.resolve and pane is not None:
-                self.resolve.discard((machine, plan['plan']))
-                self.prompt_lead(machine, plan, pane, addr, by_pane, now, prompted,
-                                 brain_mod().RESOLVE_TEXT % plan['plan'], 'plan_resolve')
+            key = (machine, plan['plan'])
+            allowed = self.resolve.get(key)
+            # Only the blocker the brain was asked about, and only while it is
+            # still one the lead may resolve; kept until the lead can be prompted.
+            if allowed is not None and (allowed != brain_mod().blocker_key(plan)
+                                        or not brain_mod().blocker_is_askable(plan)):
+                self.resolve.pop(key, None)
+            elif allowed is not None and pane is not None and self.prompt_lead(machine, plan, pane, addr, by_pane, now, prompted,
+                                 brain_mod().RESOLVE_TEXT % plan['plan'], 'plan_resolve'):
+                self.resolve.pop(key, None)
             return
+        self.resolve.pop((machine, plan['plan']), None)  # unblocked: the answer is spent
         if memo.situation in ('plan_blocked', 'plan_completed'):
             memo.situation = None
         if pane is None:
@@ -1190,7 +1199,16 @@ class BrainKeeper(object):
             pmemo = self.ap.panes.get('local:%s' % b.pane)
             gone = row is None and b.state == 'ready'
             limited = pmemo is not None and pmemo.limit_tries >= 1
-            if gone or limited:
+            late = b.state == 'starting' and now - b.started_at > B.START_DEADLINE and not (
+                row is not None and row.get('state') in ('idle', 'done'))
+            if late:
+                # ak failed, a login screen, an agent that never came up: not this one.
+                addr = 'local:%s' % b.pane
+                self.retire('start_timeout')
+                self.io.event({'schema': EVENT_SCHEMA, 'event': 'needs_human', 'plan': None,
+                               'machine': 'local', 'lead': addr, 'repo_root': None,
+                               'blocker_class': None}, self.ap.dry_run)
+            elif gone or limited:
                 self.retire('gone' if gone else 'usage_limit')
             elif b.state == 'starting' and row is not None and row.get('state') in ('idle', 'done'):
                 screen = self.io.read('local', b.pane) or ''
@@ -1231,6 +1249,7 @@ class BrainKeeper(object):
             return
         b.pane, b.terminal, b.workspace = info['pane'], info['terminal'], info['workspace']
         b.kind, b.profile, b.lease_at = info['kind'], info['profile'], now
+        b.key, b.offset, b.started_at = info.get('key'), 0, now  # the answers file starts empty
         b.state, b.briefed = 'starting', False
         self.ap.quiet.add('local:%s' % b.pane)
         self.ap.record('local:%s' % b.pane, b.kind, Decision('prompt', 'brain_launched',
@@ -1248,7 +1267,7 @@ class BrainKeeper(object):
         if b.pane and not self.ap.dry_run:
             self.io.brain_release(b.kind, b.profile, b.workspace)
         self.ap.quiet.discard('local:%s' % b.pane)
-        b.pane = b.terminal = b.workspace = None
+        b.pane = b.terminal = b.workspace = b.key = None
 
     # -- questions -----------------------------------------------------------
     def ask(self, case, machine, plan, ctx):
@@ -1264,7 +1283,8 @@ class BrainKeeper(object):
                             'machine': machine, 'plan': (plan or {}).get('plan'),
                             'lead': (plan or {}).get('lead'), 'addr': ctx.get('addr'),
                             'repo_root': (plan or {}).get('repo_root'),
-                            'blocker_class': (plan or {}).get('blocker_class')}
+                            'blocker_class': (plan or {}).get('blocker_class'),
+                            'blocker_key': B.blocker_key(plan) if plan else None}
         b.asked.append(now)
         self.ap.record('local:%s' % b.pane, b.kind, Decision('prompt', 'brain_asked', case),
                        'nudged', plan=(plan or {}).get('plan'))
@@ -1329,7 +1349,7 @@ class BrainKeeper(object):
                 if memo.situation == 'plan_stalled':
                     memo.situation = None
         elif action == 'ask_lead_to_resolve' and q['plan']:
-            loop.resolve.add((q['machine'], q['plan']))
+            loop.resolve[(q['machine'], q['plan'])] = q.get('blocker_key')
 
 
 def remote_copy(body):
