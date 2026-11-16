@@ -3286,8 +3286,12 @@ class AutopilotIO(object):
                              '--ttl', brain.LEASE_TTL, '--purpose', 'brain'], b'', 0, 30)
         if rc != 0:
             raise Stop(EXIT_POLICY, 'the account %s %s could not be leased' % (kind, profile))
+        # A fresh, empty, private home: --trust-cwd trusts nothing the daemon relies on.
+        import tempfile
+        home = tempfile.mkdtemp(prefix='brain-', dir=self.store.dir)
+        self.brain_home = home
         made = herdr_json(['workspace', 'create', '--label', brain.WORKSPACE_LABEL, '--no-focus',
-                           '--cwd', self.store.dir], timeout=15)
+                           '--cwd', home], timeout=15)
         result = made.get('result') or {}
         pane = (result.get('root_pane') or {})
         workspace = (result.get('workspace') or {}).get('workspace_id')
@@ -3302,7 +3306,7 @@ class AutopilotIO(object):
             self.brain_release(kind, profile, workspace)
             raise Stop(EXIT_HERDR, 'herdr pane run failed in the brain workspace')
         return {'pane': pane_id, 'terminal': terminal, 'workspace': workspace,
-                'kind': kind, 'profile': profile}
+                'kind': kind, 'profile': profile, 'home': home}
 
     def brain_lease(self, kind, profile):
         ak = shutil.which('ak')
@@ -3318,6 +3322,24 @@ class AutopilotIO(object):
                          self.brain_owner()], b'', 0, 30)
         if isinstance(workspace, str) and re.fullmatch(r'[A-Za-z0-9]{1,32}', workspace):
             herdr(['workspace', 'close', workspace], timeout=15)
+        home = getattr(self, 'brain_home', None)
+        if home and os.path.basename(home).startswith('brain-') \
+                and os.path.dirname(home) == self.store.dir and not os.path.islink(home):
+            shutil.rmtree(home, ignore_errors=True)
+        self.brain_home = None
+
+    def brain_owns(self, pane, ancestry):
+        """True when the answer ran under the brain pane's own foreground
+        process (its pid is in the answer's recorded process ancestry)."""
+        if not isinstance(ancestry, list) or not isinstance(pane, str):
+            return False
+        rc, out, _err = herdr(['pane', 'process-info', '--pane', pane], timeout=8)
+        try:
+            procs = json.loads(out)['result']['process_info']['foreground_processes'] if rc == 0 else []
+        except (ValueError, KeyError, TypeError):
+            return False
+        pids = set(p.get('pid') for p in procs if isinstance(p, dict) and isinstance(p.get('pid'), int))
+        return any(isinstance(a, int) and a in pids for a in ancestry)
 
     def brain_answers(self, offset):
         """New lines of the answers file since `offset`: ([lines], new offset)."""
@@ -3687,6 +3709,21 @@ def autopilot_start(args, store, opts):
 BRAIN_ANSWERS = 'brain-answers.ndjson'
 
 
+def process_ancestry(limit=16):
+    """This process's parent chain (pids), so the daemon can check that an
+    answer ran under the brain's own process."""
+    out, pid = [], os.getppid()
+    while pid > 1 and len(out) < limit:
+        out.append(pid)
+        try:
+            proc = subprocess.run(['ps', '-o', 'ppid=', '-p', str(pid)], stdout=subprocess.PIPE,
+                                  stderr=subprocess.DEVNULL, timeout=3)
+            pid = int(proc.stdout.decode().strip() or 0)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            break
+    return out
+
+
 def autopilot_answer(args, store):
     """`autopilot answer <question> <action>`: the brain's answer to one
     question, appended to this server's state under the lock. The daemon
@@ -3702,7 +3739,8 @@ def autopilot_answer(args, store):
     if not isinstance(me.get('pane_id'), str) or not re.fullmatch(PANE_RE, me['pane_id']):
         raise Stop(EXIT_ENV, 'cannot tell which pane this is')
     line = json.dumps({'qid': qid, 'action': action, 'pane': me['pane_id'],
-                       'terminal': me.get('terminal_id'), 'ts': now_iso()}, sort_keys=True) + '\n'
+                       'terminal': me.get('terminal_id'), 'ancestry': process_ancestry(),
+                       'ts': now_iso()}, sort_keys=True) + '\n'
     with store.lock():
         append_line(os.path.join(store.dir, BRAIN_ANSWERS), line)
     print('answer recorded for %s: %s' % (qid, action))

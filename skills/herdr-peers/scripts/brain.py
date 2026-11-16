@@ -48,10 +48,20 @@ CASES = {
 # A blocker that names one of these is the human's, whatever its class says:
 # the brain is never asked whether a lead may resolve it.
 SENSITIVE = re.compile(
-    r'(?i)\b(credential|password|passphrase|secret|token|api[ -]?key|private key|ssh key|'
-    r'log ?in|sign ?in|auth|oauth|2fa|mfa|consent|terms|payment|billing|invoice|card|'
-    r'push(ed|ing)? to (main|master|production)|force[- ]push|merge|release|publish|deploy|'
-    r'tag|delet\w*|drop|destroy|wipe|rm -rf|production|prod)\b')
+    r'(?i)\b(credential\w*|password\w*|passphrase|secret\w*|token\w*|api[ -]?key\w*|apikey|'
+    r'private key|ssh key|log ?in\w*|sign ?in\w*|auth\w*|oauth|2fa|mfa|consent\w*|terms|'
+    r'payment\w*|billing|invoice\w*|card|push(ed|ing)? to (main|master|production)|'
+    r'force[- ]push|merg\w*|release\w*|publish\w*|deploy\w*|tag\w*|delet\w*|drop\w*|'
+    r'destroy\w*|wipe\w*|rm -rf|production|prod|'
+    # Spanish: the developer works in it
+    r'contrase\w*|credencial\w*|clave\w*|secreto\w*|autentica\w*|autoriza\w*|'
+    r'inici\w* (de )?sesi\w*|consentimiento|pago\w*|factura\w*|tarjeta\w*|publica\w*|'
+    r'despleg\w*|desplieg\w*|borra\w*|elimina\w*|fusiona\w*|produccion|producción|'
+    r'lanzamiento\w*|versi\wn)\b')
+
+# The one command the brain may run without the human: its own answer.
+ANSWER_CMD_RE = re.compile(r'(?:\S*/)?herdr-peers autopilot answer q-[0-9a-f]{12} [a-z_]{1,32}')
+SHELL_META = re.compile(r'[;&|`$<>(){}\\]')
 
 BRIEF = (
     '[autopilot] You are the brain of the herdr-peers autopilot on this machine. You decide '
@@ -130,15 +140,40 @@ def clean(value, limit=REASON_MAX):
 
 
 def blocker_is_askable(plan):
-    """True when a blocked plan's blocker may be put to the brain: no C-class
-    (those are the human's), and no sensitive subject in its text."""
+    """True when a blocked plan's blocker may be put to the brain: the plan
+    itself recorded it as one its lead may resolve (`resolver: lead` — a
+    field the plan writes, not prose), it names no C-class (those are the
+    human's), and its text names no sensitive subject (an extra guard, not
+    the reason to ask)."""
     if plan.get('blocker_class'):
         return False
     detail = plan.get('detail') or {}
     block = detail.get('blocker') if isinstance(detail, dict) else None
-    text = ' '.join(clean((block or {}).get(k), 400) for k in ('reason', 'needs')) \
-        if isinstance(block, dict) else ''
+    if not isinstance(block, dict) or block.get('resolver') != 'lead':
+        return False
+    text = ' '.join(clean(block.get(k), 400) for k in ('reason', 'needs'))
     return not SENSITIVE.search(text)
+
+
+MENU_ROW = re.compile(r'^\s*(?:[❯›>→▶]\s*)?1[.)]\s+\S')
+RULE_ONLY = set('─━═╌▔▀▄_-╭╮╰╯ ')
+
+
+def approval_is_answer(text):
+    """True when an approval screen in the brain's pane asks to run exactly
+    one `herdr-peers autopilot answer q-… <action>` and nothing that looks
+    like any other command: the only approval the daemon gives the brain.
+    Only the approval itself is read — the ten lines above its first option."""
+    lines = (text or '').splitlines()[-40:]
+    first = [i for i, l in enumerate(lines) if MENU_ROW.match(l)]
+    if not first:
+        return False
+    region = [l.strip(' \t│┃') for l in lines[max(0, first[-1] - 10):first[-1]]]
+    region = [l[2:] if l.startswith('$ ') else l for l in region if l and not set(l) <= RULE_ONLY]
+    answers = [l for l in region if ANSWER_CMD_RE.fullmatch(l.strip())]
+    if len(answers) != 1:
+        return False
+    return not any(SHELL_META.search(l) for l in region)
 
 
 def question_text(qid, case, plan_id, machine):
@@ -178,6 +213,7 @@ class Brain(object):
         self.questions = {}       # qid -> {'case', 'key', 'at', 'answered'}
         self.offset = 0           # bytes of the answers file already read
         self.state = 'none'       # none, starting, ready, failed
+        self.refused_told = False # the human was told the brain asked for a refused approval
 
     def can_launch(self, now):
         self.launches = [t for t in self.launches if now - t < 3600]
@@ -194,9 +230,10 @@ class Brain(object):
                 return qid
         return None
 
-    def accept(self, rec, now):
+    def accept(self, rec, now, owns=None):
         """(question, action) when `rec` is a valid answer from the brain's own
-        pane and terminal to an open, unexpired question; else None."""
+        pane and terminal to an open, unexpired question, and `owns()` (when
+        given) confirms it ran under the brain's own process; else None."""
         q = self.questions.get(rec.get('qid'))
         if q is None or q['answered'] or now - q['at'] > QUESTION_TTL:
             return None
@@ -204,6 +241,8 @@ class Brain(object):
             return None
         actions, _ = CASES[q['case']]
         if rec.get('action') not in actions:
+            return None
+        if owns is not None and not owns():
             return None
         q['answered'] = True
         return q, rec['action']

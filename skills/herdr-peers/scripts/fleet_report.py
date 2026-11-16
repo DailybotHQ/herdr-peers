@@ -323,7 +323,10 @@ def plan_detail(state, plan_dir):
         block = {'reason': clean_text(blocker.get('reason') if isinstance(blocker.get('reason'), str)
                                       else None, SUMMARY_LINE_MAX),
                  'needs': clean_text(blocker.get('needs') if isinstance(blocker.get('needs'), str)
-                                     else None, SUMMARY_LINE_MAX)}
+                                     else None, SUMMARY_LINE_MAX),
+                 # Who the plan says may resolve it: a field the plan writes, never prose.
+                 'resolver': blocker.get('resolver') if blocker.get('resolver') in ('lead', 'human')
+                 else None}
     summary, written = plan_summary(plan_dir)
     return {'title': plan_title(plan_dir), 'tasks': tasks, 'tasks_from': start, 'blocker': block,
             'summary': summary, 'summary_at': written}
@@ -756,7 +759,8 @@ def valid_detail(detail):
                 and (task['status'] is None or task['status'] in STATUS_KEYS)):
             return False
     block = detail['blocker']
-    if block is not None and not (isinstance(block, dict) and set(block) == {'reason', 'needs'}
+    if block is not None and not (isinstance(block, dict) and set(block) == {'reason', 'needs', 'resolver'}
+                                  and block['resolver'] in (None, 'lead', 'human')
                                   and valid_line(block['reason'], SUMMARY_LINE_MAX)
                                   and valid_line(block['needs'], SUMMARY_LINE_MAX)):
         return False

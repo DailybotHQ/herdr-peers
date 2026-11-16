@@ -429,8 +429,11 @@ set it up beyond the flag; it needs coding-agents-kit 1.3.0 or later (`ak`).
    an autonomy or bypass flag.
 3. The account is leased (`ak lease … --purpose brain`, renewed every two
    hours) so no lead or second daemon books it.
-4. The daemon creates a workspace of its own, `autopilot brain`, and types
-   the quoted line into its fresh shell — never into an agent's pane.
+4. The daemon creates a workspace of its own, `autopilot brain`, whose
+   shell starts in a fresh, empty, private directory (never the daemon's
+   state directory, so `--trust-cwd` trusts nothing the daemon relies on),
+   and types the quoted line into that fresh shell — never into an agent's
+   pane. The directory is removed when the brain is closed.
 5. When the agent is up it receives one brief: it decides nothing on its own,
    changes nothing, and answers each question only with the command the
    question shows.
@@ -446,7 +449,7 @@ questions in the last hour and its last decision.
 | Case | Allowed actions | Default (no valid answer in 3 minutes) |
 | --- | --- | --- |
 | A plan is stalled (three prompts without progress) | `nudge_once_more` (one more prompt to its lead, once per plan), `notify_human`, `leave` | `leave` |
-| A plan is blocked and its blocker names no escalation class and no sensitive subject (credential, login, consent, payment, a push to main, a merge, a release, a deletion, a secret, production) | `ask_lead_to_resolve` (one fixed prompt asking the lead to resolve it within its recorded authority), `notify_human`, `leave` | `leave` |
+| A plan is blocked, its state records the blocker as one its lead may resolve (`"resolver": "lead"` in the blocker record — a field the plan writes, not prose), and the blocker names no escalation class and no sensitive subject (credential, login, consent, payment, a push to main, a merge, a release, a deletion, a secret, production — in English and Spanish) | `ask_lead_to_resolve` (one fixed prompt asking the lead to resolve it within its recorded authority), `notify_human`, `leave` | `leave` |
 | An agent waits at a screen autopilot does not recognise | `leave`, `notify_human` | `leave` |
 
 The question is one fixed prompt: the case, the plan and machine, the
@@ -454,9 +457,23 @@ allowed actions and the answer command — nothing else. The brain answers
 with `herdr-peers autopilot answer <question> <action>`, which appends one
 line to the daemon's state directory. The daemon accepts it only when the
 question is one it asked, still open and within its time, the action is in
-that case's list, and the answer came from the brain's own pane and
-terminal. Anything else is recorded as refused and the case keeps its
-default. `notify_human` runs your `--notify` command with a `needs_human`
+that case's list, the answer names the brain's own pane and terminal, and
+it ran under the brain pane's own process (its pid is in the answer's
+recorded process ancestry). Anything else is recorded as refused and the
+case keeps its default. **Answers are not authenticated beyond that:** a
+process of the same user that runs under the brain's agent could answer an
+open question with an allowed action; every allowed action is harmless
+under that assumption (one more fixed prompt, one fixed request to a lead,
+a notification, or nothing).
+
+The brain reads text other agents wrote, so it is treated as a
+prompt-injection target. The screen pass approves **nothing** in the
+brain's pane except an approval whose command is exactly `herdr-peers
+autopilot answer q-<12 hex> <word>` with no other command around it;
+any other permission or question there is refused, recorded
+(`brain_permission_refused`) and you are told once. An injected brain can
+still choose any allowed action for an open question — that is the
+residual risk, bounded by the lists above. `notify_human` runs your `--notify` command with a `needs_human`
 event; it never stops anything.
 
 No pass waits for the brain: questions are asked on one pass and answers

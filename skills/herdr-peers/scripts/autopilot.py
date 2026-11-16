@@ -595,6 +595,16 @@ class Autopilot(object):
             # Once a dialog was keyed, its next step is part of the same
             # dialog even when Herdr briefly reports another state.
             choice = decide(kind, 'blocked' if step and engaged(text) else state, text)
+            if choice.action == 'keys' and self.brain is not None and self.brain.is_brain(addr) \
+                    and choice.cls not in ('folder_trust', 'update_prompt') \
+                    and not (choice.cls == 'permission' and brain_mod().approval_is_answer(text)):
+                # The brain reads text other agents wrote: the daemon approves
+                # nothing in its pane but its own answer command.
+                memo.left = digest
+                self.record(addr, kind, Decision('leave', 'brain_permission_refused', choice.cls),
+                            'left')
+                self.brain.refused(addr)
+                return True
             if choice.action == 'keys':
                 if digest == memo.stuck:
                     memo.tries += 1
@@ -1163,7 +1173,7 @@ class BrainKeeper(object):
             rec = B.parse_answer_line(line)
             if rec is None:
                 continue
-            got = b.accept(rec, now)
+            got = b.accept(rec, now, owns=lambda: self.io.brain_owns(b.pane, rec.get('ancestry')))
             if got is None:
                 self.ap.record('local:%s' % (b.pane or '-'), None,
                                Decision('leave', 'brain_answer_refused', B.clean(rec.get('qid'), 20)),
@@ -1175,6 +1185,18 @@ class BrainKeeper(object):
                                     'brain_' + action, q['case']),
                            'nudged' if action != 'leave' else 'left', plan=q['plan'])
             self.act(q, action)
+
+    def is_brain(self, addr):
+        return bool(self.b.pane) and addr == 'local:%s' % self.b.pane
+
+    def refused(self, addr):
+        """The brain asked for something the daemon will not approve: tell the
+        human once per brain."""
+        if not self.b.refused_told:
+            self.b.refused_told = True
+            self.io.event({'schema': EVENT_SCHEMA, 'event': 'needs_human', 'plan': None,
+                           'machine': 'local', 'lead': addr, 'repo_root': None,
+                           'blocker_class': None}, self.ap.dry_run)
 
     def status(self, now):
         """What the map shows about the brain: no prompt text, no answer text."""

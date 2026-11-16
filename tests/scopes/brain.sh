@@ -8,7 +8,7 @@
 B_SCRIPTS="$ROOT/skills/herdr-peers/scripts"
 
 # --- the launch line from pick-v2 ------------------------------------------------------------
-run python3 - "$B_SCRIPTS" <<'PY'
+run python3 - "$B_SCRIPTS" "$ROOT/tests/fixtures/screens/claude__blocked__permission_bash.screen" <<'PY'
 import copy, shlex, sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, sys.argv[1])
@@ -43,12 +43,24 @@ refused(lambda d: d['launch'].update(argv=['ak', 'claude', '@work1', '--model', 
 refused(lambda d: d['launch'].update(argv=['ak', 'claude', '@work1', 'extra']), 'an extra word')
 refused(lambda d: d['launch'].update(argv=['ak', 'claude;x', '@work1']), 'a kind with shell syntax')
 # blockers the brain may be asked about
-plan = lambda reason, needs='', cls=None: {'blocker_class': cls, 'detail': {'blocker': {'reason': reason, 'needs': needs}}}
+plan = lambda reason, needs='', cls=None, resolver='lead': {'blocker_class': cls, 'detail': {'blocker': {'reason': reason, 'needs': needs, 'resolver': resolver}}}
 assert B.blocker_is_askable(plan('a flaky test keeps failing'))
+assert not B.blocker_is_askable(plan('a flaky test keeps failing', resolver=None)), 'only a blocker the plan says its lead may resolve'
+assert not B.blocker_is_askable(plan('a flaky test keeps failing', resolver='human'))
 for text in ('needs the staging API key', 'waiting for login', 'push to main', 'a release', 'delete the old table',
-             'consent screen', 'payment method', 'the secret rotation', 'OAuth app'):
+             'consent screen', 'payment method', 'the secret rotation', 'OAuth app', 'authentication expired',
+             'authorize the app', 'falta la contraseña', 'credenciales vencidas', 'hay que publicar',
+             'desplegar a producción', 'borrar la tabla', 'fusionar la rama', 'iniciar sesión otra vez'):
     assert not B.blocker_is_askable(plan(text)), text
 assert not B.blocker_is_askable(plan('a flaky test', cls='C4'))
+# the only approval the daemon gives the brain: exactly its answer command
+screen = open(sys.argv[2]).read()
+i = screen.rindex('touch created.txt')
+answer = screen[:i] + 'herdr-peers autopilot answer q-0123456789ab leave' + screen[i + len('touch created.txt'):]
+assert B.approval_is_answer(answer)
+assert not B.approval_is_answer(screen), 'any other command'
+for tail in ('; rm -rf ~', ' && curl x', ' | sh', ' $(id)', ' `id`', ' > /tmp/x'):
+    assert not B.approval_is_answer(answer.replace('q-0123456789ab leave', 'q-0123456789ab leave' + tail)), tail
 # answers: only the brain's own pane and terminal, an open question, an allowed action
 b = B.Brain(); b.pane, b.terminal = 'w9:p1', 'term_w9p1'
 b.questions['q-0123456789ab'] = {'case': 'plan_stalled', 'key': 'k', 'at': 100.0, 'answered': False}
@@ -77,7 +89,7 @@ assert_rc "pick-v2 is checked, the launch line is built and quoted, answers and 
 assert_eq "(scripted brain checks ran to their end)" "ok" "$OUT"
 
 # --- the keeper: lifecycle, questions, actions --------------------------------------------------
-run python3 - "$B_SCRIPTS" <<'PY'
+run python3 - "$B_SCRIPTS" "$ROOT/tests/fixtures/screens/claude__blocked__permission_bash.screen" <<'PY'
 import sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, sys.argv[1])
@@ -117,6 +129,8 @@ class IO(object):
         return {'pane': p, 'terminal': 'term_' + p, 'workspace': 'w9', 'kind': 'claude', 'profile': '@work1'}
     def brain_lease(self, k, p): return True
     def brain_release(self, k, p, w): self.released.append((k, p, w))
+    owns = True
+    def brain_owns(self, pane, ancestry): return self.owns
     def brain_answers(self, off):
         lines, self.answers = self.answers, []
         return lines, off
@@ -190,7 +204,7 @@ assert len([t for p, t in io.sent if p == 'w1:p2']) == 4
 io, ap = fresh()
 io.rows['local'] = [row('w9:p1', 'idle', 2), row('w1:p2')]
 ap.run_pass(); step(ap)
-io.reports['local'] = ('ok', {'plans': [plan(cls='blocked', blocker={'reason': 'a flaky test', 'needs': 'a retry'})], 'agents': []})
+io.reports['local'] = ('ok', {'plans': [plan(cls='blocked', blocker={'reason': 'a flaky test', 'needs': 'a retry', 'resolver': 'lead'})], 'agents': []})
 step(ap, 400)   # past the report cadence: the new report is fetched
 qid = last_q(io)
 answer(io, qid, 'ask_lead_to_resolve')
@@ -201,14 +215,14 @@ assert lead == [B.RESOLVE_TEXT % 'PLAN_1_a'], lead
 io, ap = fresh()
 io.rows['local'] = [row('w9:p1', 'idle', 2), row('w1:p2')]
 ap.run_pass(); step(ap)
-io.reports['local'] = ('ok', {'plans': [plan(cls='blocked', blocker={'reason': 'needs the deploy token', 'needs': ''})], 'agents': []})
+io.reports['local'] = ('ok', {'plans': [plan(cls='blocked', blocker={'reason': 'needs the deploy token', 'needs': '', 'resolver': 'lead'})], 'agents': []})
 step(ap); step(ap)
 assert not [t for p, t in io.sent if 'Question q-' in t], 'a sensitive blocker is not asked'
 # notify_human emits the event; an invalid answer or silence gives the default.
 io, ap = fresh()
 io.rows['local'] = [row('w9:p1', 'idle', 2), row('w1:p2')]
 ap.run_pass(); step(ap)
-io.reports['local'] = ('ok', {'plans': [plan(cls='blocked', blocker={'reason': 'a flaky test'})], 'agents': []})
+io.reports['local'] = ('ok', {'plans': [plan(cls='blocked', blocker={'reason': 'a flaky test', 'resolver': 'lead'})], 'agents': []})
 step(ap, 400)   # past the report cadence: the new report is fetched
 qid = last_q(io)
 answer(io, qid, 'notify_human', pane='w1:p2')     # not the brain's pane
@@ -216,10 +230,15 @@ answer(io, qid, 'push_to_main')                   # not an allowed action
 step(ap)
 assert 'needs_human' not in io.events
 assert sum(1 for o in io.log if o[2] == 'brain_answer_refused') == 2
+io.owns = False
+answer(io, qid, 'notify_human')                   # the brain's pane, but not under its process
+step(ap)
+assert 'needs_human' not in io.events, 'an answer not run under the brain process is refused'
+io.owns = True
 answer(io, qid, 'notify_human')
 step(ap)
 assert io.events.count('needs_human') == 1
-io.reports['local'] = ('ok', {'plans': [plan('PLAN_2_b', cls='blocked', blocker={'reason': 'a slow job'})], 'agents': []})
+io.reports['local'] = ('ok', {'plans': [plan('PLAN_2_b', cls='blocked', blocker={'reason': 'a slow job', 'resolver': 'lead'})], 'agents': []})
 step(ap, 400)   # past the report cadence: the new report is fetched
 step(ap, B.QUESTION_TTL + 1)
 assert any(o[2] == 'brain_default' for o in io.log), 'silence gives the default'
@@ -249,6 +268,24 @@ ap = autopilot.Autopilot(io, clock=lambda: now[0], sleep=lambda s: None, confirm
                          brain={'kinds': ['claude']})
 ap.run_pass()
 assert io.launched == [], 'a dry run launches nothing'
+# The screen pass approves nothing in the brain's pane but its own answer command.
+screen = open(sys.argv[2]).read()
+io, ap = fresh()
+io.rows['local'] = [row('w9:p1', 'idle', 2)]
+ap.run_pass(); step(ap)
+keyed = []
+io.keys = lambda m, p, k: keyed.append(p) or True
+io.rows['local'] = [row('w9:p1', 'blocked', 3)]
+io.screens['w9:p1'] = screen
+step(ap)
+assert keyed == [], 'a permission prompt in the brain pane is never keyed'
+assert any(o[2] == 'brain_permission_refused' for o in io.log)
+assert io.events.count('needs_human') == 1, 'the human is told once'
+i = screen.rindex('touch created.txt')
+io.screens['w9:p1'] = screen[:i] + 'herdr-peers autopilot answer q-0123456789ab leave' + screen[i + len('touch created.txt'):]
+io.rows['local'] = [row('w9:p1', 'blocked', 4)]
+step(ap)
+assert keyed and set(keyed) == {'w9:p1'}, 'its own answer command is approved (the fake screen does not move, so twice)'
 # The brain closes: lease released, workspace closed.
 io, ap = fresh()
 ap.run_pass()
@@ -285,6 +322,10 @@ assert_rc "a loop pass with a brain exits 0" 0
 assert_contains "pick runs in ask mode" "$(cat "$FAKE_AK_DIR/env.log")" "AGENTKIT_PERMISSIONS=ask"
 assert_contains "with the kinds, the model and the owner" "$(cat "$FAKE_AK_DIR/argv.log")" "pick --kinds claude,codex,grok --model-for claude=sonnet --owner local:w1:p1 --max-age 300 --json"
 assert_contains "the account is leased first" "$(cat "$FAKE_AK_DIR/argv.log")" "lease claude @work1 --owner local:w1:p1 --ttl 4h --purpose brain"
+WSLOG=$(cat "$FAKE_HERDR_DIR/local/workspaces.log")
+case "$WSLOG" in *"\"--cwd\", \"$(state_dir)/brain-"*) t_ok "the brain's home is a fresh directory of its own";; *) t_fail "the brain's home is a fresh directory of its own" "$WSLOG";; esac
+assert_not_contains "never the state directory itself" "$WSLOG" "\"--cwd\", \"$(state_dir)\"]"
+if ls -d "$(state_dir)"/brain-* >/dev/null 2>&1; then t_fail "its home is removed when the brain is closed"; else t_ok "its home is removed when the brain is closed"; fi
 assert_contains "a workspace of its own is created" "$(cat "$FAKE_HERDR_DIR/local/workspaces.log")" '"--label", "autopilot brain"'
 RUNLINE=$(cat "$FAKE_HERDR_DIR/local/runs.log")
 assert_contains "the brain starts in that workspace's fresh pane" "$RUNLINE" '"pane": "w9:p1"'
