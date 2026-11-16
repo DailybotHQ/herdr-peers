@@ -64,7 +64,9 @@
           "tasks_done",
           "tasks_total",
           "current_task",
-          "detail"
+          "detail",
+          "appoint",
+          "appointed"
         ],
         "properties": {
           "plan": {
@@ -160,6 +162,14 @@
               "null"
             ],
             "description": "Asks the lead still awaits (launched within the last two hours); null when the lead is not a pane of this machine or the log cannot be counted."
+          },
+          "appointed": {
+            "type": "boolean",
+            "description": "True when the record's current epoch came by appointment (a lane took the lead under the grant)."
+          },
+          "appoint": {
+            "enum": ["lanes", "lanes:any-kind", null],
+            "description": "The human's standing appointment grant from the lead record (lead-v2, protocol.md §12): when lead and every successor are gone, a lane may be appointed. null without a grant."
           },
           "lead_in_repo": {
             "type": [

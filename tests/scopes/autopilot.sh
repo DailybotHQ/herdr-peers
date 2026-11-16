@@ -390,9 +390,11 @@ run "$HELPER" autopilot logs --lines -1
 assert_rc "a negative --lines is a usage error" 2
 run "$HELPER" autopilot --once --follow
 assert_rc "--follow outside logs is a usage error" 2
-"$HELPER" autopilot logs -f --lines 0 >"$WORK/follow.out" 2>"$WORK/follow.err" &
+# --lines 1 prints the current last line first: once it is out, the follower
+# holds the file at its end and every later line is new (no start-up race).
+"$HELPER" autopilot logs -f --lines 1 >"$WORK/follow.out" 2>"$WORK/follow.err" &
 fp=$!
-sleep 0.6
+for _ in $(seq 1 80); do [ -s "$WORK/follow.out" ] && break; sleep 0.25; done
 printf 'appended \033[31mred\n' >>"$SD/autopilot.out"
 for _ in $(seq 1 40); do grep -q appended "$WORK/follow.out" && break; sleep 0.25; done
 assert_contains "follow prints an appended line" "$(cat "$WORK/follow.out")" "appended ?[31mred"

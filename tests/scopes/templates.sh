@@ -34,7 +34,7 @@ for k in server_id task transport via kind profile target worktree prompt_digest
 done
 states=$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(",".join(s["properties"]["state"]["enum"]))' "$SCHEMA")
 assert_eq "state enum covers asks, notices, lead records and autopilot" \
-  "launched,completed,failed,cancelled,unroutable,sent,received,claimed,refreshed,handed_over,taken_over,released,adopted,stepped_down,rejected,keyed,nudged,left,gave_up" "$states"
+  "launched,completed,failed,cancelled,unroutable,sent,received,claimed,refreshed,handed_over,taken_over,released,adopted,stepped_down,rejected,appointed,verified,keyed,nudged,left,gave_up" "$states"
 roles=$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(",".join(s["properties"]["role"]["enum"]))' "$SCHEMA")
 assert_eq "role enum covers asks, notices, lead records and autopilot" "caller,delegate,notifier,notified,lead,autopilot" "$roles"
 

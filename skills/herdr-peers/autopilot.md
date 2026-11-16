@@ -93,6 +93,7 @@ server, in either mode: a second one is refused (exit `4`). It stops on
 | `--scope …` | The same allow-list as every verb (`local`, `<machine>`, `<machine>:<workspace>`); default: every enabled machine. `HERDR_PEERS_SCOPE` applies too. |
 | `--no-nudge` | Never prompt an agent: not one that stopped by asking in prose, not one at its usage limit. Menus are still accepted. |
 | `--loop` | Also keep every open plan running to its end, on every enabled machine ([§9](#9-the-plan-loop---loop)). Without it nothing in §9 happens. |
+| `--appoint` | With `--loop`, **only on your word**: when a plan whose lead record carries your appointment grant (`lead claim --allow-appointment`) has lost its lead and every successor for 15 minutes (`HERDR_PEERS_AUTOPILOT_APPOINT_GRACE`) with no progress, ask its first live lane to take the lead (`lead takeover --as-lane`, which checks again). A lead at its usage limit counts only after the screen pass gave up on it. At most two appointments per plan; events `plan_appointment_prompted` and `plan_appointed` reach `--notify` ([protocol.md](protocol.md) §12). |
 | `--notify "<command>"` | With `--loop`: run that command when a plan stalls, is blocked, loses its lead or completes ([§9.6](#96-telling-you---notify)). |
 | `--catch-up` | Also continue agents that had already stopped to ask before autopilot first looked at their machine. Without it, autopilot only continues stops that happen while it runs. |
 
