@@ -29,6 +29,8 @@ QUEUE_SCHEMA = 'dwp-queue-v1'
 MAX_QUEUE_BYTES = 64 * 1024
 MAX_QUEUE_ITEMS = 64
 MAX_JOURNAL_BYTES = 8 * 1024 * 1024
+MAX_CONTRACT_BYTES = 1024 * 1024
+MAX_CONTRACTS = 64
 QUEUE_STATES = ('queued', 'started', 'done', 'skipped')
 QUEUE_STARTS = ('prompt-lead', 'launch')
 FLEET_SCHEMA = 'herdr-peers/fleet-v1'
@@ -889,37 +891,145 @@ def valid_detail(detail):
     return stamp is None or (isinstance(stamp, str) and TS_RE.fullmatch(stamp) is not None)
 
 
-def plan_approved(plan_dir):
-    """True when the plan's journal holds an approval and no amendment came
-    after the last one (a pending revision voids the start); False when it
-    does not; None when there is no readable journal (a v5 plan, say)."""
+def inside(base, *parts):
+    """The path of `parts` under `base` when no symlink on the way leaves `base`
+    (each component resolves to itself), else None."""
+    if not base:
+        return None
+    path = os.path.join(base, *parts)
+    try:
+        real_base = os.path.realpath(base)
+        real = os.path.realpath(path)
+    except OSError:
+        return None
+    return path if real == os.path.join(real_base, *parts) else None
+
+
+def live_contract_id(plan_dir):
+    """The id of the plan's live contract (the highest revision under
+    `contracts/`, else `contract.json`): its stamped id, else the SHA-256 of
+    its canonical form without the id. None when there is none to read."""
+    best = None
+    chain = os.path.join(plan_dir, 'contracts')
+    if os.path.isdir(chain) and not os.path.islink(chain):
+        try:
+            names = sorted(os.listdir(chain))[:MAX_CONTRACTS]
+        except OSError:
+            return None
+        for name in names:
+            if not name.endswith('.json'):
+                continue
+            doc = load_json(os.path.join(chain, name), MAX_CONTRACT_BYTES)
+            if isinstance(doc, dict) and isinstance(doc.get('revision', 0), int) and not isinstance(
+                    doc.get('revision', 0), bool) and (best is None or doc.get('revision', 0) > best.get('revision', 0)):
+                best = doc
+    if best is None:
+        best = load_json(os.path.join(plan_dir, 'contract.json'), MAX_CONTRACT_BYTES)
+    if not isinstance(best, dict):
+        return None
+    stamped = best.get('contract_id')
+    if isinstance(stamped, str) and stamped:
+        return stamped
+    body = dict((k, v) for k, v in best.items() if k != 'contract_id')
+    return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+
+
+def plan_markdown_digest(plan_dir):
+    """SHA-256 over the plan's own markdown files (`*.md` directly in the plan
+    directory, by name), as the plan tool digests what was approved. None
+    when there is none or one cannot be read as a regular file."""
+    try:
+        names = sorted(n for n in os.listdir(plan_dir) if n.endswith('.md'))
+    except OSError:
+        return None
+    if not names or len(names) > MAX_CONTRACTS:
+        return None
+    digest = hashlib.sha256()
+    for name in names:
+        if os.path.isdir(os.path.join(plan_dir, name)):
+            continue
+        data = read_small(os.path.join(plan_dir, name), MAX_CONTRACT_BYTES)
+        if data is None:
+            return None
+        digest.update(data)
+    return digest.hexdigest()
+
+
+_JOURNALS = {}
+
+
+def journal_facts(plan_dir):
+    """(last approval-or-amendment event, a task was started) from the plan's
+    journal, or None when there is no readable journal. Kept per file
+    identity, size and change time: a journal is read again only when it
+    changed."""
     path = os.path.join(plan_dir, 'journal.ndjson')
     try:
         fd = os.open(path, os.O_RDONLY | NOFOLLOW)
     except OSError:
         return None
-    last = None
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_JOURNAL_BYTES:
             return None
+        key = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+        hit = _JOURNALS.get(path)
+        if hit and hit[0] == key:
+            return hit[1]
+        last, started = None, False
         with os.fdopen(fd, 'rb') as fh:
             fd = None
             for line in fh:
-                if b'"approval"' not in line and b'"amendment"' not in line:
+                if b'"approval"' not in line and b'"amendment"' not in line and b'"task_start"' not in line:
                     continue
                 try:
                     event = json.loads(line.decode('utf-8'))
-                except (ValueError, UnicodeDecodeError):
+                except (ValueError, UnicodeDecodeError, RecursionError):
                     continue
-                if isinstance(event, dict) and event.get('type') in ('approval', 'amendment'):
-                    last = event['type']
+                if not isinstance(event, dict):
+                    continue
+                if event.get('type') in ('approval', 'amendment'):
+                    last = event
+                elif event.get('type') == 'task_start':
+                    started = True
     except OSError:
         return None
     finally:
         if fd is not None:
             os.close(fd)
-    return last == 'approval'
+    if len(_JOURNALS) >= MAX_QUEUE_ITEMS * 4:
+        _JOURNALS.clear()
+    _JOURNALS[path] = (key, (last, started))
+    return last, started
+
+
+def plan_approved(plan_dir):
+    """True when the plan's last approval-or-amendment journal event is an
+    approval citing the plan's live contract id and the digest of its
+    markdown as they are now (an edit or amendment after the approval voids
+    it); False when it is not; None when there is no readable journal (a v5
+    plan, say). A process that can write the plan's files can still forge a
+    matching approval: the plan tool's own start gate checks it again."""
+    facts = journal_facts(plan_dir)
+    if facts is None:
+        return None
+    last = facts[0]
+    if not last or last.get('type') != 'approval':
+        return False
+    cid = live_contract_id(plan_dir)
+    return bool(cid) and last.get('contract_id') == cid \
+        and last.get('plan_digest') == plan_markdown_digest(plan_dir)
+
+
+def plan_started(plan_dir, state):
+    """True when the plan already began: a task left pending in its state, or
+    a task start in its journal."""
+    tasks = state.get('tasks') if isinstance(state, dict) else None
+    if isinstance(tasks, list) and any(isinstance(t, dict) and t.get('status') not in (None, 'pending')
+                                       for t in tasks):
+        return True
+    facts = journal_facts(plan_dir) if plan_dir else None
+    return bool(facts and facts[1])
 
 
 def valid_queue(doc):
@@ -954,34 +1064,43 @@ def read_queue(base):
     """(state, queue) of the repository's queue file (the `.dwp`, `queue.json` path
     components under `base`): ('none', None) without
     one; ('invalid', None) when it is not a regular file of at most 64 KiB
-    with the dwp-queue-v1 shape; ('ok', {...}) with each item judged."""
-    path = os.path.join(base, '.dwp', 'queue.json')
-    if not os.path.lexists(path):
+    with the dwp-queue-v1 shape, or a symlink on the way leaves the
+    repository; ('ok', {...}) with each item judged."""
+    if not base or not os.path.lexists(os.path.join(base, '.dwp', 'queue.json')):
         return 'none', None
-    doc = load_json(path, MAX_QUEUE_BYTES)
+    path = inside(base, '.dwp', 'queue.json')
+    doc = load_json(path, MAX_QUEUE_BYTES) if path else None
     if not valid_queue(doc):
         return 'invalid', None
     items, open_now = [], False
-    plans_dir = os.path.join(base, '.dwp', 'plans')
-    classes = {}
+    facts = {}
     for item in doc['items']:
-        path = plan_state_path(base, item['plan'])
+        plan = item['plan']
+        path = plan_state_path(base, plan)
         state = load_json(path, MAX_STATE_BYTES) if path else None
-        classes[item['plan']] = classify(state)[0] if state is not None else 'unreadable'
-        if item['state'] == 'started' and classes[item['plan']] in ('open', 'blocked'):
+        plan_dir = inside(base, '.dwp', 'plans', plan)
+        if plan_dir and not os.path.isdir(plan_dir):
+            plan_dir = None
+        cls = classify(state)[0] if state is not None else 'unreadable'
+        started = item['state'] == 'queued' and plan_started(plan_dir, state)
+        facts[plan] = (cls, plan_dir, started)
+        # A plan the queue still lists as queued but which already began (the
+        # lead has not marked it yet, or the daemon restarted) is running too.
+        if (item['state'] == 'started' and cls in ('open', 'blocked')) or (started and cls != 'completed'):
             open_now = True
     for item in doc['items']:
         plan = item['plan']
-        cls = classes[plan]
-        approved = plan_approved(os.path.join(plans_dir, plan)) \
-            if os.path.isdir(os.path.join(plans_dir, plan)) else None
+        cls, plan_dir, started = facts[plan]
+        approved = plan_approved(plan_dir) if plan_dir else None
         after = item.get('after')
-        after_done = after is None or classes.get(after) == 'completed' or (
-            after not in classes and classify(load_json(plan_state_path(base, after), MAX_STATE_BYTES)
-                                              if plan_state_path(base, after) else None)[0] == 'completed')
+        after_done = after is None or (facts[after][0] if after in facts else classify(
+            load_json(plan_state_path(base, after), MAX_STATE_BYTES)
+            if plan_state_path(base, after) else None)[0]) == 'completed'
         blocked = None
         if item['state'] == 'queued':
-            if not after_done:
+            if started:
+                blocked = 'started, queue not updated'
+            elif not after_done:
                 blocked = 'waiting for %s' % after
             elif open_now and not doc.get('parallel'):
                 blocked = 'another plan of this repository is running'
@@ -997,6 +1116,37 @@ def read_queue(base):
                       'ready': item['state'] == 'queued' and blocked is None,
                       'blocked_reason': blocked})
     return 'ok', {'repo_root': base, 'parallel': bool(doc.get('parallel')), 'items': items}
+
+
+def check_queue_leads(queue, plans, panes, git):
+    """A ready item's lead must work in the queue's repository and must not
+    lead, succeed or work on another open plan; otherwise the item waits,
+    with the reason."""
+    base_common = git.common_dir(queue['repo_root'])
+    for item in queue['items']:
+        if not item['ready']:
+            continue
+        match = ADDR_RE.match(item.get('lead') or '')
+        if not match or match.group(1) != 'local':
+            continue
+        pane = match.group(2)
+        if pane in panes:
+            mine = git.common_dir(panes[pane])
+            if mine and base_common:
+                elsewhere = mine != base_common
+            else:
+                elsewhere = git.lookup(panes[pane])[0] != queue['repo_root']
+            if elsewhere:
+                item['ready'], item['blocked_reason'] = False, 'lead works elsewhere'
+                continue
+        for plan in plans:
+            if plan.get('class') not in ('open', 'blocked') \
+                    or plan['plan'].rsplit('/', 1)[-1] == item['plan']:
+                continue
+            if item['lead'] in [plan.get('lead')] + list(plan.get('succession') or []) \
+                    + list(plan.get('lanes') or []):
+                item['ready'], item['blocked_reason'] = False, 'lead busy with another plan'
+                break
 
 
 def report(panes=None, root=None, now=None, servers=None):
@@ -1031,6 +1181,7 @@ def report(panes=None, root=None, now=None, servers=None):
     for base in roots[:MAX_PANES]:
         qstate, queue = read_queue(base)
         if qstate == 'ok':
+            check_queue_leads(queue, out['plans'], panes, git)
             out['queues'].append(queue)
         elif qstate == 'invalid':
             out['queues'].append({'repo_root': base, 'parallel': False, 'items': [], 'invalid': True})

@@ -17,15 +17,29 @@ def repo():
     base = tempfile.mkdtemp()
     os.makedirs(os.path.join(base, '.dwp', 'plans'))
     return base
+import hashlib, subprocess
+def cid_of(doc):
+    return hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 def plan(base, pid, status='pending', events=('approval',)):
+    """A plan as the pack writes it: state, contract, markdown, and a journal
+    whose 'approval' cites the live contract id and the markdown digest
+    ('bare' is an approval line citing nothing)."""
     d = os.path.join(base, '.dwp', 'plans', pid)
     os.makedirs(d)
     json.dump({'status': status, 'blocked': None, 'checkpoint': None,
                'tasks': [{'id': 1, 'status': 'completed' if status == 'completed' else status}]},
               open(os.path.join(d, 'state.json'), 'w'))
+    contract = {'plan': pid, 'title': 'T'}
+    json.dump(contract, open(os.path.join(d, 'contract.json'), 'w'))
+    open(os.path.join(d, 'README.md'), 'w').write('# %s\n' % pid)
+    cid, digest = cid_of(contract), hashlib.sha256(('# %s\n' % pid).encode()).hexdigest()
     with open(os.path.join(d, 'journal.ndjson'), 'w') as fh:
         for n, t in enumerate(events):
-            fh.write(json.dumps({'seq': n + 1, 'type': t}) + '\n')
+            ev = {'seq': n + 1, 'type': 'approval' if t == 'bare' else t}
+            if t == 'approval':
+                ev.update(contract_id=cid, plan_digest=digest)
+            fh.write(json.dumps(ev) + '\n')
+    return d
 def queue(base, items, **kw):
     json.dump(dict({'schema': 'dwp-queue-v1', 'items': items}, **kw),
               open(os.path.join(base, '.dwp', 'queue.json'), 'w'))
@@ -75,6 +89,83 @@ for events, want, reason in ((('approval', 'amendment'), False, 'not approved'),
     b = repo(); plan(b, 'PLAN_2_next', events=events); queue(b, [item('PLAN_2_next')])
     it = F.read_queue(b)[1]['items'][0]
     assert it['approved'] is want and it['blocked_reason'] == reason, (events, it)
+# the approval is bound to the plan as it is now (M2): a bare approval line, an edit of
+# the plan after it, a new contract after it do not count; a stamped revision cited does
+b = repo(); plan(b, 'PLAN_2_next', events=('bare',)); queue(b, [item('PLAN_2_next')])
+assert F.read_queue(b)[1]['items'][0]['blocked_reason'] == 'not approved', 'a bare approval line'
+b = repo(); d = plan(b, 'PLAN_2_next'); queue(b, [item('PLAN_2_next')])
+assert F.read_queue(b)[1]['items'][0]['ready']
+open(os.path.join(d, 'README.md'), 'a').write('edited after the approval\n')
+assert F.read_queue(b)[1]['items'][0]['blocked_reason'] == 'not approved', 'markdown edited after the approval'
+b = repo(); d = plan(b, 'PLAN_2_next'); queue(b, [item('PLAN_2_next')])
+json.dump({'plan': 'PLAN_2_next', 'title': 'changed'}, open(os.path.join(d, 'contract.json'), 'w'))
+assert F.read_queue(b)[1]['items'][0]['blocked_reason'] == 'not approved', 'contract changed after the approval'
+b = repo(); d = plan(b, 'PLAN_2_next'); queue(b, [item('PLAN_2_next')])
+ev = json.loads(open(os.path.join(d, 'journal.ndjson')).read().splitlines()[0])
+with open(os.path.join(d, 'journal.ndjson'), 'a') as fh:
+    fh.write(json.dumps(dict(ev, type='amendment', seq=2)) + '\n')   # cites the same contract and digest
+assert F.read_queue(b)[1]['items'][0]['blocked_reason'] == 'not approved', 'an amendment after the approval'
+b = repo(); d = plan(b, 'PLAN_2_next', events=()); queue(b, [item('PLAN_2_next')])
+os.makedirs(os.path.join(d, 'contracts'))
+rev = {'plan': 'PLAN_2_next', 'revision': 2, 'contract_id': 'r2'}
+json.dump(rev, open(os.path.join(d, 'contracts', 'contract.r2.json'), 'w'))
+json.dump({'plan': 'PLAN_2_next', 'revision': 1, 'contract_id': 'r1'}, open(os.path.join(d, 'contracts', 'contract.r1.json'), 'w'))
+digest = hashlib.sha256(b'# PLAN_2_next\n').hexdigest()
+with open(os.path.join(d, 'journal.ndjson'), 'w') as fh:
+    fh.write(json.dumps({'type': 'approval', 'contract_id': 'r1', 'plan_digest': digest}) + '\n')
+assert F.read_queue(b)[1]['items'][0]['blocked_reason'] == 'not approved', 'an approval of an older revision'
+with open(os.path.join(d, 'journal.ndjson'), 'a') as fh:
+    fh.write(json.dumps({'type': 'approval', 'contract_id': 'r2', 'plan_digest': digest}) + '\n')
+assert F.read_queue(b)[1]['items'][0]['ready'], 'the live revision approved'
+# the journal is read again only when it changed (L2)
+path = os.path.join(d, 'journal.ndjson')
+key, facts = F._JOURNALS[path]
+F._JOURNALS[path] = (key, (None, False))
+assert F.read_queue(b)[1]['items'][0]['blocked_reason'] == 'not approved', 'an unchanged journal comes from the cache'
+with open(path, 'a') as fh:
+    fh.write('\n')
+assert F.read_queue(b)[1]['items'][0]['ready'], 'a changed journal is read again'
+# a plan that began while the queue still says queued is in flight (M3): not
+# prompted again (a daemon restart), and the next one waits for it
+for how in ('state', 'journal'):
+    b = repo(); d = plan(b, 'PLAN_2_next'); plan(b, 'PLAN_3_more')
+    if how == 'state':
+        json.dump({'status': 'in_progress', 'blocked': None, 'checkpoint': None,
+                   'tasks': [{'id': 1, 'status': 'in_progress'}]}, open(os.path.join(d, 'state.json'), 'w'))
+    else:
+        with open(os.path.join(d, 'journal.ndjson'), 'a') as fh:
+            fh.write(json.dumps({'type': 'task_start', 'task': 'T1'}) + '\n')
+    queue(b, [item('PLAN_2_next'), item('PLAN_3_more', lead='local:w1:p3')])
+    its = F.read_queue(b)[1]['items']
+    assert not its[0]['ready'] and its[0]['blocked_reason'] == 'started, queue not updated', (how, its[0])
+    assert its[1]['blocked_reason'] == 'another plan of this repository is running', (how, its[1])
+# confinement (L1): a symlinked .dwp or plan directory leaves the repository
+b = repo(); outside = repo(); plan(outside, 'PLAN_2_next'); queue(outside, [item('PLAN_2_next')])
+os.rmdir(os.path.join(b, '.dwp', 'plans')); os.rmdir(os.path.join(b, '.dwp'))
+os.symlink(os.path.join(outside, '.dwp'), os.path.join(b, '.dwp'))
+assert F.read_queue(b)[0] == 'invalid', 'a symlinked .dwp'
+b = repo(); queue(b, [item('PLAN_2_next')])
+os.symlink(os.path.join(outside, '.dwp', 'plans', 'PLAN_2_next'), os.path.join(b, '.dwp', 'plans', 'PLAN_2_next'))
+it = F.read_queue(b)[1]['items'][0]
+assert not it['ready'] and it['approved'] is None, it
+# the named lead must work in this repository and on no other open plan (M1)
+def git_repo():
+    r = os.path.realpath(tempfile.mkdtemp())
+    subprocess.run(['git', 'init', '-q', r], check=True)
+    os.makedirs(os.path.join(r, '.dwp', 'plans'))
+    return r
+a, other = git_repo(), git_repo()
+plan(a, 'PLAN_2_next'); queue(a, [item('PLAN_2_next')])
+def judged(cwd, plans=()):
+    q = F.read_queue(a)[1]
+    F.check_queue_leads(q, list(plans), {'w1:p2': cwd}, F.Git())
+    return q['items'][0]
+assert judged(a)['ready']
+assert judged(other)['blocked_reason'] == 'lead works elsewhere'
+busy = {'plan': 'PLAN_9_else', 'class': 'open', 'lead': 'local:w1:p7', 'succession': [], 'lanes': ['local:w1:p2']}
+assert judged(a, [busy])['blocked_reason'] == 'lead busy with another plan'
+assert judged(a, [dict(busy, **{'class': 'completed'})])['ready'], 'a finished plan holds nobody'
+assert judged(a, [dict(busy, plan='repo/PLAN_2_next')])['ready'], 'its own plan'
 b = repo(); plan(b, 'PLAN_2_next'); os.remove(os.path.join(b, '.dwp/plans/PLAN_2_next/journal.ndjson'))
 queue(b, [item('PLAN_2_next')])
 assert F.read_queue(b)[1]['items'][0]['blocked_reason'] == 'approval not readable'
@@ -129,9 +220,11 @@ io.rows = [row('w1:p2'), row('w1:p3')]
 io.report = {'plans': [], 'agents': [], 'queues': [{'repo_root': '/r', 'parallel': False, 'items': [
     qi('PLAN_2_next'), qi('PLAN_3_more', lead='local:w1:p3')]}]}
 ap.run_pass(); step(ap); step(ap)
-assert io.sent == [('w1:p2', autopilot.QUEUE_TEXT % 'PLAN_2_next')], io.sent
+assert io.sent == [('w1:p2', autopilot.QUEUE_TEXT % ('PLAN_2_next', '/r'))], io.sent
 assert io.events == [('plan_queued_started', 'PLAN_2_next')], io.events
-assert "Plan PLAN_2_next is next in this repository's queue and approved; execute it to its end, respecting its gates." == autopilot.QUEUE_TEXT % 'PLAN_2_next'
+assert ("Plan PLAN_2_next is next in the queue of the repository at /r and approved. In that repository, run "
+        "the plan tool's execute flow for it (its start gate checks the approval again) and execute it to its "
+        "end, respecting its gates.") == autopilot.QUEUE_TEXT % ('PLAN_2_next', '/r')
 # parallel: both start
 io, ap = fresh()
 io.rows = [row('w1:p2'), row('w1:p3')]
@@ -176,6 +269,27 @@ ap.run_pass()
 import json
 m = json.loads(io.saved)['machines'][0]
 assert m['queues'][0]['items'][0] == {'plan': 'PLAN_2_next', 'state': 'queued', 'after': None, 'lead': 'local:w1:p2', 'ready': True, 'blocked_reason': None}, m['queues']
+# a daemon restart between two passes: the lead began the plan but the queue still
+# says queued; the new daemon does not prompt it again (prompted once in all)
+import hashlib, os, tempfile
+import fleet_report as F
+base = tempfile.mkdtemp(); d = os.path.join(base, '.dwp', 'plans', 'PLAN_2_next'); os.makedirs(d)
+contract = {'plan': 'PLAN_2_next'}
+json.dump(contract, open(os.path.join(d, 'contract.json'), 'w')); open(os.path.join(d, 'PLAN.md'), 'w').write('# P\n')
+json.dump({'status': 'pending', 'tasks': [{'id': 1, 'status': 'pending'}]}, open(os.path.join(d, 'state.json'), 'w'))
+open(os.path.join(d, 'journal.ndjson'), 'w').write(json.dumps({'type': 'approval', 'plan_digest': hashlib.sha256(b'# P\n').hexdigest(),
+    'contract_id': hashlib.sha256(json.dumps(contract, sort_keys=True, separators=(',', ':')).encode()).hexdigest()}) + '\n')
+json.dump({'schema': 'dwp-queue-v1', 'items': [{'plan': 'PLAN_2_next', 'state': 'queued', 'lead': 'local:w1:p2'}]},
+          open(os.path.join(base, '.dwp', 'queue.json'), 'w'))
+sent = []
+for restart in range(2):
+    io, ap = fresh()
+    io.rows = [row('w1:p2')]
+    io.report = {'plans': [], 'agents': [], 'queues': [F.read_queue(base)[1]]}
+    ap.run_pass(); step(ap)
+    sent += io.sent
+    json.dump({'status': 'in_progress', 'tasks': [{'id': 1, 'status': 'in_progress'}]}, open(os.path.join(d, 'state.json'), 'w'))
+assert len(sent) == 1, sent
 print('ok')
 PY
 assert_rc "the loop starts the next ready item once, one at a time, and reports blocked items" 0

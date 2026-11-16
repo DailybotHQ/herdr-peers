@@ -512,15 +512,28 @@ validated whole, inside each machine's report.
 
 With `--loop`, when a repository's current plan finishes, the next item
 starts without you: the daemon sends its named lead one fixed prompt,
-"Plan P is next in this repository's queue and approved; execute it to its
-end, respecting its gates.", once, under the same guards as every loop
-prompt. An item is ready when it is `queued`, the plan it waits for (`after`)
-is completed, no other plan of that repository is running (unless the queue
-says `"parallel": true`), its journal holds an approval with no amendment
-after it, and it names a lead. An item that cannot start for a reason only
-you can fix — not approved, an amendment pending, no lead named, or
-`"start": "launch"` (launching an agent for a queue item is not available
-yet) — is reported once per reason (`queue_blocked`, through `--notify`).
+"Plan P is next in the queue of the repository at R and approved. In that
+repository, run the plan tool's execute flow for it (its start gate checks
+the approval again) and execute it to its end, respecting its gates.", once,
+under the same guards as every loop prompt. An item is ready when it is
+`queued`, the plan it waits for (`after`) is completed, no other plan of that
+repository is running (unless the queue says `"parallel": true`), and it
+names a lead. Its approval must be the last approval-or-amendment event in
+its journal and must cite the plan's live contract id and the digest of its
+markdown as they are now: a plan edited or amended after it, or a bare
+approval line, does not count. Its lead must be a pane of that machine
+working in that repository (the same git common directory) and must not
+lead, succeed or work on another open plan. A queued plan that already began
+(a task left pending, or a task start in its journal) is in flight, never
+prompted again — also after a daemon restart — and the next one waits for
+it. Queue and plan files are read only when no symlink on the way leaves the
+repository, and a journal is read again only when it changed.
+
+An item that cannot start for a reason only you can fix — not approved, an
+amendment pending, no lead named, its lead working elsewhere or busy with
+another plan, started while the queue still says queued, or `"start":
+"launch"` (launching an agent for a queue item is not available yet) — is
+reported once per reason (`queue_blocked`, through `--notify`).
 
 `fleet ui` shows every queue (key `u`): each plan's place, state, whether it
 starts next or why it cannot; a plan's own row shows its place (`queue 2/3`).

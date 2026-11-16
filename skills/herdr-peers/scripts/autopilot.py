@@ -79,8 +79,9 @@ APPOINT_GRANTS = ('lanes', 'lanes:any-kind')
 APPOINT_GRACE = 900        # seconds the evidence must hold, with the plan frozen, before an appointment
 MAX_APPOINTMENTS = 2       # appointments one daemon prompts per plan; then only the human is told
 
-QUEUE_TEXT = ("Plan %s is next in this repository's queue and approved; execute it to its end, "
-              "respecting its gates.")
+QUEUE_TEXT = ("Plan %s is next in the queue of the repository at %s and approved. In that repository, "
+              "run the plan tool's execute flow for it (its start gate checks the approval again) and "
+              "execute it to its end, respecting its gates.")
 
 BOX = {ord(c): ' ' for c in '│┃█'}
 CURSORS = '❯›>→▶'
@@ -976,7 +977,7 @@ class PlanLoop(object):
                 continue
             addr = '%s:%s' % (machine, pane)
             if self.prompt_lead(machine, {'plan': item['plan']}, pane, addr, by_pane, now, prompted,
-                                QUEUE_TEXT % item['plan'], 'plan_queued_started'):
+                                QUEUE_TEXT % (item['plan'], repo), 'plan_queued_started'):
                 self.queued.add(key)
                 self.io.event({'schema': EVENT_SCHEMA, 'event': 'plan_queued_started',
                                'plan': item['plan'], 'machine': machine, 'lead': item.get('lead'),
