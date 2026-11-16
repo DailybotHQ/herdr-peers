@@ -34,7 +34,7 @@ import subprocess
 import sys
 import time
 
-VERSION = '2.0.1'
+VERSION = '2.0.2'
 PROTOCOL = 2          # the highest protocol this helper speaks (metadata.protocol)
 BASE_PROTOCOL = 1     # what every message is stamped with, except a granted lead notice
 SUPPORTED_PROTOCOLS = ('1', '2')

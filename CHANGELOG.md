@@ -9,6 +9,12 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-11-16
+
+A patch on 2.0.1: the brain launches with coding-agents-kit 1.5.0, and a
+pane address with a trailing newline is refused. Protocol 2, unchanged.
+Install 2.0.2 before (or together with) coding-agents-kit 1.5.0.
+
 ### Fixed
 
 - **The brain launches with coding-agents-kit 1.5.0.** Kit 1.5.0 ends an
@@ -907,7 +913,8 @@ First release. Interface version: **protocol 1** (`metadata.protocol: 1` in
   `harness lint protocol helper skill templates security live`; CI on Ubuntu
   and macOS.
 
-[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v2.0.2...HEAD
+[2.0.2]: https://github.com/DailybotHQ/herdr-peers/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/DailybotHQ/herdr-peers/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/DailybotHQ/herdr-peers/compare/v1.3.1...v2.0.0
 [1.3.1]: https://github.com/DailybotHQ/herdr-peers/compare/v1.3.0...v1.3.1
