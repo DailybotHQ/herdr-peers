@@ -107,15 +107,15 @@ with open(os.path.join(d, 'journal.ndjson'), 'a') as fh:
 assert F.read_queue(b)[1]['items'][0]['blocked_reason'] == 'not approved', 'an amendment after the approval'
 b = repo(); d = plan(b, 'PLAN_2_next', events=()); queue(b, [item('PLAN_2_next')])
 os.makedirs(os.path.join(d, 'contracts'))
-rev = {'plan': 'PLAN_2_next', 'revision': 2, 'contract_id': 'r2'}
-json.dump(rev, open(os.path.join(d, 'contracts', 'contract.r2.json'), 'w'))
-json.dump({'plan': 'PLAN_2_next', 'revision': 1, 'contract_id': 'r1'}, open(os.path.join(d, 'contracts', 'contract.r1.json'), 'w'))
+# revision 10 sorts before revision 9 by name: the live one is the highest number
+json.dump({'plan': 'PLAN_2_next', 'revision': 10, 'contract_id': 'r10'}, open(os.path.join(d, 'contracts', 'contract.r10.json'), 'w'))
+json.dump({'plan': 'PLAN_2_next', 'revision': 9, 'contract_id': 'r9'}, open(os.path.join(d, 'contracts', 'contract.r9.json'), 'w'))
 digest = hashlib.sha256(b'# PLAN_2_next\n').hexdigest()
 with open(os.path.join(d, 'journal.ndjson'), 'w') as fh:
-    fh.write(json.dumps({'type': 'approval', 'contract_id': 'r1', 'plan_digest': digest}) + '\n')
+    fh.write(json.dumps({'type': 'approval', 'contract_id': 'r9', 'plan_digest': digest}) + '\n')
 assert F.read_queue(b)[1]['items'][0]['blocked_reason'] == 'not approved', 'an approval of an older revision'
 with open(os.path.join(d, 'journal.ndjson'), 'a') as fh:
-    fh.write(json.dumps({'type': 'approval', 'contract_id': 'r2', 'plan_digest': digest}) + '\n')
+    fh.write(json.dumps({'type': 'approval', 'contract_id': 'r10', 'plan_digest': digest}) + '\n')
 assert F.read_queue(b)[1]['items'][0]['ready'], 'the live revision approved'
 # the journal is read again only when it changed (L2)
 path = os.path.join(d, 'journal.ndjson')
