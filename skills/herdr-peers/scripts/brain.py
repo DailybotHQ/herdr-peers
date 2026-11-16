@@ -12,7 +12,9 @@ the fixed texts, the blocker guard, and reading answers. The I/O (ak,
 Herdr, files) is the helper's AutopilotIO, so this module never runs a
 command itself.
 """
+import hmac
 import json
+import hashlib
 import re
 import shlex
 import time
@@ -160,6 +162,15 @@ def blocker_is_askable(plan):
     return not SENSITIVE.search(text)
 
 
+def blocker_key(plan):
+    """A digest of a plan's blocker as the map shows it (class and record), so
+    an answer about one blocker is never applied to another."""
+    detail = plan.get('detail') or {}
+    block = detail.get('blocker') if isinstance(detail, dict) else None
+    body = json.dumps([plan.get('blocker_class'), block], sort_keys=True, default=str)
+    return hashlib.sha256(body.encode('utf-8')).hexdigest()
+
+
 RULE_LINE = re.compile(r'^\s*[╌─━═]{8,}\s*$')
 PROCEED = re.compile(r'^\s*Do you want to proceed\?\s*$')
 FIRST_OPTION = re.compile(r'^\s*[❯›>]\s*1\.\s+Yes\s*$')
@@ -201,6 +212,19 @@ def new_question_id(rand):
     return 'q-' + rand(6).hex()
 
 
+KEY_ENV = 'HERDR_PEERS_BRAIN_KEY'
+KEY_RE = re.compile(r'[0-9a-f]{32}')
+START_DEADLINE = 120    # seconds a launched brain has to show an idle agent
+
+
+def answer_mac(key, qid, action, pane, terminal):
+    """The answer's proof that it came from the brain's own environment: an
+    HMAC over the answer with the per-launch key the daemon put only in that
+    environment (never on a screen)."""
+    body = '%s %s %s %s' % (qid, action, pane, terminal)
+    return hmac.new(key.encode('ascii'), body.encode('utf-8'), hashlib.sha256).hexdigest()
+
+
 def parse_answer_line(line):
     """One answers-file line as a dict, or None."""
     try:
@@ -227,6 +251,8 @@ class Brain(object):
         self.asked = []           # times of questions (cap per hour)
         self.questions = {}       # qid -> {'case', 'key', 'at', 'answered'}
         self.offset = 0           # bytes of the answers file already read
+        self.key = None           # the per-launch answer key (memory only)
+        self.started_at = 0.0     # when the current brain was launched
         self.state = 'none'       # none, starting, ready, failed
         self.refused_told = False # the human was told the brain asked for a refused approval
 
@@ -253,6 +279,10 @@ class Brain(object):
         if q is None or q['answered'] or now - q['at'] > QUESTION_TTL:
             return None
         if rec.get('pane') != self.pane or rec.get('terminal') != self.terminal or not self.pane:
+            return None
+        mac = rec.get('mac')
+        if not self.key or not isinstance(mac, str) or not hmac.compare_digest(
+                mac, answer_mac(self.key, rec['qid'], str(rec.get('action')), self.pane, str(self.terminal))):
             return None
         actions, _ = CASES[q['case']]
         if rec.get('action') not in actions:
