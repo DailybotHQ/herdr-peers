@@ -158,9 +158,10 @@ a, other = git_repo(), git_repo()
 plan(a, 'PLAN_2_next'); queue(a, [item('PLAN_2_next')])
 def judged(cwd, plans=()):
     q = F.read_queue(a)[1]
-    F.check_queue_leads(q, list(plans), {'w1:p2': cwd}, F.Git())
+    F.check_queue_leads(q, list(plans), {'w1:p2': cwd} if cwd else {}, F.Git())
     return q['items'][0]
 assert judged(a)['ready']
+assert judged(None)['blocked_reason'] == 'lead directory unknown', 'an unknown lead directory fails closed'
 assert judged(other)['blocked_reason'] == 'lead works elsewhere'
 busy = {'plan': 'PLAN_9_else', 'class': 'open', 'lead': 'local:w1:p7', 'succession': [], 'lanes': ['local:w1:p2']}
 assert judged(a, [busy])['blocked_reason'] == 'lead busy with another plan'

@@ -1130,15 +1130,18 @@ def check_queue_leads(queue, plans, panes, git):
         if not match or match.group(1) != 'local':
             continue
         pane = match.group(2)
-        if pane in panes:
-            mine = git.common_dir(panes[pane])
-            if mine and base_common:
-                elsewhere = mine != base_common
-            else:
-                elsewhere = git.lookup(panes[pane])[0] != queue['repo_root']
-            if elsewhere:
-                item['ready'], item['blocked_reason'] = False, 'lead works elsewhere'
-                continue
+        if pane not in panes:
+            # Its directory is unknown here: fail closed, never skip the check.
+            item['ready'], item['blocked_reason'] = False, 'lead directory unknown'
+            continue
+        mine = git.common_dir(panes[pane])
+        if mine and base_common:
+            elsewhere = mine != base_common
+        else:
+            elsewhere = git.lookup(panes[pane])[0] != queue['repo_root']
+        if elsewhere:
+            item['ready'], item['blocked_reason'] = False, 'lead works elsewhere'
+            continue
         for plan in plans:
             if plan.get('class') not in ('open', 'blocked') \
                     or plan['plan'].rsplit('/', 1)[-1] == item['plan']:

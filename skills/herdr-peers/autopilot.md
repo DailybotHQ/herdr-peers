@@ -530,8 +530,8 @@ it. Queue and plan files are read only when no symlink on the way leaves the
 repository, and a journal is read again only when it changed.
 
 An item that cannot start for a reason only you can fix — not approved, an
-amendment pending, no lead named, its lead working elsewhere or busy with
-another plan, started while the queue still says queued, or `"start":
+amendment pending, no lead named, its lead working elsewhere, in a
+directory this machine cannot see, or busy with another plan, started while the queue still says queued, or `"start":
 "launch"` (launching an agent for a queue item is not available yet) — is
 reported once per reason (`queue_blocked`, through `--notify`).
 
