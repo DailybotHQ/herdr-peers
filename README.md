@@ -22,21 +22,9 @@ message.
 [![Protocol](https://img.shields.io/badge/protocol-2-blue.svg)](skills/herdr-peers/protocol.md)
 [![Powered by Dailybot](https://img.shields.io/badge/Powered%20by-Dailybot-6C5CE7.svg)](https://www.dailybot.com?utm_source=dailybotopensource&utm_medium=herdr-peers)
 
-## In 60 seconds
+## What it is
 
-```bash
-npx --yes skills add DailybotHQ/herdr-peers@v1.3.1 --skill herdr-peers -g -y   # every machine
-herdr-peers autopilot start --loop     # the daemon, in the background, for every agent and plan
-herdr-peers fleet                      # who is where, on which plan, how far
-herdr-peers fleet ui                   # the same, live
-herdr-peers autopilot logs -f          # what the daemon does, as it does it
-herdr-peers autopilot stop             # when you want it off
-```
-
-Run them inside any Herdr pane. Start with `autopilot start --loop --dry-run`
-to see what it would do without sending anything.
-
-## Four layers
+### Four layers
 
 **1. Peers: ask and get one reply.** A small protocol — a stamp, a reply
 grant, a loop guard, depth 1, a fan-out cap of 4 — carries one ask to a peer
@@ -76,7 +64,7 @@ evidence checked twice, and every peer's own verification; `lead verify`
 guards every merge, tag and release; nothing is ever written to git or to
 another machine.
 
-## What it never does
+### What it never does
 
 - Act on a message: no ask, reply or notice can start, stop or steer the
   daemon, set a grant or appoint a lead.
@@ -87,7 +75,7 @@ another machine.
 - Install anything on another machine, or launch an agent other than the
   brain you asked for.
 
-## What you accept by running it
+### What you accept by running it
 
 An agent's request is approved without you seeing it — including one you
 would have refused; there is no deny-list. Herdr has no sender
@@ -138,7 +126,23 @@ git clone --branch v1.0.1 https://github.com/DailybotHQ/coding-agents-kit
 ./coding-agents-kit/install.sh
 ```
 
-## Asking a peer by hand
+## Quickstart
+
+In 60 seconds:
+
+```bash
+npx --yes skills add DailybotHQ/herdr-peers@v1.3.1 --skill herdr-peers -g -y   # every machine
+herdr-peers autopilot start --loop     # the daemon, in the background, for every agent and plan
+herdr-peers fleet                      # who is where, on which plan, how far
+herdr-peers fleet ui                   # the same, live
+herdr-peers autopilot logs -f          # what the daemon does, as it does it
+herdr-peers autopilot stop             # when you want it off
+```
+
+Run them inside any Herdr pane. Start with `autopilot start --loop --dry-run`
+to see what it would do without sending anything.
+
+### Asking a peer by hand
 
 Inside a Herdr pane (`HERDR_ENV=1`); `herdr-peers` below is the helper from
 the install step (put it on `PATH`, or call it by its path):
@@ -170,7 +174,7 @@ The reply arrives with `reply-to=<id> from=<asked-peer> depth=1` and "This is a 
 answer it." — so the conversation stops. `herdr-peers log --open` shows what
 is still outstanding.
 
-## Every verb
+## Usage
 
 The commands people run, with the shape of their output:
 
