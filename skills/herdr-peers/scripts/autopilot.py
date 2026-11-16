@@ -395,7 +395,7 @@ def deny_decision(text, state, cls, why):
 
 # What a pane may wait at that a denial resolves: a permission or a plan approval the
 # daemon cannot accept. An agent's own question is a decision about the work: it is left
-# (with the prose nudge), never answered "No" for the human. Login, the
+# waiting for the human, never answered "No" by the daemon. Login, the
 # bypass-permissions consent, folder trust, a usage limit and an unknown screen stay the
 # human's (or have their own path).
 DENIABLE = ('permission', 'plan_approval')

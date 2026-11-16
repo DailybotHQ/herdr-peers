@@ -44,8 +44,8 @@ On every machine whose agents ask or answer (the helper ships inside the
 skill):
 
 ```bash
-npx --yes skills add DailybotHQ/herdr-peers@v2.0.2 --skill herdr-peers -g -y
-herdr-peers --version          # herdr-peers 2.0.2 (protocol 2)
+npx --yes skills add DailybotHQ/herdr-peers@v2.1.0 --skill herdr-peers -g -y
+herdr-peers --version          # herdr-peers 2.1.0 (protocol 2)
 ```
 
 From a checkout instead, verify the tag against the release's `SHA256SUMS`
