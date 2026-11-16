@@ -19,11 +19,13 @@ changes bumped the minor version).
   workspace that starts in the plan's checkout. Once it is up the daemon writes a
   one-time ticket (`0600`, exclusive, plan + pane + stored epoch, 10 minutes)
   and briefs it to run `lead takeover --plan P --reason revive`, which the helper
-  accepts only with that ticket, a running autopilot started with `--revive`
-  whose pid issued it, and its own two probes finding every member gone; then
+  accepts only with that ticket, from a pane in the workspace the daemon created,
+  naming the running autopilot started with `--revive`, and its own two probes
+  finding every member gone; then
   `lead verify` and resume. A stalled plan's live lead is asked once to `lead
   handover` to the fresh agent, never taken over. Caps: one per plan per 6 h,
-  two per plan, two an hour fleet-wide; an agent not up in 3 minutes, a takeover
+  two per plan (kept in the lead record and enforced by the helper too), two an
+  hour fleet-wide (kept in a private state file), so a restart resets nothing; an agent not up in 3 minutes, a takeover
   not done in 10, a handover not done in 15 is released. The old pane is never
   closed or keyed; a stalled live lead receives one typed handover request, only
   when idle with no dialog or draft. Recorded with `why=`; one `plan_revived` plan-event-v1 reaches
@@ -31,10 +33,20 @@ changes bumped the minor version).
   shows `↻ revived`. Protocol stays 2: the `via: revive` record is adopted only
   on the daemon's own machine (fence rule F11), and a 2.0/2.1 receiver refuses
   it (fail closed) — see MIGRATING.
-- **Unknown screens are kept for new fixtures:** a sanitized copy (control and
-  format characters removed, secret-shaped lines redacted, capped, `0600`) of a
+- **Unknown screens are kept for new fixtures:** a sanitized copy (escape,
+  control and format characters removed; private key blocks and any line
+  showing a secret or a token's prefix, wrapped or cut, dropped whole; capped;
+  `0600` in a `0700` directory) of a
   screen left as `unknown`, under the state dir; `autopilot status` shows how
   many.
+
+### Changed
+
+- Repository tooling: the vendored deepworkplan skill moved to 8.0.0 (tag
+  commit `ff96b9e`, all 188 files verified against the release
+  `SHA256SUMS`, digest `cb877b16…`), and the registry's herdr addon version
+  moved to v2.1.0, the release the pack pins (skills-lock.json,
+  .dwp/config.json).
 
 ## [2.1.0] - 2026-11-16
 

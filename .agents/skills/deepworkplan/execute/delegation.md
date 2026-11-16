@@ -1,7 +1,7 @@
-# Execute — delegation (v7 plans only)
+# Execute — delegation (v7 and v8 plans)
 
-Read this file only when a **v7** plan (contract `schema` =
-`…/plan-contract/v7.json`) grants `agent_delegation` and the next task is
+Read this file only when a **v7 or v8** plan (contract `schema` =
+`…/plan-contract/v7.json` or `…/plan-contract/v8.json`) grants `agent_delegation` and the next task is
 marked `parallel_safe` — or a read-only delegate would help it. Otherwise
 the task runs in this session exactly as `v6.md` describes; not delegating
 is always correct. Normative source: `../spec/V7_CONTRACT.md` and
@@ -9,7 +9,7 @@ is always correct. Normative source: `../spec/V7_CONTRACT.md` and
 
 ## When a delegate may be used (all must hold)
 
-1. The contract is v7 and grants `agent_delegation`.
+1. The contract is v7 or v8 and grants `agent_delegation`.
 2. The task is marked `parallel_safe` by `create` — or the delegate is
    **read-only** (no worktree, no writes: research, review, analysis).
 3. `python3 ../shared/resources.py --plan <dir> abilities` lists the
@@ -27,7 +27,8 @@ when one fails. A refusal is **not a blocker**: run the task sequentially.
   or must run on another machine: a `herdr-peers` peer in a pane.
 
 The transport's own steps live in its addon (`../addons/agentkit/SKILL.md`,
-`../addons/herdr/SKILL.md`); read the one you selected, only then.
+`../addons/herdr/SKILL.md`); read the one you selected, only then. A
+decision debate's seats are read-only herdr delegates: [`debate.md`](debate.md).
 
 ## The four operations
 
