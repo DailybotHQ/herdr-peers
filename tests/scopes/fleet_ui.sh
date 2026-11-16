@@ -396,3 +396,22 @@ print('ok')
 PY
 assert_eq "malformed maps, symlinks, oversized files and format characters are handled" "ok" "$OUT"
 export XDG_STATE_HOME=$UI_XDG_STATE
+
+# One validator for the map (issue #44): what `fleet ui` refuses is never
+# written by the daemon, nor read by `fleet`.
+bad_map='{"schema":"herdr-peers/fleet-v1","machines":[{"machine":"m","agents":5}]}'
+out=$(python3 - "$ROOT/skills/herdr-peers/scripts" "$WORK" "$bad_map" <<'PY'
+import os, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import fleet_report, fleet_ui
+root, text = sys.argv[2], sys.argv[3]
+print(fleet_ui.valid_fleet is fleet_report.valid_fleet,
+      fleet_report.store_fleet(root, text),
+      os.path.exists(os.path.join(root, fleet_report.FLEET_FILE)))
+open(os.path.join(root, fleet_report.FLEET_FILE), 'w').write(text)
+print(fleet_report.read_fleet(root)[0])
+PY
+)
+assert_eq "one validator: the UI's, the writer's and the reader's are the same function" "True failed False
+None" "$out"

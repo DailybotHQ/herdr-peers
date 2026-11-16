@@ -84,6 +84,12 @@ cd "$SANDBOX" || exit 2
 # shellcheck source-path=SCRIPTDIR source=lib.sh
 . "$ROOT/tests/lib.sh"
 
+# A scope that does not parse would stop where bash gave up and still look
+# green: check every scope file (and the files they source) first.
+for f in "$ROOT"/tests/scopes/*.sh; do
+  bash -n "$f" 2>/dev/null || t_fail "scope file parses: ${f##*/}" "$(bash -n "$f" 2>&1 | head -3)"
+done
+
 for s in $scopes; do
   printf '# scope: %s\n' "$s"
   # shellcheck source=/dev/null

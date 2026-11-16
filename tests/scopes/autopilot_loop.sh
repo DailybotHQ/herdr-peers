@@ -716,16 +716,17 @@ wait
 SH
 chmod +x "$WORK/hang"
 t0=$(date +%s)
-run env HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT=2 MY_SECRET_TOKEN=s3cr3t-value "$HELPER" autopilot --loop --once --notify "$WORK/hang"
+# A per-event timeout of 60 s cannot widen a pass budget of 2 s (issue #43).
+run env HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT=60 HERDR_PEERS_AUTOPILOT_NOTIFY_BUDGET=2 MY_SECRET_TOKEN=s3cr3t-value "$HELPER" autopilot --loop --once --notify "$WORK/hang"
 t1=$(date +%s)
 assert_rc "a hanging notify command does not fail the pass" 0
-if [ $((t1 - t0)) -lt 12 ]; then t_ok "three hanging events cost one budget, not three timeouts"; else t_fail "three hanging events cost one budget, not three timeouts" "took $((t1 - t0)) s"; fi
+if [ $((t1 - t0)) -lt 12 ]; then t_ok "a long per-event timeout never widens the pass's notify budget"; else t_fail "a long per-event timeout never widens the pass's notify budget" "took $((t1 - t0)) s"; fi
 assert_eq "a hanging command spends the pass's budget: the other events wait" "1" "$(wc -l <"$WORK/hang.runs" | tr -d ' ')"
 sleep 1
 if kill -0 "$(cat "$WORK/hang.child")" 2>/dev/null; then t_fail "its children are killed with it"; kill "$(cat "$WORK/hang.child")"; else t_ok "its children are killed with it"; fi
 assert_not_contains "the notify command does not get tokens" "$(cat "$WORK/hang.env")" "s3cr3t-value"
 assert_contains "it gets PATH" "$(cat "$WORK/hang.env")" "PATH="
-run env HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT=2 MY_SECRET_TOKEN=s3cr3t-value "$HELPER" autopilot --loop --once --catch-up --notify "$WORK/hang" --notify-env MY_SECRET_TOKEN
+run env HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT=2 HERDR_PEERS_AUTOPILOT_NOTIFY_BUDGET=2 MY_SECRET_TOKEN=s3cr3t-value "$HELPER" autopilot --loop --once --catch-up --notify "$WORK/hang" --notify-env MY_SECRET_TOKEN
 run "$HELPER" autopilot --loop --once --notify-env "BAD NAME" --notify "$WORK/hang"
 assert_rc "a malformed --notify-env is a usage error" 2
 run "$HELPER" autopilot --loop --once --notify-env HOME
