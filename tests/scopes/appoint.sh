@@ -99,6 +99,63 @@ f10_case "a lead idle with a limit banner (weak)" lanes "$LIVE" "$GONE_SUCC" "$L
   "$LANE" 2 "$LANE" "$GONE_SUCC" "" lanes
 assert_contains "and says it is not proof" "$(jget "$OUT" lead_reason)" "not proof"
 
+# --- one total order for two records at one epoch (review #1-#3) ---------------------------
+# prior: lead GONE_LEAD, succession GONE_SUCC, lanes GONE_LANE, LANE. Takeover by
+# the successor and appointment of a lane both claim epoch 2; the successor comes
+# first wherever and in whatever order the notices arrive.
+TAKE='herdr-peers lead notice'
+box_with lanes "$GONE_LEAD" "$GONE_SUCC" "$GONE_LANE,$LANE"
+lead_notice2 "$LANE" "$(nid)" 2 "$LANE" "$GONE_SUCC" "$GONE_LANE" lanes appointment >"$WORK/ap.txt"
+lead_notice2 "$GONE_SUCC" "$(nid)" 2 "$GONE_SUCC" "" "$GONE_LANE,$LANE" lanes null >"$WORK/tk.txt"
+on_box "$HELPER" check --json "$WORK/ap.txt" >/dev/null 2>&1
+run on_box "$HELPER" check --json "$WORK/tk.txt"
+assert_eq "appointment first, then a successor's takeover at the same epoch: the successor wins" "adopted" "$(jget "$OUT" lead_status)"
+box_with lanes "$GONE_LEAD" "$GONE_SUCC" "$GONE_LANE,$LANE"
+on_box "$HELPER" check --json "$WORK/tk.txt" >/dev/null 2>&1
+run on_box "$HELPER" check --json "$WORK/ap.txt"
+assert_eq "takeover first, then the appointment: the appointment loses (same result, any order)" "rejected" "$(jget "$OUT" lead_status)"
+assert_eq "both orders end with the successor" "$GONE_SUCC" "$(jget "$(on_box "$HELPER" lead show --plan "$P" --json)" lead)"
+# A tie after the appointee refreshed: the previous record is kept, so the
+# earlier lane still wins.
+box_with lanes "$GONE_LEAD" "$GONE_SUCC" "$GONE_LANE,$LANE"
+on_box "$HELPER" check --json "$WORK/ap.txt" >/dev/null 2>&1
+lead_notice2 "$LANE" "$(nid)" 2 "$LANE" "$GONE_SUCC" "$GONE_LANE,bb22:w1:p1" lanes null >"$WORK/refresh.txt"
+run on_box "$HELPER" check --json "$WORK/refresh.txt"
+assert_eq "the appointee's refresh is adopted" "adopted" "$(jget "$OUT" lead_status)"
+lead_notice2 "$GONE_LANE" "$(nid)" 2 "$GONE_LANE" "$GONE_SUCC" "$LANE" lanes appointment >"$WORK/early.txt"
+run on_box "$HELPER" check --json "$WORK/early.txt"
+assert_eq "a tie after a refresh still goes to the earlier lane" "adopted" "$(jget "$OUT" lead_status)"
+# The tie runs the full step: no widening, and the receiver's own probes.
+box_with lanes "$GONE_LEAD" "$GONE_SUCC" "$GONE_LANE,$LANE"
+on_box "$HELPER" check --json "$WORK/ap.txt" >/dev/null 2>&1
+lead_notice2 "$GONE_LANE" "$(nid)" 2 "$GONE_LANE" "$GONE_SUCC" "$LANE" lanes:any-kind appointment >"$WORK/wide.txt"
+run on_box "$HELPER" check --json "$WORK/wide.txt"
+assert_eq "a tie notice that widens the grant is refused" "rejected" "$(jget "$OUT" lead_status)"
+lead_notice2 "$GONE_LANE" "$(nid)" 2 "$GONE_LANE" "$GONE_SUCC,$GONE_LANE" "$LANE" lanes appointment >"$WORK/wide2.txt"
+run on_box "$HELPER" check --json "$WORK/wide2.txt"
+assert_eq "a tie notice that adds to the succession is refused" "rejected" "$(jget "$OUT" lead_status)"
+box_with lanes "$LIVE" "$GONE_SUCC" "$GONE_LANE,$LANE"
+lead_notice2 "$LANE" "$(nid)" 2 "$LANE" "$GONE_SUCC" "$GONE_LANE" lanes appointment >"$WORK/ap2.txt"
+lead_notice2 "$LIVE" "$(nid)" 1 "$LIVE" "$GONE_SUCC" "$GONE_LANE,$LANE,$GONE_LEAD" lanes null >"$WORK/noop.txt"
+lead_notice2 "$GONE_LANE" "$(nid)" 2 "$GONE_LANE" "$GONE_SUCC" "$LANE" lanes appointment >"$WORK/early2.txt"
+run on_box "$HELPER" check --json "$WORK/early2.txt"
+assert_eq "a tie notice is probed: with the lead alive it is refused" "rejected" "$(jget "$OUT" lead_status)"
+# The grant is never widened by a handover or a takeover (review #5).
+box_with lanes "$GONE_LEAD" "$GONE_SUCC" "$LANE"
+lead_notice2 "$GONE_LEAD" "$(nid)" 2 "$LANE" "$GONE_SUCC" "" lanes:any-kind null >"$WORK/ho.txt"
+run on_box "$HELPER" check --json "$WORK/ho.txt"
+assert_eq "a handover that widens the grant is refused" "rejected" "$(jget "$OUT" lead_status)"
+box_with null "$GONE_LEAD" "$GONE_SUCC" "$LANE"
+lead_notice2 "$GONE_SUCC" "$(nid)" 2 "$GONE_SUCC" "" "$LANE" lanes null >"$WORK/tk2.txt"
+run on_box "$HELPER" check --json "$WORK/tk2.txt"
+assert_eq "a takeover that adds a grant is refused" "rejected" "$(jget "$OUT" lead_status)"
+# A member on a machine that cannot be reached is not proof (review #4).
+box_with lanes dd44:w1:p1 "$GONE_SUCC" "$LANE"
+lead_notice2 "$LANE" "$(nid)" 2 "$LANE" "$GONE_SUCC" "" lanes appointment >"$WORK/part.txt"
+run on_box "$HELPER" check --json "$WORK/part.txt"
+assert_eq "a lead on an unreachable machine does not count as gone for an appointment" "rejected" "$(jget "$OUT" lead_status)"
+assert_contains "and says so" "$(jget "$OUT" lead_reason)" "cannot be reached (not proof)"
+
 # --- the wire: protocol 1 stays byte-compatible; protocol 2 only for granted records ----------
 new_world appoint_wire
 "$HELPER" lead claim --plan "$P" --lanes local:w1:p2 >/dev/null 2>&1
@@ -188,21 +245,52 @@ APPOINT_SAVED_XDG=${XDG_STATE_HOME:-}
 export XDG_STATE_HOME="$WORLD/xdg-state"
 REPO="$WORK/repo"; mkrepo2 "$REPO"
 (cd "$REPO" && "$HELPER" lead claim --plan "$P" --lanes bb22:w1:p1 >/dev/null 2>&1)
-box2 lead claim --plan "$P"
+# The lane on the other machine adopts the lead's notice, as it would live.
+last_prompt bb22 w1:p1 >"$WORK/to-box.txt"
+mkdir -p "$(box2_home)"; (cd "$REPO" && HOME="$(box2_home)" XDG_STATE_HOME="$(box2_home)/.local/state" \
+  FAKE_HERDR_SERVER_ID="box-$WORLD_TAG" HERDR_PANE_ID=w1:p1 HERDR_WORKSPACE_ID=w1 \
+  HERDR_PEERS_BRIEFER="$(grep -o 'from=[^ ]*' "$WORK/to-box.txt" | head -1 | cut -d= -f2)" \
+  "$HELPER" check "$WORK/to-box.txt" >/dev/null 2>&1)
 run sh -c "cd '$REPO' && '$HELPER' lead verify --plan '$P'"
 assert_rc "verify: the lead, and the other machine agrees" 0
 assert_contains "verify says so" "$OUT" "verified: local:w1:p1 leads $P at epoch 1"
 assert_contains "verify is recorded" "$(grep '"verified"' "$(state_log)")" "1 machine(s) agree"
-box2 lead release --plan "$P"; box2 lead claim --plan "$P"
-run sh -c "cd '$REPO' && '$HELPER' lead verify --plan '$P'"
+# Two independent claims of one plan at the same epoch cannot be ordered: refused.
+Q2=PLAN_902_split
+(cd "$REPO" && "$HELPER" lead claim --plan "$Q2" --lanes bb22:w1:p1 >/dev/null 2>&1)
+box2 lead claim --plan "$Q2"
+run sh -c "cd '$REPO' && '$HELPER' lead verify --plan '$Q2'"
+assert_rc "two leads at one epoch that the order cannot rank: verify refuses (review #1)" 4
+assert_contains "and names the other lead" "$ERR" "epoch 1 too"
+Q3=PLAN_903_ahead
+(cd "$REPO" && "$HELPER" lead claim --plan "$Q3" --lanes bb22:w1:p1 >/dev/null 2>&1)
+box2 lead claim --plan "$Q3"; box2 lead release --plan "$Q3"; box2 lead claim --plan "$Q3"
+run sh -c "cd '$REPO' && '$HELPER' lead verify --plan '$Q3'"
 assert_rc "verify refuses when another machine shows a higher epoch (exit 4)" 4
 assert_contains "and names it" "$ERR" "bb22 (epoch 3"
 echo down >"$FAKE_HERDR_DIR/ssh/box/mode"
 run sh -c "cd '$REPO' && '$HELPER' lead verify --plan '$P'"
-assert_rc "an unreachable machine cannot be checked: named, not refused" 0
-assert_contains "and warned about" "$ERR" "not reached: bb22"
+assert_rc "an unreachable machine is not verified: exit 5 (review #6)" 5
+assert_contains "and named" "$ERR" "not reached: bb22"
+run sh -c "cd '$REPO' && '$HELPER' lead verify --plan '$P' --allow-unreached"
+assert_rc "--allow-unreached accepts that risk, recorded" 0
 run sh -c "cd '$REPO' && HERDR_PANE_ID=w1:p2 '$HELPER' lead verify --plan '$P'"
 assert_rc "a pane that is not the lead is refused (exit 4)" 4
 if grep -q '"push"\|"update-ref"\|"notes"' "$FAKE_HERDR_DIR/ssh.log" 2>/dev/null; then
   t_fail "verify writes nothing remotely"; else t_ok "verify writes nothing remotely"; fi
 export XDG_STATE_HOME="$APPOINT_SAVED_XDG"
+
+# The one total order, as a unit (used by the fence and by lead verify).
+out=$(python3 - "$ROOT/skills/herdr-peers/scripts" <<'PY'
+import sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import herdr_peers as h
+prev = {'lead': 'L', 'succession': ['S1', 'S2'], 'lanes': ['A', 'B']}
+keys = [h.order_key(a, prev) for a in ('L', 'S1', 'S2', 'A', 'B')]
+print(keys == sorted(keys), h.order_key('X', prev), h.widens_grant({'appoint': 'lanes'}, {'appoint': 'lanes:any-kind'}),
+      h.widens_grant({'appoint': 'lanes'}, {'appoint': None}))
+PY
+)
+assert_eq "lead, then successors, then lanes, in list order; strangers unordered; only removal of a grant is not widening" "True None True False" "$out"
+

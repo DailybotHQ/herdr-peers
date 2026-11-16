@@ -954,6 +954,7 @@ class PlanLoop(object):
         if not self.ap.appoint or plan.get('appoint') not in APPOINT_GRANTS or not self.ap.nudge:
             return False
         if any(local_pane(s) is None or local_pane(s) in by_pane for s in plan['succession']):
+            memo.gone_at = None  # a successor is back: the evidence starts over
             return False  # a successor is alive (or on another machine): not ours to bypass
         now = self.ap.clock()
         if memo.gone_at is None or memo.gone_progress != plan['progress']:

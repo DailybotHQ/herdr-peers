@@ -1078,6 +1078,31 @@ assert_eq "a live successor, even one that cannot be prompted, blocks an appoint
   "$(last_prompt local w1:p2 | grep -o 'as-lane')"
 run "$HELPER" autopilot --appoint --once
 assert_rc "--appoint needs --loop (exit 2)" 2
+# The grace starts over when a successor comes back (review #7).
+out=$(python3 - "$SCRIPTS" <<'PY'
+import sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import autopilot as a
+class IO(object):
+    def event(self, *args): pass
+    def read(self, *args): return None
+t = [1000.0]
+ap = a.Autopilot(IO(), loop=True, appoint=True, appoint_grace=100, clock=lambda: t[0])
+memo = a.PlanMemo()
+plan = {'plan': 'P', 'appoint': 'lanes', 'succession': ['local:w2:p2'], 'lanes': ['local:w1:p2'],
+        'progress': 'd1', 'epoch': 1, 'lead': 'local:w9:p9', 'repo_root': None}
+ap.plans.appoint(memo, 'local', plan, {}, set())
+first = memo.gone_at
+t[0] = 1050.0
+ap.plans.appoint(memo, 'local', plan, {'w2:p2': {'pane': 'w2:p2'}}, set())
+back = memo.gone_at
+t[0] = 1080.0
+ap.plans.appoint(memo, 'local', plan, {}, set())
+print(first, back, memo.gone_at)
+PY
+)
+assert_eq "a returning successor resets the appointment grace" "1000.0 None 1080.0" "$out"
 unset HERDR_PEERS_AUTOPILOT_APPOINT_GRACE HERDR_PEERS_APPOINT_PROBE_GAP
 unset TELL_OUT HERDR_PEERS_AUTOPILOT_GRACE
 export XDG_STATE_HOME=$LOOP_XDG_STATE

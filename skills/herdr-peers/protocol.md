@@ -168,7 +168,7 @@ are evaluated in order; the first match decides.
 | 2 | It contains a control character other than LF or TAB, or an invisible formatting character (bidi embedding/override/isolate, zero-width space, word joiner, BOM). | **never** — invalid. |
 | 3 | It is larger than the size limit (16384 bytes by default), or carries a secret (§8). | **never** — invalid; a message carrying a secret is not recorded. |
 | 4 | The marker appears more than once, or not at the start of a line (leading spaces allowed). | **never** — invalid (stamp smuggling). |
-| 5 | `protocol` is not `1`. | **never** — unsupported protocol. |
+| 5 | `protocol` is not `1` or `2`, or it is `2` on a message that is not a notice (`reply=no`). | **never** — unsupported protocol. A 1.x receiver also decides every `protocol=2` message never (§10). |
 | 6 | Unknown, duplicated or missing keys, or a malformed value. | **never** — invalid. |
 | 7 | The stamp carries `reply-to=`. | **never** — it is a reply. If its `from=` address matches the asked peer — equal, or its alias on this server (§2, *one pane, two addresses*) — record it (§6), then use it as data; otherwise ignore it as a conflicting or captured reply. |
 | 8 | `depth` is 1 or more. | **never** — depth limit (a delegate never delegates). |
@@ -407,10 +407,10 @@ first matching rule decides:
 | F3 | The stored epoch is higher than the notice's. | rejected (stale) |
 | F4 | No stored record, or the stored `lead` is `null`: the sender briefed this peer (`HERDR_PEERS_BRIEFER`, an ask it recorded from the sender) or released the plan, and the epoch is higher. | adopted (first claim) |
 | F5 | The sender is the stored lead, same epoch, the record names the sender as lead. | adopted (refresh) |
-| F6 | The sender is the stored lead, epoch = stored + 1. | adopted (handover, or release when `lead` is `null`) |
-| F7 | The sender is in the stored `succession[]`, epoch = stored + 1, the record names the sender as lead, and every earlier successor is gone (the receiver checks). | adopted (takeover) |
-| F8 | The stored record came by takeover at the same epoch, and the sender sits earlier in the previous `succession[]` than the stored lead and names itself. | adopted (tie to the earlier position) |
-| F10 | The record says `via: appointment`; the stored record carries the grant (`appoint`); the sender is in the stored `lanes[]` and names itself at epoch = stored + 1; `succession`, `appoint` and `lanes` (less the sender) equal the stored ones; and the receiver's own probes find the stored lead, **every** successor and every lane before the sender gone — strongly: an idle pane with a limit banner is not proof. A tie at the appointment epoch goes to the earlier lane of the previous `lanes[]` (as F8). | adopted (appointment) |
+| F6 | The sender is the stored lead, epoch = stored + 1, and the record does not widen the appointment grant. | adopted (handover, or release when `lead` is `null`) |
+| F7 | The sender is in the stored `succession[]`, epoch = stored + 1, the record names the sender as lead, does not widen the appointment grant, and every earlier successor is gone (the receiver checks). | adopted (takeover) |
+| F8 | **Two records at one epoch** (a partition, or notices crossing): the one that comes first in a single total order over the *previous* record wins — its lead (a handover), then its successors in order (a takeover), then its lanes in order (an appointment) — and only if its own step from the previous record holds (F6, F7 or F10, with their probes and non-widening checks). The previous record is kept through same-epoch refreshes, so the order holds wherever and in whatever order the notices arrive; without it the first record stays. | adopted (the earlier in the order) |
+| F10 | The record says `via: appointment`; the stored record carries the grant (`appoint`); the sender is in the stored `lanes[]` and names itself at epoch = stored + 1; `succession`, `appoint` and `lanes` (less the sender) equal the stored ones; and the receiver's own probes find the stored lead, **every** successor and every lane before the sender gone — strongly: an idle pane with a limit banner is not proof, and neither is a member whose machine cannot be reached (a partition or a sleeping laptop); a vanished pane on a machine that answers is. Ties: F8. | adopted (appointment) |
 | F9 | Anything else. | rejected |
 
 A notice whose record equals the stored record reports `current` and `check`
@@ -462,13 +462,21 @@ human:
   step down. It leads again only by a handover from the appointee.
 - **Before a merge, tag or release** the lead runs `lead verify`: it re-reads
   its record on its own machine and asks every other machine of the plan for
-  its read-only report; it refuses when it is not the lead here or any
-  machine shows the plan at a higher epoch, and names every machine it could
-  not reach. Nothing is ever written to git or to another machine for this.
+  its read-only report. It refuses (exit 4) when it is not the lead here, when
+  any machine shows the plan at a higher epoch, or at the same epoch under a
+  lead that comes first in the F8 order (or that the order cannot rank). A
+  machine it cannot reach makes it exit 5 unless `--allow-unreached` accepts
+  that risk (recorded). Nothing is ever written to git or to another machine
+  for this; a lead that was gone learns the new record from the next lead
+  notice or from `lead verify`.
+- **The cap** of two appointments is counted where the record is held: every
+  server that adopts an appointment counts it. A server that missed one during
+  a partition counts fewer (accepted: each appointment still needs F10).
 - **Residual risk.** When two machines cannot see each other, a returning
   lead on one and the appointee on the other may both execute tasks until the
   partition heals (duplicate or conflicting local work). `lead verify` cannot
-  see a machine it cannot reach. This is the price of writing nothing remotely.
+  see a machine it cannot reach, and says so (exit 5). This is the price of
+  writing nothing remotely.
 
 ### Plan mirror resolution
 

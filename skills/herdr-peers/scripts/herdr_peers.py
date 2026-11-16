@@ -2102,7 +2102,8 @@ def wire_protocol(record):
 
 def prior_of(record, via):
     return {'lead': record['lead'], 'epoch': record['epoch'],
-            'succession': list(record['succession']), 'lanes': list(record['lanes']), 'via': via}
+            'succession': list(record['succession']), 'lanes': list(record['lanes']),
+            'appoint': record.get('appoint'), 'via': via}
 
 
 def self_strings(pane, store):
@@ -2192,6 +2193,8 @@ def gone(addr):
     verdict needs a recorded --reason from the issuer and is never enough
     for a receiver."""
     st = lane_status(resolve_machine(parse_address(addr)))
+    if st.get('pane_missing'):
+        return True, 'no_agent', False
     if st['state'] in ('unreachable', 'no_agent'):
         return True, st['state'], False
     if st['screen'] == 'usage_limit':
@@ -2390,12 +2393,12 @@ def lead_appoint_self(args, plan, store, pane, me, data):
     members = [rec['lead']] + list(rec['succession']) + list(rec['lanes'][:position])
     for probe in (1, 2):
         for addr in members:
-            is_gone, state, weak = gone(addr)
-            if not is_gone or weak:
+            is_gone, state = appointment_gone(gone, addr)
+            if not is_gone:
                 raise Stop(EXIT_POLICY, 'appointment refused: %s is %s (probe %d); a plan is '
                            'appointed only when its lead, every successor and every earlier lane '
-                           'are gone' % (addr, 'reachable (%s)' % state if not is_gone else
-                                         'idle with a usage-limit line on screen (not proof)', probe))
+                           'are gone' % (addr, state if 'not proof' in state else
+                                         'reachable (%s)' % state, probe))
         if probe == 1:
             time.sleep(appoint_probe_gap())
     with store.lock():
@@ -2515,14 +2518,31 @@ def lead_verify(args):
     io = AutopilotIO(store, pane, None, None, quiet=True)
     io.sources()
     higher, silent = [], []
+    prior = data.get('prior') or {}
+    prev = {'lead': prior.get('lead'), 'succession': prior.get('succession', []),
+            'lanes': prior.get('lanes', [])} if prior.get('epoch') == rec['epoch'] - 1 else None
     for machine in machines:
         state, report = io.plans(machine, {}, None)
         if state != 'ok':
             silent.append(machine)
             continue
         for p in report.get('plans', []):
-            if p.get('plan') == plan and isinstance(p.get('epoch'), int) and p['epoch'] > rec['epoch']:
-                higher.append('%s (epoch %d, lead %s)' % (machine, p['epoch'], p.get('lead')))
+            if p.get('plan') != plan or not isinstance(p.get('epoch'), int):
+                continue
+            theirs = localize(p.get('lead'), machine) if p.get('lead') else None
+            if p['epoch'] > rec['epoch']:
+                higher.append('%s (epoch %d, lead %s)' % (machine, p['epoch'], theirs))
+            elif p['epoch'] == rec['epoch'] and theirs and theirs not in mine_:
+                # Two leads at one epoch (a partition): the one total order of
+                # the fence decides; unordered or losing is a refusal.
+                mine_key = order_key(rec['lead'], prev) if prev else None
+                their_key = order_key(theirs, prev) if prev else None
+                if mine_key is None or (their_key is not None and their_key < mine_key):
+                    higher.append('%s (epoch %d too, lead %s, which comes first)'
+                                  % (machine, p['epoch'], theirs))
+                else:
+                    warn('%s also names a lead at epoch %d (%s); this pane comes first in the '
+                         'order, so that lead must step down' % (machine, p['epoch'], theirs))
     if higher:
         log_lead(store, 'rejected', me, rec, note='verify: a higher epoch on %s' % ', '.join(higher))
         raise Stop(EXIT_POLICY, 'plan %s has a newer lead elsewhere: %s; step down, do not '
@@ -2537,6 +2557,10 @@ def lead_verify(args):
     if silent:
         warn('not reached: %s; a machine that cannot be reached cannot be checked (protocol §12, '
              'residual risk)' % ', '.join(silent))
+        if not getattr(args, 'allow_unreached', False):
+            raise Stop(EXIT_TIMEOUT, 'not verified: %d machine(s) of plan %s could not be reached; '
+                       'merge, tag or release only when they answer, or pass --allow-unreached '
+                       'to accept the risk (recorded)' % (len(silent), plan))
     return EXIT_OK
 
 
@@ -2580,68 +2604,134 @@ def fence(stored, rec, sender, trusted, gone_fn):
                 (prior_of(cur, 'claim') if cur else None)
         return ('rejected', 'no current lead, and %s is not the address that briefed this pane '
                 '(HERDR_PEERS_BRIEFER or a recorded asker)' % sender, None, None)
+    if sender == cur['lead'] and rec['epoch'] == cur['epoch'] and rec['lead'] == sender:
+        # F5: the lead's own refresh. The previous record is kept, so a
+        # same-epoch tie can still be ordered after it (one total order).
+        return 'adopted', 'refresh from the lead', 'refresh', data.get('prior')
+    if rec['epoch'] == cur['epoch'] + 1:
+        return transition(cur, rec, sender, gone_fn)
+    if rec['epoch'] == cur['epoch'] and rec['lead'] == sender and sender != cur['lead']:
+        return same_epoch_fence(data, rec, sender, gone_fn)
     if sender == cur['lead']:
-        if rec['epoch'] == cur['epoch'] and rec['lead'] == sender:
-            return 'adopted', 'refresh from the lead', 'refresh', data.get('prior')
-        if rec['epoch'] == cur['epoch'] + 1:
-            via = 'release' if rec['lead'] is None else 'handover'
-            return 'adopted', '%s from the lead' % via, via, prior_of(cur, via)
         return ('rejected', 'the lead may only move to epoch %d' % (cur['epoch'] + 1),
                 None, None)
-    if sender in cur['succession'] and rec['epoch'] == cur['epoch'] + 1 \
-            and rec['lead'] == sender:
-        for earlier in cur['succession'][:cur['succession'].index(sender)]:
+    return ('rejected', 'not fenced: %s is neither the lead nor the first reachable successor '
+            'at epoch %d' % (sender, cur['epoch'] + 1), None, None)
+
+
+GRANT_ORDER = {None: 0, 'lanes': 1, 'lanes:any-kind': 2}
+
+
+def widens_grant(prev, rec):
+    """True when `rec` carries a wider appointment grant than `prev`."""
+    return GRANT_ORDER.get(rec.get('appoint'), 99) > GRANT_ORDER.get(prev.get('appoint'), 0)
+
+
+def order_key(addr, prev):
+    """The one total order of the leads that may hold epoch prev+1: the lead
+    of `prev` (a handover), then its successors in order (a takeover), then
+    its lanes in order (an appointment). None for anyone else."""
+    if addr is None:
+        return None
+    if addr == prev.get('lead'):
+        return (0, 0)
+    if addr in prev.get('succession', []):
+        return (1, prev['succession'].index(addr))
+    if addr in prev.get('lanes', []):
+        return (2, prev['lanes'].index(addr))
+    return None
+
+
+def transition(prev, rec, sender, gone_fn):
+    """Whether `rec`, sent by `sender`, is a valid step from `prev` to epoch
+    prev+1: F6 (handover or release by the lead), F7 (takeover by a
+    successor), F10 (appointment of a lane). A handover or takeover never
+    widens the appointment grant; only the lead's own refresh may set it."""
+    if rec['epoch'] != prev['epoch'] + 1:
+        return ('rejected', 'only epoch %d follows epoch %d' % (prev['epoch'] + 1, prev['epoch']),
+                None, None)
+    if sender == prev['lead']:
+        if widens_grant(prev, rec):
+            return 'rejected', 'a handover cannot widen the appointment grant', None, None
+        via = 'release' if rec['lead'] is None else 'handover'
+        return 'adopted', '%s from the lead' % via, via, prior_of(prev, via)
+    if rec['lead'] != sender:
+        return ('rejected', 'not fenced: %s names %s, not itself' % (sender, rec['lead']),
+                None, None)
+    if sender in prev['succession'] and rec.get('via') != APPOINT_VIA:
+        if widens_grant(prev, rec):
+            return 'rejected', 'a takeover cannot widen the appointment grant', None, None
+        for earlier in prev['succession'][:prev['succession'].index(sender)]:
             is_gone, state, weak = gone_fn(earlier)
             if not is_gone or weak:
                 state = 'idle with a usage-limit line on screen (not proof)' if is_gone else state
                 return ('rejected', 'takeover by %s while an earlier successor %s is reachable '
                         '(%s)' % (sender, earlier, state), None, None)
-        return 'adopted', 'takeover by %s' % sender, 'takeover', prior_of(cur, 'takeover')
+        return 'adopted', 'takeover by %s' % sender, 'takeover', prior_of(prev, 'takeover')
     if rec.get('via') == APPOINT_VIA:
-        return appointment_fence(cur, rec, sender, gone_fn, data)
-    prior = data.get('prior') or {}
-    if data.get('via') == 'takeover' and rec['epoch'] == cur['epoch'] \
-            and rec['lead'] == sender and sender in prior.get('succession', []) \
-            and cur['lead'] in prior.get('succession', []) \
-            and prior['succession'].index(sender) < prior['succession'].index(cur['lead']):
-        return ('adopted', 'takeover tie at epoch %d: %s precedes %s in the succession'
-                % (rec['epoch'], sender, cur['lead']), 'takeover', prior)
+        return appointment_checks(prev, rec, sender, gone_fn)
     return ('rejected', 'not fenced: %s is neither the lead nor the first reachable successor '
-            'at epoch %d' % (sender, cur['epoch'] + 1), None, None)
+            'at epoch %d' % (sender, prev['epoch'] + 1), None, None)
 
 
-def appointment_fence(cur, rec, sender, gone_fn, data):
-    """F10 (and its tie, F8 by lane order): an appointment is adopted only
-    when the stored record carries the human's grant, the sender is a lane
-    of it naming itself at epoch + 1 without widening the record, and this
-    receiver's own probes find the lead, every successor and every earlier
-    lane strongly gone. A 1.x receiver never gets here: the notice is
-    protocol 2."""
-    prior = data.get('prior') or {}
-    if data.get('via') == APPOINT_VIA and rec['epoch'] == cur['epoch'] and rec['lead'] == sender \
-            and sender in prior.get('lanes', []) and cur['lead'] in prior.get('lanes', []) \
-            and prior['lanes'].index(sender) < prior['lanes'].index(cur['lead']):
-        return ('adopted', 'appointment tie at epoch %d: lane %s precedes %s'
-                % (rec['epoch'], sender, cur['lead']), APPOINT_VIA, prior)
-    if cur.get('appoint') not in APPOINT_GRANTS:
+def same_epoch_fence(data, rec, sender, gone_fn):
+    """Two records at one epoch (a partition, or two notices crossing): the
+    earlier in the one total order wins, wherever and in whatever order the
+    notices arrive — and only if its own step from the previous record holds
+    (with its probes and its non-widening checks)."""
+    cur, prior = data['record'], data.get('prior') or {}
+    if prior.get('epoch') != cur['epoch'] - 1 or 'lanes' not in prior:
+        return ('rejected', 'two leads at epoch %d and no previous record to order them; the '
+                'first one stays' % cur['epoch'], None, None)
+    prev = {'lead': prior.get('lead'), 'epoch': prior['epoch'],
+            'succession': list(prior.get('succession', [])), 'lanes': list(prior['lanes']),
+            'appoint': prior.get('appoint')}
+    mine, theirs = order_key(sender, prev), order_key(cur['lead'], prev)
+    if mine is None or (theirs is not None and mine >= theirs):
+        return ('rejected', 'tie at epoch %d: %s does not precede %s (lead, then successors, '
+                'then lanes, in order)' % (cur['epoch'], sender, cur['lead']), None, None)
+    status, reason, via, _ = transition(prev, rec, sender, gone_fn)
+    if status != 'adopted':
+        return status, reason, via, None
+    return ('adopted', 'tie at epoch %d: %s precedes %s' % (cur['epoch'], sender, cur['lead']),
+            via, prior)
+
+
+def appointment_gone(gone_fn, addr):
+    """(gone, state) for an appointment: strong evidence only. A member
+    whose machine cannot be reached is not proof (a partition, a sleeping
+    laptop), nor is an idle pane with a limit banner."""
+    is_gone, state, weak = gone_fn(addr)
+    if weak:
+        return False, 'idle with a usage-limit line on screen (not proof)'
+    if is_gone and state == 'unreachable':
+        return False, 'on a machine that cannot be reached (not proof)'
+    return is_gone, state
+
+
+def appointment_checks(prev, rec, sender, gone_fn):
+    """F10: an appointment step from `prev` is adopted only when `prev`
+    carries the human's grant, the sender is a lane of it naming itself at
+    epoch + 1 without widening the record, and this receiver's own probes
+    find the lead, every successor and every earlier lane strongly gone. A
+    1.x receiver never gets here: the notice is protocol 2."""
+    if prev.get('appoint') not in APPOINT_GRANTS:
         return 'rejected', 'appointment refused: the stored record carries no grant', None, None
-    if rec['lead'] != sender or rec['epoch'] != cur['epoch'] + 1:
-        return ('rejected', 'appointment refused: %s may only appoint itself at epoch %d'
-                % (sender, cur['epoch'] + 1), None, None)
-    if sender not in cur['lanes']:
+    if sender not in prev['lanes']:
         return 'rejected', 'appointment refused: %s is not a lane of the plan' % sender, None, None
-    if rec['succession'] != cur['succession'] or rec.get('appoint') != cur.get('appoint') \
-            or rec['lanes'] != [a for a in cur['lanes'] if a != sender]:
+    if rec['succession'] != prev['succession'] or rec.get('appoint') != prev.get('appoint') \
+            or rec['lanes'] != [a for a in prev['lanes'] if a != sender]:
         return ('rejected', 'appointment refused: the record is widened (succession, lanes or '
                 'grant changed)', None, None)
-    position = cur['lanes'].index(sender)
-    for addr in [cur['lead']] + list(cur['succession']) + list(cur['lanes'][:position]):
-        is_gone, state, weak = gone_fn(addr)
-        if not is_gone or weak:
+    position = prev['lanes'].index(sender)
+    for addr in [prev['lead']] + list(prev['succession']) + list(prev['lanes'][:position]):
+        if addr is None:
+            continue
+        is_gone, state = appointment_gone(gone_fn, addr)
+        if not is_gone:
             return ('rejected', 'appointment refused: %s is %s' % (
-                addr, 'reachable (%s)' % state if not is_gone else
-                'idle with a usage-limit line on screen (not proof)'), None, None)
-    return 'adopted', 'appointment of lane %s' % sender, APPOINT_VIA, prior_of(cur, APPOINT_VIA)
+                addr, state if 'not proof' in state else 'reachable (%s)' % state), None, None)
+    return 'adopted', 'appointment of lane %s' % sender, APPOINT_VIA, prior_of(prev, APPOINT_VIA)
 
 
 def handle_lead_notice(store, verdict, body, pane):
@@ -2702,8 +2792,8 @@ def handle_lead_notice(store, verdict, body, pane):
             # Panes on one server share the record: a successor that took
             # over has already rewritten it, so the former lead learns it here.
             former = ((data.get('prior') or {}).get('lead') in mine_ and
-                      data.get('via') in ('takeover', 'handover', APPOINT_VIA) and
-                      rec['lead'] not in mine_)
+                      (data['prior'] or {}).get('via') in ('takeover', 'handover', APPOINT_VIA)
+                      and rec['lead'] not in mine_)
             if former:
                 verdict['lead_status'] = 'stepped_down'
                 verdict['lead_reason'] = 'this pane led %s until epoch %d' % (
@@ -2830,6 +2920,10 @@ def lane_status(addr):
         prc, ptext, perr = herdr(['pane', 'get', pane], machine=machine, timeout=12)
         if prc != 0:
             out['note'] = last_line(perr or ptext)
+            # The server answered that this pane does not exist any more: for
+            # `gone`, that is no agent (strong evidence), not a machine that
+            # could not be reached. `status` still reports it as before.
+            out['pane_missing'] = 'pane_not_found' in (perr + ptext)
             return out
         out['state'] = 'no_agent'
     else:
@@ -4119,6 +4213,9 @@ def build_parser():
     for q in (lc, lh, lt, lr, ls_, lv):
         q.add_argument('--plan', help='plan id or repo/id (default: $DWP_PLAN id or directory basename)')
     lv.add_argument('--pane', help=pane_help)
+    lv.add_argument('--allow-unreached', action='store_true',
+                    help='accept that a machine of the plan could not be reached (recorded); '
+                    'without it, an unreached machine is exit 5')
     for q in (lc, lh, lt, lr):
         q.add_argument('--pane', help=pane_help)
         q.add_argument('--scope', help='allow-list for the lead notices')
