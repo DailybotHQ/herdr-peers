@@ -68,6 +68,16 @@ TAKEOVER_TEXT = (
     'herdr-peers lead takeover --plan %s — the helper checks itself whether the lead is really '
     'gone. If it accepts, continue executing the plan to its end, respecting its gates. If it '
     'refuses, do nothing more.')
+APPOINT_TEXT = (
+    '[autopilot] Plan %s has no lead: its lead and every successor are gone, and its lead '
+    'record carries the developer\'s appointment grant. You are its first live lane. Run: '
+    'herdr-peers lead takeover --plan %s --as-lane — the helper checks again, twice, that '
+    'they are really gone. If it accepts, continue executing the plan to its end, respecting '
+    'its gates, and run `herdr-peers lead verify --plan %s` before any merge, tag or release. '
+    'If it refuses, do nothing more.')
+APPOINT_GRANTS = ('lanes', 'lanes:any-kind')
+APPOINT_GRACE = 900        # seconds the evidence must hold, with the plan frozen, before an appointment
+MAX_APPOINTMENTS = 2       # appointments one daemon prompts per plan; then only the human is told
 
 BOX = {ord(c): ' ' for c in '│┃█'}
 CURSORS = '❯›>→▶'
@@ -491,7 +501,7 @@ class Autopilot(object):
 
     def __init__(self, io, dry_run=False, nudge=True, catch_up=False, exclude=(),
                  clock=time.time, sleep=time.sleep, confirm=CONFIRM_DELAY, loop=False,
-                 grace=LEAD_GRACE, brain=None):
+                 grace=LEAD_GRACE, appoint=False, appoint_grace=APPOINT_GRACE, brain=None):
         self.io, self.dry_run, self.nudge, self.catch_up = io, dry_run, nudge, catch_up
         self.exclude = set(exclude)
         self.clock, self.sleep, self.confirm = clock, sleep, confirm
@@ -501,6 +511,7 @@ class Autopilot(object):
         self.actions = 0
         self.passes = 0
         self.grace = grace
+        self.appoint, self.appoint_grace = appoint, appoint_grace  # human flag --appoint
         self.plans = PlanLoop(self) if loop else None
         self.quiet = set()     # panes never nudged in prose (the brain)
         self.brain = BrainKeeper(self, brain) if brain and self.plans else None
@@ -703,6 +714,12 @@ class PlanMemo(object):
         self.skip_seq = None   # the lead's state sequence when its screen ruled a prompt out
         self.absent = 0        # consecutive reports in which the lead's pane was not listed
         self.extra = 0         # one more prompt the brain allowed (once per plan)
+        self.lead_kind = None  # the agent kind last seen in the lead's pane
+        self.gone_at = None    # when lead and successors were first all seen gone (appointment)
+        self.gone_progress = None
+        self.appointee = None  # (address, epoch) of the lane last asked to take the lead
+        self.appointments = 0
+        self.appointed_epoch = None
 
 
 class PlanLoop(object):
@@ -845,16 +862,27 @@ class PlanLoop(object):
             return  # released, or led from another machine: not this daemon's to prompt
         row = by_pane.get(pane)
         pmemo = self.ap.panes.get(addr)
+        if row is not None and row.get('agent'):
+            memo.lead_kind = row.get('agent')
+        if plan.get('appointed') and memo.appointed_epoch != plan['epoch']:
+            # The record says this epoch came by appointment: reported once per epoch.
+            memo.appointed_epoch, memo.appointee = plan['epoch'], None
+            self.io.event({'schema': EVENT_SCHEMA, 'event': 'plan_appointed', 'plan': plan['plan'],
+                           'machine': machine, 'lead': plan['lead'],
+                           'repo_root': plan['repo_root'], 'blocker_class': None}, self.ap.dry_run)
         gone = None
         if row is None:
             if memo.absent < ABSENT_PASSES:
                 return  # one missing listing is not a gone lead
             gone = 'no_agent'
-        # A lead at its usage limit is not gone: the screen pass retries it, and
-        # the helper refuses a takeover on that weak evidence without --reason.
+        elif self.ap.appoint and pmemo is not None and pmemo.limit_tries >= MAX_LIMIT_RETRIES:
+            # Only for an appointment, and only once the screen pass gave up on
+            # its limit (the developer's rule); the 15-minute grace follows.
+            gone = 'usage_limit'
         if gone:
             self.succeed(memo, machine, plan, by_pane, addr, gone, prompted)
             return
+        memo.gone_at = None  # the lead is here: any appointment evidence starts over
         if memo.situation in ('plan_no_lead', 'plan_lead_moved') and plan.get('lead_in_repo') is not False:
             memo.situation = None
         if row.get('you') or addr in self.ap.exclude or pmemo is None or not row.get('in_scope', True):
@@ -963,7 +991,76 @@ class PlanLoop(object):
             if not self.ap.dry_run:
                 self.io.prompt(machine, pane, TAKEOVER_TEXT % (plan['plan'], reason, plan['plan']))
             return
+        if self.appoint(memo, machine, plan, by_pane, prompted):
+            return
         self.enter(memo, machine, plan, 'plan_no_lead', addr, 'left')
+
+    def appoint(self, memo, machine, plan, by_pane, prompted):
+        """Lead and every successor gone, the plan granted and `--appoint` on:
+        after the evidence held APPOINT_GRACE with the plan frozen, ask the
+        first live lane to take the lead (`lead takeover --as-lane`, which
+        checks again). True while an appointment is under way or waiting for
+        its grace; False when there is none to make (plan_no_lead follows)."""
+        if not self.ap.appoint or plan.get('appoint') not in APPOINT_GRANTS or not self.ap.nudge:
+            return False
+        if any(local_pane(s) is None or local_pane(s) in by_pane for s in plan['succession']):
+            memo.gone_at = None  # a successor is back: the evidence starts over
+            return False  # a successor is alive (or on another machine): not ours to bypass
+        now = self.ap.clock()
+        if memo.gone_at is None or memo.gone_progress != plan['progress']:
+            memo.gone_at, memo.gone_progress = now, plan['progress']
+            return True   # first sight, or the plan moved: the grace starts now
+        if now - memo.gone_at < self.ap.appoint_grace:
+            return True
+        if memo.appointments >= MAX_APPOINTMENTS:
+            return False
+        if memo.appointee and memo.appointee[1] == plan['epoch']:
+            return True   # asked at this epoch already: the helper decides
+        for lane in plan['lanes']:
+            pane = local_pane(lane)
+            if pane is None:
+                return False  # a lane on another machine: this daemon cannot see it
+            row = by_pane.get(pane)
+            if row is None:
+                continue      # a gone lane: F10 needs every earlier lane gone, so go on
+            target = '%s:%s' % (machine, pane)
+            pmemo = self.ap.panes.get(target)
+            kind_ok = plan['appoint'] == 'lanes:any-kind' or memo.lead_kind is None \
+                or row.get('agent') == memo.lead_kind
+            if row.get('you') or target in self.ap.exclude or target in prompted \
+                    or not row.get('in_scope', True) or not kind_ok \
+                    or row.get('state') not in ('idle', 'done') or (pmemo and pmemo.limit_at) \
+                    or self.leads_elsewhere(machine, pane, plan['plan']):
+                return True   # the first live lane is not ready: wait, never skip it
+            text = self.io.read(machine, pane)
+            if text is None:
+                return True
+            choice = decide(row.get('agent'), row.get('state'), text)
+            if choice.action in ('keys', 'leave') or choice.cls == 'usage_limit' \
+                    or has_draft(text, row.get('state')):
+                return True
+            memo.appointee, memo.appointments = (target, plan['epoch']), memo.appointments + 1
+            prompted.add(target)
+            self.ap.record(target, row.get('agent'), Decision(
+                'prompt', 'plan_appointment_prompted', 'lead and successors gone'), 'nudged',
+                plan=plan['plan'])
+            self.io.event({'schema': EVENT_SCHEMA, 'event': 'plan_appointment_prompted',
+                           'plan': plan['plan'], 'machine': machine, 'lead': plan['lead'],
+                           'repo_root': plan['repo_root'], 'blocker_class': None}, self.ap.dry_run)
+            if not self.ap.dry_run:
+                self.io.prompt(machine, pane, APPOINT_TEXT % ((plan['plan'],) * 3))
+            return True
+        return False
+
+    def leads_elsewhere(self, machine, pane, plan_id):
+        """True when `pane` leads or succeeds another open plan on `machine`."""
+        report = (self.machines.get(machine) or {}).get('report') or {}
+        for other in report.get('plans', []):
+            if other['plan'] == plan_id or other['class'] not in ('open', 'blocked'):
+                continue
+            if local_pane(other['lead']) == pane or pane in [local_pane(a) for a in other['succession']]:
+                return True
+        return False
 
     def enter(self, memo, machine, plan, situation, addr, outcome):
         """A plan arrives at a situation the developer should know about:
