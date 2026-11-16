@@ -15,10 +15,10 @@ actually verified (`--ignore-missing` alone would pass with none).
 coding-agents-kit (`agentkit`):
 
 ```bash
-git clone --branch v1.0.1 --depth 1 https://github.com/DailybotHQ/coding-agents-kit cak
-git -C cak describe --tags --exact-match            # must print v1.0.1
-curl -fsSL https://github.com/DailybotHQ/coding-agents-kit/releases/download/v1.0.1/SHA256SUMS -o cak.SHA256SUMS
-echo "de17573e57de9eeb44914189cbc1fd0b1322797cc398c710dadfecc08758db6f  cak.SHA256SUMS" | shasum -a 256 -c   # the pinned digest
+git clone --branch v1.5.0 --depth 1 https://github.com/DailybotHQ/coding-agents-kit cak
+git -C cak describe --tags --exact-match            # must print v1.5.0
+curl -fsSL https://github.com/DailybotHQ/coding-agents-kit/releases/download/v1.5.0/SHA256SUMS -o cak.SHA256SUMS
+echo "d8057636d357ba056ab8c8a7feec58d31b53cb58c91d943109b7f22590b5cca3  cak.SHA256SUMS" | shasum -a 256 -c   # the pinned digest
 (cd cak && shasum -a 256 -c --ignore-missing ../cak.SHA256SUMS)       # must exit 0
 (cd cak && shasum -a 256 -c --ignore-missing ../cak.SHA256SUMS | grep -c ': OK$')   # must print a number above 0
 ./cak/install.sh
@@ -27,10 +27,10 @@ echo "de17573e57de9eeb44914189cbc1fd0b1322797cc398c710dadfecc08758db6f  cak.SHA2
 devcontainer-kit (`devcontainer`):
 
 ```bash
-git clone --branch v1.0.1 --depth 1 https://github.com/DailybotHQ/devcontainer-kit dck
-git -C dck describe --tags --exact-match            # must print v1.0.1
-curl -fsSL https://github.com/DailybotHQ/devcontainer-kit/releases/download/v1.0.1/SHA256SUMS -o dck.SHA256SUMS
-echo "90d8ff62281c3671b1f800dd8de06ac14404069e032876648500b066419393a2  dck.SHA256SUMS" | shasum -a 256 -c   # the pinned digest
+git clone --branch v1.3.0 --depth 1 https://github.com/DailybotHQ/devcontainer-kit dck
+git -C dck describe --tags --exact-match            # must print v1.3.0
+curl -fsSL https://github.com/DailybotHQ/devcontainer-kit/releases/download/v1.3.0/SHA256SUMS -o dck.SHA256SUMS
+echo "663b06f3be1108b93d401e8b9ec9da77b1f6953b86a98729bf54a8bfc5fae969  dck.SHA256SUMS" | shasum -a 256 -c   # the pinned digest
 (cd dck && shasum -a 256 -c --ignore-missing ../dck.SHA256SUMS)       # must exit 0
 (cd dck && shasum -a 256 -c --ignore-missing ../dck.SHA256SUMS | grep -c ': OK$')   # must print a number above 0
 ./dck/install.sh
@@ -44,7 +44,7 @@ repository-local `dck-dockerfile` skill at the same tag
 **herdr-peers** (host): the pinned skill installs in
 `herdr/install.md`; `dck setup` also installs a verified
 herdr-peers on the host. Verify with `herdr-peers --version`
-(`(protocol 1)`).
+(`(protocol N)` — the descriptor names the accepted majors).
 
 **DeepWorkPlan Vim:** the product's own checksum-verified installer under
 its consent gate (`vim/SKILL.md`); an existing Neovim config is

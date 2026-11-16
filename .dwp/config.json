@@ -7,7 +7,7 @@
     "herdr": {
       "enabled": true,
       "note": "This repository ships herdr-peers; the checkout helper is bin/herdr-peers.",
-      "version": "v1.0.0"
+      "version": "v2.1.0"
     }
   },
   "benchmark": {

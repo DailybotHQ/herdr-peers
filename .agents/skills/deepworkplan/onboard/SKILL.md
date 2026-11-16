@@ -1,7 +1,7 @@
 ---
 name: deepworkplan-onboard
 description: Make any repository AI-first — reason (never template) an adapted AGENTS.md, docs/, per-module docs and .agents/ kit from the real repo, discover and verify its full and scoped validation commands and source-to-test mapping, install the DeepWorkPlan skill, and, for a repository onboarded under an earlier version, perform a targeted, non-destructive, idempotent harness upgrade. Use when the developer wants to onboard or upgrade a repository for AI agents.
-version: "7.8.1"
+version: "8.0.0"
 documentation_url: https://deepworkplan.com
 user-invocable: true
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write
@@ -104,7 +104,7 @@ When this flow finishes, the target repo contains:
    escalation paths and fallback, plus the unit-first posture — so every future
    plan can select its gates instead of guessing (`../spec/DOCUMENTATION_STANDARD.md` §3.4).
 7. **A recorded standard and a first usable outcome** — the provenance line
-   `DWP standard: 7.0.0 (onboarded YYYY-MM-DD; skill x.y.z)` in `AGENTS.md`, and
+   `DWP standard: 8.0.0 (onboarded YYYY-MM-DD; skill x.y.z)` in `AGENTS.md`, and
    a `.dwp/onboard/REPORT.md` that names the verified command and mapping, the
    installed skill identity and version, the active capability limits (what
    could not be verified and why), and the exact post-onboarding next command
@@ -148,7 +148,7 @@ mutates the target repository — non-destructively and by explicit design:
 - On the plan-driven path, plan artifacts under `.dwp/` as `create` defines.
 
 **Writes include:** with Phase 0 consent, Phase 7a may run the tag-pinned
-`npx --yes skills add https://github.com/DailybotHQ/ai-diff-reviewer/tree/v3.3.14 --skill ai-diff-reviewer -y`
+`npx --yes skills add https://github.com/DailybotHQ/ai-diff-reviewer/tree/v3.3.16 --skill ai-diff-reviewer -y`
 install into `.agents/skills/ai-diff-reviewer/` and bootstrap the repo-tailored
 `.review/extension.md`; decline or offline failure is recorded as a declared
 exception.
@@ -472,7 +472,7 @@ context. It MUST cover these six responsibilities:
    (`full` / `scoped`). **Mark** any command that
    runs only in CI or only inside a container (e.g. "must run **inside** the
    Docker container"), and any scoped pattern that is proposed/unverified.
-4. **Provenance** — one line, `DWP standard: 7.0.0 (onboarded YYYY-MM-DD;
+4. **Provenance** — one line, `DWP standard: 8.0.0 (onboarded YYYY-MM-DD;
    skill x.y.z)` (on upgrade: `…; upgraded YYYY-MM-DD; skill x.y.z`), so a
    checker and a future agent can tell which standard the repository declares
    (`../spec/DOCUMENTATION_STANDARD.md` §3.5).

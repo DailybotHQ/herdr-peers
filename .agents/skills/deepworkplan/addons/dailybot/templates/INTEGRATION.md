@@ -56,7 +56,7 @@ skill's own `shared/auth.md` flow.
 
 | Want | Offer |
 |------|-------|
-| **Dailybot skill** (recommended — brings consent/auth + `report`) | `npx --yes skills add https://github.com/DailybotHQ/agent-skill/tree/v3.23.17 --skill dailybot -y` (**pinned to a published tag**; content hash recorded in `skills-lock.json`) · OpenClaw `openclaw skills install dailybot` (registry-managed pin) |
+| **Dailybot skill** (recommended — brings consent/auth + `report`) | `npx --yes skills add https://github.com/DailybotHQ/agent-skill/tree/v3.23.20 --skill dailybot -y` (**pinned to a published tag**; content hash recorded in `skills-lock.json`) · OpenClaw `openclaw skills install dailybot` (registry-managed pin) |
 | **Dailybot CLI only** (developer explicitly wants the binary) | `pip install 'dailybot-cli>=3.9.0'` (Py 3.10+) · `brew install dailybothq/tap/dailybot` (macOS) · vendor's verified installer flow (macOS / Linux / Windows) via [`shared/auth.md`](https://github.com/DailybotHQ/agent-skill/blob/main/skills/dailybot/shared/auth.md) — `download → verify SHA-256 → execute`, never a one-line remote-installer pipe |
 
 > Prefer installing the **skill** — it owns the SHA-256-verified CLI install and
@@ -88,7 +88,8 @@ convey:
 > Dailybot skill/CLI is installed and authenticated, DWP work emits agent
 > updates at four points — **kickoff** (plan approved: what is being built),
 > **significant task** (a feature/fix ships mid-plan), **blocked** (the plan
-> halts and `state.json.blocked` says what it needs), and **completion** (the
+> halts and `state.json.blocked` — `state.json.blocker` on a v8 plan — says
+> what it needs), and **completion** (the
 > only **milestone**: what was built). If Dailybot is absent, unauthenticated,
 > or unreachable — or if `.dailybot/disabled` is present — skip silently and
 > continue. Reporting MUST NOT block `create` or `execute`.
@@ -112,6 +113,7 @@ if command -v dailybot >/dev/null 2>&1 && [ ! -f .dailybot/disabled ]; then
     || echo "Dailybot report skipped (non-blocking)."
 
   # 3) Blocked (regular, blockers populated) — derive from state.json.blocked
+  #    (state.json.blocker on a v8 plan; its held task reads `blocked`)
   dailybot agent update "<what is stuck and what it needs>" \
     --json-data '{"completed":["<done so far>"],"in_progress":[],"blockers":["<reason> — needs <needs>"]}' \
     || echo "Dailybot report skipped (non-blocking)."
@@ -132,7 +134,9 @@ Decision notes:
 - **Payload from the state layer:** when the plan carries `state.json`
   (`PLAN_STATE.md`), derive `--json-data` from it — `completed` from completed
   tasks phrased as outcomes, `in_progress` from the current task, `blockers`
-  from `state.json.blocked` (`reason`, `needs`). Without the state layer,
+  from `state.json.blocked` (`reason`, `needs`) — on a v8 plan from
+  `state.json.blocker` (the same fields plus its class), where the held task
+  reads `blocked` and counts as the current one. Without the state layer,
   derive from the plan README's checkboxes. Never maintain a separate progress
   ledger just for reporting.
 - **One kickoff, one completion** per plan — re-runs and resumes do not
@@ -152,7 +156,7 @@ Decision notes:
 
 The §4 wiring is prompt-layer — it relies on the model remembering. When
 `dailybot-cli` is **>= 3.9.0** (the unified floor for the current skill pack,
-currently **3.23.17**), also offer (opt-in, show the exact config first) to commit
+currently **3.23.20**), also offer (opt-in, show the exact config first) to commit
 the repo-level harness hook config so the harness itself reminds the agent about
 unreported work at end of turn:
 

@@ -9,6 +9,14 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Changed
+
+- Repository tooling: the vendored deepworkplan skill moved to 8.0.0 (tag
+  commit `ff96b9e`, all 188 files verified against the release
+  `SHA256SUMS`, digest `cb877b16…`), and the registry's herdr addon version
+  moved to v2.1.0, the release the pack pins (skills-lock.json,
+  .dwp/config.json). The shipped skill and helper are unchanged.
+
 ## [2.1.0] - 2026-11-16
 
 fleet ui's views (one facet model in every grouping), nothing left blocked — not

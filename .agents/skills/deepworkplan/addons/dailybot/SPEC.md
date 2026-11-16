@@ -73,7 +73,7 @@ with explicit acceptance, and each reconciled if already present (§7):
 - The addon **SHOULD** offer the **Dailybot agent skill** as the primary path,
   because it brings its own install/consent/auth flow and the `report`
   sub-skill. Supported install methods (the addon **MUST** offer, not force):
-  - `npx --yes skills add https://github.com/DailybotHQ/agent-skill/tree/v3.23.17 --skill dailybot -y`
+  - `npx --yes skills add https://github.com/DailybotHQ/agent-skill/tree/v3.23.20 --skill dailybot -y`
     (cross-agent, recommended — **pinned to a published tag**; the `skills` CLI
     records source + content hash in `skills-lock.json`), **or**
   - OpenClaw native: `openclaw skills install dailybot` (registry-managed pin).
@@ -116,7 +116,7 @@ with explicit acceptance, and each reconciled if already present (§7):
 ### 3.4 Optional harness hook enforcement
 
 - When `dailybot-cli` is **>= 3.9.0** (the unified floor for the current skill
-  pack, currently **3.23.17**), the addon **SHOULD** offer — and **MAY**, with
+  pack, currently **3.23.20**), the addon **SHOULD** offer — and **MAY**, with
   explicit acceptance, commit — repo-level harness hook configs whose entries
   invoke the `dailybot hook` lifecycle commands (`session-start`, `activity`,
   `post-commit`, `stop`, `dismiss`), e.g. Claude Code `.claude/settings.json`
@@ -137,7 +137,7 @@ with explicit acceptance, and each reconciled if already present (§7):
 
 ### 3.5 Paired Dailybot skill — full capability surface (informational)
 
-The Dailybot agent skill (currently **3.23.17**, source
+The Dailybot agent skill (currently **3.23.20**, source
 [`DailybotHQ/agent-skill`](https://github.com/DailybotHQ/agent-skill)) exposes
 **17 coordinated sub-skills**: report, ask, messages, email, chat,
 conversations, health, check-ins (complete + authoring), kudos (give + browse),
@@ -182,7 +182,7 @@ execution documentation (the generated `AGENTS.md` reporting section and/or
 |-------|---------|-------|-------------|
 | **Kickoff** | A plan is materialized and approved (`create` Step 5), or its first `execute` turn begins | regular | **SHOULD** |
 | **Significant task** | A task that is independently significant completes — a feature, a bug fix, a major refactor (`execute` Step 5). Intermediate setup tasks are **not** reported. | regular | **MAY** |
-| **Blocked** | The plan halts on a stop condition and `state.json.blocked` is populated (`AGENT_PROTOCOL.md` §7.3, `PLAN_STATE.md` §4.4) — typical of unattended runs | regular, with `blockers` populated | **SHOULD** |
+| **Blocked** | The plan halts on a stop condition and `state.json.blocked` is populated — `state.json.blocker` on a v8 plan (`AGENT_PROTOCOL.md` §7.3, `PLAN_STATE.md` §4.4, `LOOP_ENGINEERING.md` §3) — typical of unattended runs | regular, with `blockers` populated | **SHOULD** |
 | **Completion** | All tasks `[x]`; the plan finishes (`execute` Step 7) | **milestone** | **SHOULD** |
 
 - The **kickoff** report describes *what is being built and why it matters*
@@ -191,7 +191,8 @@ execution documentation (the generated `AGENTS.md` reporting section and/or
 - The **blocked** report is the unattended profile's escalation made human: the
   team sees *what is stuck and what it needs* in the standup channel instead of
   discovering a silent overnight halt. Its content **MUST** come from
-  `state.json.blocked` (`reason`, `needs`).
+  `state.json.blocked` (`reason`, `needs`), or from `state.json.blocker` on a
+  v8 plan (the same `reason` and `needs`, plus its class).
 - A plan **completion** is the only **milestone**; every other event is a
   regular report. A plan **MUST NOT** emit more than one kickoff and one
   completion report.
@@ -205,7 +206,8 @@ The report command shape is
 - When the plan carries the machine-readable state layer (`PLAN_STATE.md`),
   `--json-data` **SHOULD** be derived from `state.json`: `completed` from the
   completed tasks (phrased as outcomes, not task numbers), `in_progress` from
-  the task currently `in_progress`, and `blockers` from `state.json.blocked`.
+  the task currently `in_progress`, and `blockers` from `state.json.blocked`
+  (`state.json.blocker` on a v8 plan).
   The state layer is the single source the payload is projected from — the
   addon **MUST NOT** invent a second progress-tracking mechanism.
 - Without the state layer, the payload is derived from the plan README's
@@ -294,7 +296,7 @@ A repo is **conformant to this addon** when **all** hold (after acceptance):
 - `SKILL.md` (the onboarding hook + flow), `templates/INTEGRATION.md` (reasoning aid)
 - `../README.md` (addon mechanism), [`../../spec/ADDONS.md`](../../spec/ADDONS.md) (concept + pointer)
 - Dailybot skill: [`DailybotHQ/agent-skill`](https://github.com/DailybotHQ/agent-skill)
-  — `SKILL.md` (currently **3.23.17**), `shared/auth.md`, `TRUST.md`,
+  — `SKILL.md` (currently **3.23.20**), `shared/auth.md`, `TRUST.md`,
   `report/SKILL.md`, `report/hooks.md`, `report/triggers.md`
 - Dailybot CLI: [`DailybotHQ/cli`](https://github.com/DailybotHQ/cli), PyPI `dailybot-cli`
   — minimum **>= 3.9.0**; `docs/AGENT_HOOKS.md` (the `dailybot hook` command group
