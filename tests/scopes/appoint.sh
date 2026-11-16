@@ -103,7 +103,6 @@ assert_contains "and says it is not proof" "$(jget "$OUT" lead_reason)" "not pro
 # prior: lead GONE_LEAD, succession GONE_SUCC, lanes GONE_LANE, LANE. Takeover by
 # the successor and appointment of a lane both claim epoch 2; the successor comes
 # first wherever and in whatever order the notices arrive.
-TAKE='herdr-peers lead notice'
 box_with lanes "$GONE_LEAD" "$GONE_SUCC" "$GONE_LANE,$LANE"
 lead_notice2 "$LANE" "$(nid)" 2 "$LANE" "$GONE_SUCC" "$GONE_LANE" lanes appointment >"$WORK/ap.txt"
 lead_notice2 "$GONE_SUCC" "$(nid)" 2 "$GONE_SUCC" "" "$GONE_LANE,$LANE" lanes null >"$WORK/tk.txt"
@@ -136,7 +135,6 @@ run on_box "$HELPER" check --json "$WORK/wide2.txt"
 assert_eq "a tie notice that adds to the succession is refused" "rejected" "$(jget "$OUT" lead_status)"
 box_with lanes "$LIVE" "$GONE_SUCC" "$GONE_LANE,$LANE"
 lead_notice2 "$LANE" "$(nid)" 2 "$LANE" "$GONE_SUCC" "$GONE_LANE" lanes appointment >"$WORK/ap2.txt"
-lead_notice2 "$LIVE" "$(nid)" 1 "$LIVE" "$GONE_SUCC" "$GONE_LANE,$LANE,$GONE_LEAD" lanes null >"$WORK/noop.txt"
 lead_notice2 "$GONE_LANE" "$(nid)" 2 "$GONE_LANE" "$GONE_SUCC" "$LANE" lanes appointment >"$WORK/early2.txt"
 run on_box "$HELPER" check --json "$WORK/early2.txt"
 assert_eq "a tie notice is probed: with the lead alive it is refused" "rejected" "$(jget "$OUT" lead_status)"
