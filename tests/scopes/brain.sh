@@ -183,6 +183,16 @@ assert [t for p, t in io.sent if p == 'w9:p1'] == [B.BRIEF] and ap.brain.b.state
 assert 'local:w9:p1' in ap.quiet
 step(ap)
 assert len([t for p, t in io.sent if p == 'w9:p1']) == 1, 'briefed once'
+# The brain ends a turn asking in prose: it is never nudged (it waits for questions).
+import os
+prose = open(os.path.join(os.path.dirname(sys.argv[2]), 'codex__done__prose_question.screen')).read()
+io.rows['local'] = [row('w9:p1', 'working', 3)]
+step(ap)
+io.rows['local'] = [row('w9:p1', 'done', 4)]
+io.screens['w9:p1'] = prose
+step(ap)
+assert len([t for p, t in io.sent if p == 'w9:p1']) == 1, 'the brain is never nudged in prose'
+io.screens['w9:p1'] = ''
 
 # A stalled plan is put to the brain; nudge_once_more gives exactly one more prompt.
 io.rows['local'] = [row('w9:p1', 'idle', 2), row('w1:p2')]
@@ -209,12 +219,23 @@ step(ap, 1500)
 step(ap, 1500)
 assert len([t for p, t in io.sent if p == 'w1:p2']) == 4, 'exactly one more prompt'
 # A second nudge_once_more for the same plan is not honoured.
-for _ in range(3):
+asked = len([t for p, t in io.sent if 'Question q-' in t])
+for _ in range(6):
     for r in io.rows['local']:
         if r['pane'] == 'w1:p2':
             r['seq'] += 1; r['turn'] += 1
     step(ap, 1500)
-assert len([t for p, t in io.sent if p == 'w1:p2']) == 4
+    if len([t for p, t in io.sent if 'Question q-' in t]) > asked:
+        break                    # stalled again: the brain is asked again
+qid2 = last_q(io)
+assert qid2 != qid, 'the plan stalled again and the brain was asked again'
+answer(io, qid2, 'nudge_once_more')
+step(ap, 60)
+for r in io.rows['local']:
+    if r['pane'] == 'w1:p2':
+        r['seq'] += 1; r['turn'] += 1
+step(ap, 1500); step(ap, 1500)
+assert len([t for p, t in io.sent if p == 'w1:p2']) == 4, 'nudge_once_more is honoured once per plan'
 
 # A blocked plan with an askable blocker: ask_lead_to_resolve sends the fixed text once.
 io, ap = fresh()
