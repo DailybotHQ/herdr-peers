@@ -9,7 +9,9 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
-The 2.0.0 release: lead appointment under protocol 2, and the daemon's brain.
+## [2.0.0] - 2026-11-16
+
+The 2.0.0 release: lead appointment under protocol 2, the daemon's brain, and the plan queue.
 Upgrading from 1.x: [docs/MIGRATING.md](docs/MIGRATING.md).
 
 ### Breaking
@@ -830,7 +832,15 @@ First release. Interface version: **protocol 1** (`metadata.protocol: 1` in
   `harness lint protocol helper skill templates security live`; CI on Ubuntu
   and macOS.
 
-[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/DailybotHQ/herdr-peers/compare/v1.3.1...v2.0.0
+[1.3.1]: https://github.com/DailybotHQ/herdr-peers/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/DailybotHQ/herdr-peers/compare/v1.2.4...v1.3.0
+[1.2.4]: https://github.com/DailybotHQ/herdr-peers/compare/v1.2.3...v1.2.4
+[1.2.3]: https://github.com/DailybotHQ/herdr-peers/compare/v1.2.2...v1.2.3
+[1.2.2]: https://github.com/DailybotHQ/herdr-peers/compare/v1.2.1...v1.2.2
+[1.2.1]: https://github.com/DailybotHQ/herdr-peers/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/DailybotHQ/herdr-peers/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/DailybotHQ/herdr-peers/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.3...v1.0.0
 [0.3.3]: https://github.com/DailybotHQ/herdr-peers/compare/v0.3.2...v0.3.3
