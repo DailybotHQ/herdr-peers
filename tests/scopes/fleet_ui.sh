@@ -232,6 +232,8 @@ a, t = app(['r', 'q'], path); a.run()
 assert a.grouping == 'repo' and 'app' in t.screen() and 'web' in t.screen()
 a, t = app(['m', 'q'], path); a.run()
 assert a.grouping == 'machine' and '▣ Mac' in t.screen()
+a, t = app(['u', 'q'], path); a.run()
+assert a.grouping == 'queue' and 'u Queues' in t.screen()
 # move and open a plan, then back
 a, t = app(['enter', 'q'], path); a.run()
 assert a.mode == 'plan' and 'Progress' in t.screen() and 'Next: tests' in t.screen(), t.screen()
@@ -395,7 +397,6 @@ assert ui.clean(dirty) == 'a b c d e f', repr(ui.clean(dirty))
 print('ok')
 PY
 assert_eq "malformed maps, symlinks, oversized files and format characters are handled" "ok" "$OUT"
-export XDG_STATE_HOME=$UI_XDG_STATE
 
 # One validator for the map (issue #44): what `fleet ui` refuses is never
 # written by the daemon, nor read by `fleet`.
@@ -415,3 +416,32 @@ PY
 )
 assert_eq "one validator: the UI's, the writer's and the reader's are the same function" "True failed False
 None" "$out"
+
+# --- the plan queues --------------------------------------------------------------------------------
+run python3 - "$UI_SCRIPTS" <<'PY'
+import sys, time
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import fleet_ui as ui, fleet_report
+fleet = {'schema': 'herdr-peers/fleet-v1', 'daemon': {}, 'machines': [{
+    'machine': 'local', 'label': 'Mac', 'agents_state': 'ok', 'plans_state': 'ok', 'agents': [],
+    'plans': [{'plan': 'PLAN_2_next', 'class': 'open', 'lead': 'local:w1:p2', 'tasks_done': 0, 'tasks_total': 3}],
+    'queues': [{'repo_root': '/src/app', 'parallel': False, 'invalid': False, 'items': [
+        {'plan': 'PLAN_1_now', 'state': 'done', 'after': None, 'lead': None, 'ready': False, 'blocked_reason': None},
+        {'plan': 'PLAN_2_next', 'state': 'queued', 'after': 'PLAN_1_now', 'lead': 'local:w1:p2', 'ready': True, 'blocked_reason': None},
+        {'plan': 'PLAN_3_later', 'state': 'queued', 'after': None, 'lead': None, 'ready': False, 'blocked_reason': 'no lead named'}]}]}]}
+assert fleet_report.valid_fleet(fleet)
+ix = ui.Index(fleet)
+view = ui.build_view(ix, 'queue')
+assert [g.title for g in view] == ['app'] and 'one at a time' in view[0].subtitle
+text = '\n'.join(l.text() for l in ui.render_list(view, time.time(), 120))
+for want in ('☰ app', '1. ✓ PLAN_1_now', 'ready — starts next', 'no lead named', 'lead local:w1:p2'):
+    assert want in text, (want, text)
+plans = '\n'.join(l.text() for l in ui.render_list(ui.build_view(ix, 'plan'), time.time(), 140))
+assert 'queue 2/3' in plans, plans
+bad = {'schema': 'herdr-peers/fleet-v1', 'daemon': {}, 'machines': [dict(fleet['machines'][0], queues=[{'repo_root': '/r', 'items': 5}])]}
+assert not fleet_report.valid_fleet(bad), 'a malformed queue on the map is refused'
+print('ok')
+PY
+assert_eq "the Queues view lists each repository's queue; plans show their place in it" "ok" "$OUT"
+export XDG_STATE_HOME=$UI_XDG_STATE

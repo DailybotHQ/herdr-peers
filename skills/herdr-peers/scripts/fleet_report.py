@@ -670,6 +670,14 @@ def valid_fleet(doc):
             return False
         if not isinstance(m.get('agents', []), list) or not isinstance(m.get('plans', []), list):
             return False
+        queues = m.get('queues', [])
+        if not isinstance(queues, list) or not all(
+                isinstance(q, dict) and _str(q.get('repo_root')) and isinstance(q.get('items', []), list)
+                and all(isinstance(it, dict) and isinstance(it.get('plan'), str) and _str(it.get('state'))
+                        and _str(it.get('lead')) and _str(it.get('after')) and _str(it.get('blocked_reason'))
+                        for it in q.get('items', []))
+                for q in queues):
+            return False
         for a in m.get('agents', []):
             if not isinstance(a, dict) or not isinstance(a.get('pane'), str):
                 return False
