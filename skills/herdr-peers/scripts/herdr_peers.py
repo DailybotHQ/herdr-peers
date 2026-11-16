@@ -3252,6 +3252,88 @@ class AutopilotIO(object):
             return 'unknown', None
         return 'ok', report
 
+    # -- the brain (autopilot --brain) -----------------------------------------
+    def random_bytes(self, n):
+        return os.urandom(n)
+
+    def brain_owner(self):
+        return 'local:%s' % self.pane
+
+    def brain_launch(self, kinds, models):
+        """Pick an account (ask mode), lease it, create a workspace of the
+        daemon's own and start the brain in its fresh shell. Returns
+        {pane, terminal, workspace, kind, profile}; raises on any refusal."""
+        import brain
+        ak = shutil.which('ak')
+        if not ak:
+            raise Stop(EXIT_ENV, 'ak is not on PATH')
+        ak = os.path.realpath(ak)
+        argv = [ak, 'pick', '--kinds', ','.join(kinds)]
+        for kind in kinds:
+            if models.get(kind):
+                argv += ['--model-for', '%s=%s' % (kind, models[kind])]
+        argv += ['--owner', self.brain_owner(), '--max-age', '300', '--json']
+        env = dict(os.environ, AGENTKIT_PERMISSIONS='ask')
+        rc, out = bounded_run(argv, b'', 256 * 1024, 30, env=env)
+        if rc not in (0, 1) or out is None:
+            raise Stop(EXIT_HERDR, 'ak pick failed')
+        try:
+            doc = json.loads(out.decode('utf-8'))
+        except (ValueError, UnicodeDecodeError):
+            raise Stop(EXIT_HERDR, 'ak pick did not print JSON')
+        kind, profile, launch, line = brain.launch_line(doc, ak)
+        rc, _ = bounded_run([ak, 'lease', kind, profile, '--owner', self.brain_owner(),
+                             '--ttl', brain.LEASE_TTL, '--purpose', 'brain'], b'', 0, 30)
+        if rc != 0:
+            raise Stop(EXIT_POLICY, 'the account %s %s could not be leased' % (kind, profile))
+        made = herdr_json(['workspace', 'create', '--label', brain.WORKSPACE_LABEL, '--no-focus',
+                           '--cwd', self.store.dir], timeout=15)
+        result = made.get('result') or {}
+        pane = (result.get('root_pane') or {})
+        workspace = (result.get('workspace') or {}).get('workspace_id')
+        pane_id, terminal = pane.get('pane_id'), pane.get('terminal_id')
+        if not (isinstance(pane_id, str) and re.fullmatch(PANE_RE, pane_id)) or pane.get('agent'):
+            # Never type into a pane that is not a fresh shell of our own.
+            self.brain_release(kind, profile, workspace)
+            raise Stop(EXIT_HERDR, 'the new workspace did not give a fresh shell pane')
+        herdr_json(['pane', 'run', pane_id, line], timeout=15)
+        return {'pane': pane_id, 'terminal': terminal, 'workspace': workspace,
+                'kind': kind, 'profile': profile}
+
+    def brain_lease(self, kind, profile):
+        ak = shutil.which('ak')
+        import brain
+        return bool(ak) and bounded_run([os.path.realpath(ak), 'lease', kind, profile, '--owner',
+                                         self.brain_owner(), '--ttl', brain.LEASE_TTL,
+                                         '--purpose', 'brain'], b'', 0, 30)[0] == 0
+
+    def brain_release(self, kind, profile, workspace):
+        ak = shutil.which('ak')
+        if ak and kind and profile:
+            bounded_run([os.path.realpath(ak), 'lease', 'release', kind, profile, '--owner',
+                         self.brain_owner()], b'', 0, 30)
+        if isinstance(workspace, str) and re.fullmatch(r'[A-Za-z0-9]{1,32}', workspace):
+            herdr(['workspace', 'close', workspace], timeout=15)
+
+    def brain_answers(self, offset):
+        """New lines of the answers file since `offset`: ([lines], new offset)."""
+        path = os.path.join(self.store.dir, BRAIN_ANSWERS)
+        try:
+            fd = os.open(path, os.O_RDONLY | NOFOLLOW)
+        except OSError:
+            return [], offset
+        try:
+            size = os.fstat(fd).st_size
+            if size < offset:
+                offset = 0
+            os.lseek(fd, offset, os.SEEK_SET)
+            data = os.read(fd, min(size - offset, 64 * 1024))
+        finally:
+            os.close(fd)
+        cut = data.rfind(b'\n') + 1
+        lines = [l.decode('utf-8', 'replace') for l in data[:cut].split(b'\n') if l.strip()]
+        return lines, offset + cut
+
     def load_fleet(self):
         """This machine's last map, or None."""
         return load_fleet_report().read_fleet()[0]
@@ -3410,6 +3492,12 @@ def autopilot_option_argv(opts):
         argv += ['--scope', opts['scope']]
     if opts.get('loop'):
         argv.append('--loop')
+    if opts.get('brain'):
+        argv.append('--brain')
+        if opts.get('brain_kinds'):
+            argv += ['--brain-kinds', opts['brain_kinds']]
+        for raw in opts.get('brain_model') or []:
+            argv += ['--brain-model', raw]
     if opts.get('notify'):
         argv += ['--notify', opts['notify']]
     for name in opts.get('notify_env') or []:
@@ -3592,6 +3680,31 @@ def autopilot_start(args, store, opts):
         time.sleep(0.1)
 
 
+BRAIN_ANSWERS = 'brain-answers.ndjson'
+
+
+def autopilot_answer(args, store):
+    """`autopilot answer <question> <action>`: the brain's answer to one
+    question, appended to this server's state under the lock. The daemon
+    decides whether it counts (its own question, its own brain's pane)."""
+    import brain
+    if len(args.answer_args) != 2:
+        raise Stop(EXIT_USAGE, 'usage: herdr-peers autopilot answer <question-id> <action>')
+    qid, action = args.answer_args
+    if not brain.QUESTION_RE.fullmatch(qid) or not re.fullmatch(r'[a-z_]{1,32}', action):
+        raise Stop(EXIT_USAGE, 'a question id looks like q-0123456789ab; an action is one word')
+    current = herdr_json(['pane', 'current', '--current'], timeout=8)
+    me = ((current.get('result') or {}).get('pane') or {})
+    if not isinstance(me.get('pane_id'), str) or not re.fullmatch(PANE_RE, me['pane_id']):
+        raise Stop(EXIT_ENV, 'cannot tell which pane this is')
+    line = json.dumps({'qid': qid, 'action': action, 'pane': me['pane_id'],
+                       'terminal': me.get('terminal_id'), 'ts': now_iso()}, sort_keys=True) + '\n'
+    with store.lock():
+        append_line(os.path.join(store.dir, BRAIN_ANSWERS), line)
+    print('answer recorded for %s: %s' % (qid, action))
+    return EXIT_OK
+
+
 def cmd_autopilot(args):
     """A human starts this; no message can (protocol.md §13)."""
     require_herdr_env()
@@ -3601,6 +3714,10 @@ def cmd_autopilot(args):
     store = Store()
     store.ensure()
     verb = {'on': 'start', 'off': 'stop'}.get(args.autopilot_verb, args.autopilot_verb or 'run')
+    if verb == 'answer':
+        return autopilot_answer(args, store)
+    if args.answer_args:
+        raise Stop(EXIT_USAGE, 'extra arguments are for `autopilot answer <question> <action>`')
     if verb == 'status':
         return autopilot_status(store)
     if verb == 'stop':
@@ -3654,6 +3771,29 @@ def cmd_autopilot(args):
         if not notify or not shutil.which(notify[0]):
             raise Stop(EXIT_USAGE, '--notify needs a command whose program exists '
                        '(it is run without a shell)')
+    brain_opts, brain_kinds, brain_models_raw = None, None, []
+    if args.brain or args.brain_kinds or args.brain_model:
+        if not args.loop:
+            raise Stop(EXIT_USAGE, '--brain needs --loop: the brain decides for the plan loop')
+        if not args.brain:
+            raise Stop(EXIT_USAGE, '--brain-kinds and --brain-model need --brain')
+        import brain as brain_module
+        kinds = [k for k in (args.brain_kinds or 'claude,codex,grok').split(',') if k]
+        if not kinds or len(kinds) > 8 or not all(brain_module.KIND_RE.fullmatch(k) for k in kinds):
+            raise Stop(EXIT_USAGE, '--brain-kinds takes agent kinds in priority order, e.g. '
+                       'claude,codex,grok')
+        models = {}
+        for raw in args.brain_model or []:
+            kind, _, model = raw.partition('=')
+            if kind not in kinds or not brain_module.MODEL_RE.fullmatch(model or ''):
+                raise Stop(EXIT_USAGE, '--brain-model takes KIND=MODEL for a kind of --brain-kinds, '
+                           'e.g. claude=sonnet')
+            models[kind] = model
+            brain_models_raw.append(raw)
+        if not shutil.which('ak'):
+            raise Stop(EXIT_USAGE, '--brain needs coding-agents-kit (`ak`) on PATH')
+        brain_kinds = ','.join(kinds)
+        brain_opts = {'kinds': kinds, 'models': models}
     keep = []
     for name in args.notify_env or []:
         if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,63}', name):
@@ -3664,7 +3804,8 @@ def cmd_autopilot(args):
     opts = {'interval': interval, 'dry_run': bool(args.dry_run),
             'no_nudge': bool(args.no_nudge), 'catch_up': bool(args.catch_up),
             'exclude': sorted(exclude), 'scope': args.scope or None,
-            'loop': bool(args.loop), 'notify': args.notify, 'notify_env': keep}
+            'loop': bool(args.loop), 'notify': args.notify, 'notify_env': keep,
+            'brain': bool(args.brain), 'brain_kinds': brain_kinds, 'brain_model': brain_models_raw}
     if verb == 'start':
         return autopilot_start(args, store, opts)
     io = AutopilotIO(store, me.get('pane_id'), me.get('terminal_id'), scope_from(args),
@@ -3710,7 +3851,7 @@ def cmd_autopilot(args):
 
     loop = autopilot.Autopilot(io, dry_run=args.dry_run, nudge=not args.no_nudge,
                                catch_up=args.catch_up, exclude=exclude, confirm=confirm,
-                               loop=args.loop, grace=grace)
+                               loop=args.loop, grace=grace, brain=brain_opts)
     previous = signal.signal(signal.SIGTERM, halt)
     try:
         if passes is None:
@@ -3744,6 +3885,11 @@ def cmd_autopilot(args):
         print('autopilot: stopped')
     finally:
         signal.signal(signal.SIGTERM, previous)
+        if loop.brain is not None:
+            try:
+                loop.brain.close()  # release the brain's lease, close its own workspace
+            except Exception as exc:  # stopping never fails on the brain
+                warn('autopilot: could not close the brain (%s)' % safe(type(exc).__name__))
         if fd is not None:
             for path in (opts_path, pid_path):
                 try:
@@ -3939,7 +4085,7 @@ def build_parser():
                         'accept the recommended option, continue an agent that stopped to ask '
                         '(started by a human only)')
     ap.add_argument('autopilot_verb', nargs='?',
-                    choices=['run', 'start', 'on', 'stop', 'off', 'status', 'logs'],
+                    choices=['run', 'start', 'on', 'stop', 'off', 'status', 'logs', 'answer'],
                     help='run in this pane (default); start (on) in the background; stop (off) '
                     'the running autopilot; status: whether it runs, how, and its last actions; '
                     'logs: the background log')
@@ -3967,6 +4113,15 @@ def build_parser():
     ap.add_argument('--notify', metavar='COMMAND',
                     help='with --loop: a command run (no shell) with a plan-event-v1 JSON object '
                     'on standard input when a plan stalls, is blocked, loses its lead or completes')
+    ap.add_argument('answer_args', nargs='*', metavar='ARG',
+                    help='for `autopilot answer`: <question-id> <action> (run by the brain)')
+    ap.add_argument('--brain', action='store_true',
+                    help='with --loop: launch and keep a dedicated decision agent (ask mode) and '
+                    'ask it what the rules cannot decide; it chooses among fixed actions only')
+    ap.add_argument('--brain-kinds', metavar='KINDS',
+                    help='with --brain: agent kinds in priority order (default claude,codex,grok)')
+    ap.add_argument('--brain-model', action='append', metavar='KIND=MODEL',
+                    help='with --brain: the model for a kind, e.g. claude=sonnet (repeatable)')
     ap.add_argument('--notify-env', action='append', metavar='NAME',
                     help='with --notify: also pass this environment variable to the command '
                     '(repeatable); by default it gets only PATH, HOME, the locale and XDG '

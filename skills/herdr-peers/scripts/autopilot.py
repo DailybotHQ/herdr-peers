@@ -492,7 +492,7 @@ class Autopilot(object):
 
     def __init__(self, io, dry_run=False, nudge=True, catch_up=False, exclude=(),
                  clock=time.time, sleep=time.sleep, confirm=CONFIRM_DELAY, loop=False,
-                 grace=LEAD_GRACE):
+                 grace=LEAD_GRACE, brain=None):
         self.io, self.dry_run, self.nudge, self.catch_up = io, dry_run, nudge, catch_up
         self.exclude = set(exclude)
         self.clock, self.sleep, self.confirm = clock, sleep, confirm
@@ -503,6 +503,8 @@ class Autopilot(object):
         self.passes = 0
         self.grace = grace
         self.plans = PlanLoop(self) if loop else None
+        self.quiet = set()     # panes never nudged in prose (the brain)
+        self.brain = BrainKeeper(self, brain) if brain and self.plans else None
 
     # -- one pass ---------------------------------------------------------
     def run_pass(self):
@@ -616,6 +618,8 @@ class Autopilot(object):
             if choice.action == 'leave':
                 memo.left = digest
                 self.record(addr, kind, choice, 'left')
+                if choice.cls == 'unknown' and self.brain is not None:
+                    self.brain.ask('screen_unknown', machine, None, {'addr': addr})
             elif state in ('idle', 'done'):
                 self.maybe_nudge(machine, pane, addr, kind, memo, text, stale)
             return True
@@ -650,7 +654,7 @@ class Autopilot(object):
         self.io.prompt(machine, pane, RESUME_TEXT)
 
     def maybe_nudge(self, machine, pane, addr, kind, memo, text, stale):
-        if not self.nudge:
+        if not self.nudge or addr in self.quiet:
             return
         if stale and not self.catch_up:
             return  # stopped before autopilot started: not ours to restart
@@ -689,6 +693,7 @@ class PlanMemo(object):
         self.seen_open = False
         self.skip_seq = None   # the lead's state sequence when its screen ruled a prompt out
         self.absent = 0        # consecutive reports in which the lead's pane was not listed
+        self.extra = 0         # one more prompt the brain allowed (once per plan)
 
 
 class PlanLoop(object):
@@ -705,6 +710,7 @@ class PlanLoop(object):
         self.ap, self.io = ap, ap.io
         self.machines = {}     # machine -> {'at', 'state', 'report'}
         self.memos = {}        # (machine, plan id) -> PlanMemo
+        self.resolve = set()        # (machine, plan) the brain allowed to ask its lead to resolve
         self.fleet_text = None      # the daemon's own map
         self.remote_text = None     # the reduced copy left on other machines
         self.fleet_key = None
@@ -773,6 +779,8 @@ class PlanLoop(object):
     # -- one pass ----------------------------------------------------------
     def run(self, listed):
         now = self.ap.clock()
+        if self.ap.brain is not None:
+            self.ap.brain.tick(listed, now)
         self.fetch(listed, now)
         prompted = set()
         for machine in sorted(listed):
@@ -817,6 +825,10 @@ class PlanLoop(object):
         memo.seen_open = True
         if cls == 'blocked':
             self.enter(memo, machine, plan, 'plan_blocked', addr, 'left')
+            if (machine, plan['plan']) in self.resolve and pane is not None:
+                self.resolve.discard((machine, plan['plan']))
+                self.prompt_lead(machine, plan, pane, addr, by_pane, now, prompted,
+                                 brain_mod().RESOLVE_TEXT % plan['plan'], 'plan_resolve')
             return
         if memo.situation in ('plan_blocked', 'plan_completed'):
             memo.situation = None
@@ -864,7 +876,7 @@ class PlanLoop(object):
             return
         if memo.skip_seq is not None and memo.skip_seq == row.get('seq'):
             return  # its screen ruled a prompt out and has not moved since
-        if memo.prompts >= MAX_PLAN_PROMPTS:
+        if memo.prompts >= MAX_PLAN_PROMPTS + memo.extra:
             self.enter(memo, machine, plan, 'plan_stalled', addr, 'gave_up')
             return
         text = self.io.read(machine, pane)
@@ -883,6 +895,34 @@ class PlanLoop(object):
                        'nudged', plan=plan['plan'])
         if not self.ap.dry_run:
             self.io.prompt(machine, pane, LOOP_TEXT % plan['plan'])
+
+    def prompt_lead(self, machine, plan, pane, addr, by_pane, now, prompted, text, cls):
+        """One fixed prompt to a plan's lead, under the same guards as the
+        loop prompt: listed, in scope, idle or done, not its own pane, no
+        dialog, login, limit or draft on its screen, the hourly cap."""
+        row = by_pane.get(pane)
+        pmemo = self.ap.panes.get(addr)
+        if row is None or row.get('you') or addr in self.ap.exclude or pmemo is None \
+                or not row.get('in_scope', True) or row.get('state') not in ('idle', 'done') \
+                or addr in prompted or not self.ap.nudge:
+            return False
+        pmemo.nudges = [t for t in pmemo.nudges if now - t < NUDGE_WINDOW]
+        if len(pmemo.nudges) >= MAX_NUDGES:
+            return False
+        text_on = self.io.read(machine, pane)
+        if text_on is None:
+            return False
+        choice = decide(row.get('agent'), row.get('state'), text_on)
+        if choice.action in ('keys', 'leave') or choice.cls == 'usage_limit' \
+                or has_draft(text_on, row.get('state')):
+            return False
+        pmemo.nudges.append(now)
+        prompted.add(addr)
+        self.ap.record(addr, row.get('agent'), Decision('prompt', cls, 'brain allowed'), 'nudged',
+                       plan=plan['plan'])
+        if not self.ap.dry_run:
+            self.io.prompt(machine, pane, text)
+        return True
 
     def succeed(self, memo, machine, plan, by_pane, addr, reason, prompted):
         """The lead is gone: ask the first reachable successor to take over,
@@ -925,6 +965,12 @@ class PlanLoop(object):
         if outcome:
             self.ap.record(addr, None, Decision('leave', situation, 'plan needs the developer'),
                            outcome, plan=plan['plan'])
+        keeper = self.ap.brain
+        if keeper is not None:
+            if situation == 'plan_stalled':
+                keeper.ask('plan_stalled', machine, plan, {'addr': addr})
+            elif situation == 'plan_blocked' and brain_mod().blocker_is_askable(plan):
+                keeper.ask('plan_blocked', machine, plan, {'addr': addr})
         self.io.event({'schema': EVENT_SCHEMA, 'event': situation, 'plan': plan['plan'],
                        'machine': machine, 'lead': plan['lead'], 'repo_root': plan['repo_root'],
                        'blocker_class': plan['blocker_class']}, self.ap.dry_run)
@@ -1001,6 +1047,145 @@ MAP_MAX_BYTES = 2 * 1024 * 1024 - 4096   # under the store's 2 MB cap, with room
 REMOTE_PLAN_KEYS = ('plan', 'class', 'blocker_class', 'progress', 'lead', 'lanes', 'succession',
                     'epoch', 'updated_at', 'repo_root', 'situation',
                     'tasks_done', 'tasks_total', 'current_task')
+
+
+def brain_mod():
+    import brain
+    return brain
+
+
+class BrainKeeper(object):
+    """The daemon's brain: launched by the daemon itself (ask mode, on the
+    best account by provider priority), briefed once, kept alive, asked
+    only what the rules cannot decide, and obeyed only within each case's
+    closed action list. See brain.py; the I/O is the helper's."""
+
+    def __init__(self, ap, opts):
+        self.ap, self.io, self.opts = ap, ap.io, opts
+        self.b = brain_mod().Brain()
+
+    # -- lifecycle ---------------------------------------------------------
+    def tick(self, listed, now):
+        b, B = self.b, brain_mod()
+        rows = dict((r['pane'], r) for r in (listed.get('local') or []))
+        self.read_answers(now)
+        for q in b.expired(now):
+            self.ap.record(q['addr'] or 'local:-', None, Decision('leave', 'brain_default',
+                                                                   'no valid answer in time'),
+                           'left', plan=q['plan'])
+        if b.pane and b.state in ('starting', 'ready'):
+            row = rows.get(b.pane)
+            pmemo = self.ap.panes.get('local:%s' % b.pane)
+            gone = row is None and b.state == 'ready'
+            limited = pmemo is not None and pmemo.limit_tries >= 1
+            if gone or limited:
+                self.retire('gone' if gone else 'usage_limit')
+            elif b.state == 'starting' and row is not None and row.get('state') in ('idle', 'done'):
+                if not self.ap.dry_run:
+                    self.io.prompt('local', b.pane, B.BRIEF)
+                b.state, b.briefed = 'ready', True
+                self.ap.record('local:%s' % b.pane, row.get('agent'),
+                               Decision('prompt', 'brain_briefed', 'brain ready'), 'nudged')
+            elif b.state == 'ready' and now - b.lease_at >= B.LEASE_RENEW:
+                if not self.ap.dry_run and self.io.brain_lease(b.kind, b.profile):
+                    b.lease_at = now
+        if b.state in ('none', 'failed') and b.can_launch(now):
+            self.launch(now)
+
+    def launch(self, now):
+        b = self.b
+        b.launches.append(now)
+        if self.ap.dry_run:
+            b.state = 'failed'
+            self.ap.record('local:-', None, Decision('leave', 'brain_launch', 'dry run: not launched'),
+                           'left')
+            return
+        try:
+            info = self.io.brain_launch(self.opts.get('kinds') or ('claude', 'codex', 'grok'),
+                                        self.opts.get('models') or {})
+        except Exception as exc:  # a refusal or a tool failure: recorded, retried within the cap
+            b.state = 'failed'
+            self.ap.record('local:-', None, Decision('leave', 'brain_launch_failed',
+                                                     brain_mod().clean(str(exc), 120)), 'left')
+            return
+        b.pane, b.terminal, b.workspace = info['pane'], info['terminal'], info['workspace']
+        b.kind, b.profile, b.lease_at = info['kind'], info['profile'], now
+        b.state, b.briefed = 'starting', False
+        self.ap.quiet.add('local:%s' % b.pane)
+        self.ap.record('local:%s' % b.pane, b.kind, Decision('prompt', 'brain_launched',
+                                                             '%s %s' % (b.kind, b.profile)), 'nudged')
+
+    def retire(self, why):
+        b = self.b
+        self.ap.record('local:%s' % b.pane, b.kind, Decision('leave', 'brain_replaced', why), 'left')
+        self.close()
+        b.state = 'none'
+
+    def close(self):
+        """Release the lease and close the workspace the daemon created."""
+        b = self.b
+        if b.pane and not self.ap.dry_run:
+            self.io.brain_release(b.kind, b.profile, b.workspace)
+        self.ap.quiet.discard('local:%s' % b.pane)
+        b.pane = b.terminal = b.workspace = None
+
+    # -- questions -----------------------------------------------------------
+    def ask(self, case, machine, plan, ctx):
+        """Put one question to the brain, if it is ready and the cap allows;
+        never waits. Its answer is read on a later pass."""
+        b, B = self.b, brain_mod()
+        now = self.ap.clock()
+        key = '%s|%s|%s' % (case, machine, (plan or {}).get('plan') or ctx.get('addr'))
+        if b.state != 'ready' or b.open_for(key) or not b.can_ask(now):
+            return
+        qid = B.new_question_id(self.io.random_bytes)
+        b.questions[qid] = {'case': case, 'key': key, 'at': now, 'answered': False,
+                            'machine': machine, 'plan': (plan or {}).get('plan'),
+                            'lead': (plan or {}).get('lead'), 'addr': ctx.get('addr'),
+                            'repo_root': (plan or {}).get('repo_root'),
+                            'blocker_class': (plan or {}).get('blocker_class')}
+        b.asked.append(now)
+        self.ap.record('local:%s' % b.pane, b.kind, Decision('prompt', 'brain_asked', case),
+                       'nudged', plan=(plan or {}).get('plan'))
+        if not self.ap.dry_run:
+            self.io.prompt('local', b.pane, B.question_text(qid, case, (plan or {}).get('plan'),
+                                                            machine))
+
+    def read_answers(self, now):
+        b, B = self.b, brain_mod()
+        lines, b.offset = self.io.brain_answers(b.offset)
+        for line in lines:
+            rec = B.parse_answer_line(line)
+            if rec is None:
+                continue
+            got = b.accept(rec, now)
+            if got is None:
+                self.ap.record('local:%s' % (b.pane or '-'), None,
+                               Decision('leave', 'brain_answer_refused', B.clean(rec.get('qid'), 20)),
+                               'left')
+                continue
+            q, action = got
+            self.ap.record(q['addr'] or 'local:-', None,
+                           Decision('prompt' if action not in ('leave',) else 'leave',
+                                    'brain_' + action, q['case']),
+                           'nudged' if action != 'leave' else 'left', plan=q['plan'])
+            self.act(q, action)
+
+    def act(self, q, action):
+        """Run one allowed action through the daemon's own paths."""
+        loop = self.ap.plans
+        if action == 'notify_human':
+            self.io.event({'schema': EVENT_SCHEMA, 'event': 'needs_human', 'plan': q['plan'],
+                           'machine': q['machine'], 'lead': q['lead'], 'repo_root': q['repo_root'],
+                           'blocker_class': q['blocker_class']}, self.ap.dry_run)
+        elif action == 'nudge_once_more' and q['plan']:
+            memo = loop.memos.get((q['machine'], q['plan']))
+            if memo is not None and memo.extra == 0:
+                memo.extra = 1
+                if memo.situation == 'plan_stalled':
+                    memo.situation = None
+        elif action == 'ask_lead_to_resolve' and q['plan']:
+            loop.resolve.add((q['machine'], q['plan']))
 
 
 def remote_copy(body):
