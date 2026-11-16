@@ -44,6 +44,9 @@ MAX_PLAN_PROMPTS = 3     # loop prompts to one plan without progress, then it is
 ABSENT_PASSES = 2        # passes a lead's pane must be missing before it counts as gone
 FLEET_SCHEMA = 'herdr-peers/fleet-v1'
 EVENT_SCHEMA = 'herdr-peers/plan-event-v1'
+# The map lists at most this many excluded brain profiles (fleet-v1's limit; the
+# daemon's own exclusion set is not capped, only what it publishes).
+EXCLUDED_SHOWN = 16
 
 NUDGE_TEXT = (
     '[autopilot] The developer is away and has pre-approved the recommended option for every '
@@ -838,11 +841,14 @@ class PlanLoop(object):
                     self.io.warn('%s:%s' % (machine, plan.get('plan')), exc)
             seen = set()
             queues = info['report'].get('queues') or []
+            # A queue reported invalid (a queue.json caught mid-write, say) lists
+            # no items: its repository keeps its state until a valid read.
+            unread = set(q.get('repo_root') for q in queues if q.get('invalid'))
             for queue in queues:
                 for item in queue.get('items') or []:
                     seen.add((machine, queue.get('repo_root'), item.get('plan')))
             if info.get('state') == 'ok':  # a machine that could not answer keeps its state
-                self.forget_queues(machine, seen)
+                self.forget_queues(machine, seen, unread)
             for queue in queues:
                 try:
                     self.consider_queue(machine, queue, by_pane, now, prompted, seen)
@@ -1021,13 +1027,18 @@ class PlanLoop(object):
             if sequential:
                 return  # one at a time per repository
 
-    def forget_queues(self, machine, seen):
+    def forget_queues(self, machine, seen, unread=()):
         """Drop the queue state of this machine's items that its current report
-        no longer lists (an item removed, a queue deleted)."""
+        no longer lists (an item removed, a queue deleted). A repository whose
+        queue was reported invalid (`unread`) keeps its state: no items were read,
+        so nothing is known to be gone, and forgetting `queued` would prompt its
+        lead a second time."""
+        def gone(k):
+            return k[0] == machine and k not in seen and k[1] not in unread
         for store in (self.queue_told, self.queue_since):
-            for key in [k for k in store if k[0] == machine and k not in seen]:
+            for key in [k for k in store if gone(k)]:
                 del store[key]
-        self.queued -= set(k for k in self.queued if k[0] == machine and k not in seen)
+        self.queued -= set(k for k in self.queued if gone(k))
 
     def tell_queue(self, machine, repo, item, key, reason, now):
         """Report a queued item that cannot start, once per reason; a passing
@@ -1450,7 +1461,7 @@ class BrainKeeper(object):
                 'pane': ('local:%s' % b.pane) if b.pane else None,
                 'asked_last_hour': len([t for t in b.asked if now - t < 3600]),
                 'open_questions': sum(1 for q in b.questions.values() if not q['answered']),
-                'last': self.last, 'excluded': sorted(self.excluded), 'retired': self.retired}
+                'last': self.last, 'excluded': sorted(self.excluded)[:EXCLUDED_SHOWN], 'retired': self.retired}
 
     def act(self, q, action):
         """Run one allowed action through the daemon's own paths."""

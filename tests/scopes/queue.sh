@@ -332,6 +332,24 @@ io.report = {'plans': [], 'agents': [], 'queues': [{'repo_root': '/r', 'parallel
     qi('PLAN_2_next', ready=False, reason='not approved')]}]}
 step(ap, 400)
 assert io.events == [('queue_blocked', 'PLAN_2_next')], 'a reason that clears and returns is reported again'
+# a queue reported invalid (a queue.json caught mid-write) lists no items: its
+# repository keeps its queue state, so a started item's lead is not prompted twice
+io, ap = fresh()
+io.rows = [row('w1:p2')]
+io.report = {'plans': [], 'agents': [], 'queues': [{'repo_root': '/r', 'parallel': True, 'items': [
+    qi('PLAN_2_next', ready=False, reason='not approved')]}]}
+ap.run_pass()
+ap.plans.queued.add(('local', '/r', 'PLAN_9_started'))
+ap.plans.queued.add(('local', '/gone', 'PLAN_8_gone'))
+told = dict(ap.plans.queue_told)
+io.report = {'plans': [], 'agents': [], 'queues': [{'repo_root': '/r', 'parallel': False, 'items': [], 'invalid': True}]}
+step(ap, 400)
+assert ('local', '/r', 'PLAN_9_started') in ap.plans.queued, 'an invalid queue keeps its queued keys'
+assert ap.plans.queue_told == told, 'an invalid queue keeps its reported reasons'
+assert ('local', '/gone', 'PLAN_8_gone') not in ap.plans.queued, 'another repository no longer listed is forgotten'
+io.report = {'plans': [], 'agents': [], 'queues': [{'repo_root': '/r', 'parallel': True, 'items': []}]}
+step(ap, 400)
+assert not ap.plans.queued and not ap.plans.queue_told, 'a valid read that lists nothing forgets'
 # an appointee must not be a member (lead, successor or lane) of another open plan
 io, ap = fresh()
 other = {'plan': 'P_other', 'class': 'open', 'lead': 'local:w1:p9', 'succession': ['local:w1:p8'], 'lanes': ['local:w1:p2']}
