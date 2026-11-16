@@ -9,6 +9,8 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-15
+
 ### Added
 
 - **`autopilot --loop`: every open plan runs to its end.** The daemon a
@@ -64,6 +66,18 @@ changes bumped the minor version).
 - Threat model rows T34–T38 (`docs/SECURITY.md`): the loop's `ssh` command,
   a hostile answer from a machine, a hostile lead record or plan state, the
   map written on other machines, and the notify command.
+
+### Fixed
+
+- **A background autopilot skipped the pane it was started from.** The
+  own-pane rule exists so a foreground autopilot never keys the pane it
+  runs in; a background one has no pane, so the pane that ran
+  `autopilot start` is an ordinary agent pane. A lead that started the
+  daemon stayed blocked at its own questions. It is now watched like any
+  other; a foreground autopilot still never keys its own pane.
+- A regression fixture for a multi-question form with tabs
+  (`claude__blocked__question_tabs_recommended_es`): the recommended
+  option of each tab, then the review screen's Submit.
 
 ## [1.2.4] - 2026-11-15
 

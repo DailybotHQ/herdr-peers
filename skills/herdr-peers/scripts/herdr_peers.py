@@ -32,7 +32,7 @@ import subprocess
 import sys
 import time
 
-VERSION = '1.2.4'
+VERSION = '1.3.0'
 PROTOCOL = 1
 MARKER = '[herdr-peers]'
 DEFAULT_MAX_BYTES = 16384
@@ -3141,6 +3141,10 @@ class AutopilotIO(object):
         self.notify_queue = []
         self.saved = {}             # machine id -> {'label', 'target'} (enabled machines)
         self.report_source = None
+        # A foreground autopilot runs in its own pane and never keys it. A
+        # background one has no pane: the pane it was started from is an
+        # ordinary agent pane, watched like any other.
+        self.skip_own = True
 
     def sources(self):
         machines = enabled_machines()
@@ -3174,7 +3178,7 @@ class AutopilotIO(object):
                          'title': a.get('terminal_title_stripped')
                          if isinstance(a.get('terminal_title_stripped'), str) else None,
                          'seq': a.get('state_change_seq'), 'turn': a.get('completion_seq'),
-                         'you': machine == 'local' and pane == self.pane and
+                         'you': self.skip_own and machine == 'local' and pane == self.pane and
                          (not self.terminal or a.get('terminal_id') in (None, self.terminal))})
         return rows
 
@@ -3665,6 +3669,7 @@ def cmd_autopilot(args):
         return autopilot_start(args, store, opts)
     io = AutopilotIO(store, me.get('pane_id'), me.get('terminal_id'), scope_from(args),
                      notify=notify, notify_keep=keep)
+    io.skip_own = not args.detached
     lock_path, pid_path = autopilot_paths(store)
     _, opts_path = autopilot_files(store)
     # A bounded dry run sends nothing and keeps no state: it may run beside

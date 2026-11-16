@@ -348,6 +348,24 @@ PY
 )
 assert_eq "own pane is matched by pane id and terminal" "[False, False] [True, False]" "$own"
 
+# A background daemon has no pane: the pane it was started from is watched like
+# any other agent pane (a lead that started it answers its own questions too).
+quiet_world bgself
+set_state local w1:p1 blocked
+show local w1:p1 claude__blocked__question_tabs_recommended_es
+run "$HELPER" autopilot start --interval 15
+bg=$(printf '%s\n' "$OUT" | sed -n 's/.*background (pid \([0-9]*\)).*/\1/p')
+BG_PIDS="${BG_PIDS:-} $bg"
+for _ in $(seq 1 60); do keys_sent | grep -q 'local w1:p1' && break; sleep 0.25; done
+assert_contains "the background daemon keys the pane it was started from" "$(keys_sent)" "local w1:p1 enter"
+run "$HELPER" autopilot stop
+assert_contains "and stops" "$OUT" "stopped (pid $bg)"
+quiet_world fgself
+set_state local w1:p1 blocked
+show local w1:p1 claude__blocked__question_tabs_recommended_es
+run "$HELPER" autopilot --once
+assert_not_contains "a foreground autopilot never keys its own pane" "$(keys_sent)" "local w1:p1"
+
 # --- logs: the background log, read-only, from any pane ----------------------------------------
 quiet_world logs
 SD=$(state_dir)
