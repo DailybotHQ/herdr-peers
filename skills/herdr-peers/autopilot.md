@@ -156,7 +156,8 @@ one of those, it moves to the first row that is not.
 | A usage limit (the CLI's own banner; a `429` in a command's output is not one) | Leaves it; every 30 minutes accepts the option shown (if any) and asks the agent to continue its pending plan — for at most a day, never over a draft on the input line, and not with `--no-nudge`. |
 | A login, a sign-in, an API-key or device-code prompt | **Never touched.** A human signs in. |
 | Claude's bypass-permissions acknowledgement | **Never touched.** The developer accepts it once per profile. |
-| A menu where every row refuses or widens permissions | **Denied, never left blocked:** its first refusal row (`No`, `Deny`, `Cancel` — never an exit row), else `esc`; recorded `denied`. Once the agent is idle again it is told once, with a fixed prompt, to continue another way within its plan's gates. |
+| A permission or plan approval where every row refuses or widens permissions | **Denied, never left blocked** (a change in 2.1.0: it used to wait for a human): its first refusal row (`No`, `Deny`, `Cancel` — never a row naming exit or quit), else `esc` — except on Codex, where `esc` aborts the whole turn, so the dialog is left. Recorded `denied`. Once the agent is idle again it is told once, with a fixed prompt, to continue another way within its plan's gates or record a blocker. |
+| An agent's own question whose rows all refuse or open free text | Left: it is a decision about the work, never answered "No" for the human (the prose nudge still applies when its turn ends asking). |
 | A blocked pane with no menu it recognises | Left, and recorded as `unknown`. |
 
 Verified on real panes of Claude Code, Codex, Cursor, Grok, Pi and

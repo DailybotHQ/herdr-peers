@@ -529,6 +529,59 @@ assert d.option == 4, d.option
 d = autopilot.deny_decision(fx('claude__blocked__bypass_ack'), 'blocked', 'denied', 'bypass_ack')
 assert d.keys == ['esc'], 'the bypass consent has only "No, exit": Esc, never the exit row'
 assert autopilot.deny_decision('just text', 'blocked', 'denied', 'permission').keys == ['esc']
+# M1 (review of #63): an agent's own question whose rows all refuse or open free text is a decision
+# about the work: left for the human, never answered "No" by the daemon
+QUESTION_ONLY_REFUSALS = '''Claude Code
+
+ How should I handle the failing migration?
+
+ ❯ 1. No, revert my edits
+   2. Type something.
+   3. Chat about this
+
+ Enter to select · ↑/↓ to navigate · Esc to cancel
+'''
+def pane(io, kind, seq, state, text):
+    io.rows['local'] = [{'pane': 'w1:p2', 'state': state, 'agent': kind, 'seq': seq, 'turn': seq, 'you': False}]
+    io.screens[('local', 'w1:p2')] = text
+io, ap = fresh()
+pane(io, 'claude', 1, 'blocked', QUESTION_ONLY_REFUSALS); ap.run_pass()
+assert autopilot.decide('claude', 'blocked', QUESTION_ONLY_REFUSALS).cls == 'question'
+assert io.sent == [] and io.log == [('left', 'local:w1:p2', 'question')], io.log
+# L1: on a Codex pane Esc aborts the whole turn: a permission with no refusal row is left, never Esc
+CODEX_NO_REFUSAL = '''  Would you like to run the following command?
+
+  $ rm -rf build
+
+› 1. Yes, and don't ask again for this command
+  2. Always allow commands like this
+
+  Press enter to confirm or esc to cancel
+'''
+assert autopilot.decide('codex', 'blocked', CODEX_NO_REFUSAL).action == 'leave'
+io, ap = fresh()
+pane(io, 'codex', 1, 'blocked', CODEX_NO_REFUSAL); ap.run_pass()
+assert not any(k for k in io.sent if k[0] == 'keys'), io.sent
+assert io.log == [('left', 'local:w1:p2', 'permission')], io.log
+# ...while on Claude the same refusal-less permission gets Esc (a refusal there)
+io, ap = fresh()
+pane(io, 'claude', 1, 'blocked', CODEX_NO_REFUSAL.replace('›', '❯')); ap.run_pass()
+assert ('keys', 'w1:p2', ('esc',)) in io.sent, io.sent
+# L1: the denial reads the state decide read (a follow-up step reads 'blocked', not the pane's 'idle')
+d = autopilot.deny_decision(fx('claude__blocked__only_refusals'), 'blocked', 'denied', 'permission')
+assert d.keys == ['enter'] and d.option == 1
+# L2: an exit or quit anywhere in a label rules the row out
+CANCEL_AND_EXIT = '''  Do you want to proceed?
+
+ ❯ 1. Yes, and don't ask again
+   2. Cancel and exit
+   3. No
+
+ Esc to cancel
+'''
+d = autopilot.deny_decision(CANCEL_AND_EXIT, 'blocked', 'denied', 'permission')
+assert d.option == 3 and d.keys == ['down', 'down', 'enter'], (d.option, d.keys)
+
 # login and the bypass-permissions consent stay the human's: left, never keyed
 for name, cls in (('claude__blocked__login_menu', 'login'), ('claude__blocked__bypass_ack', 'bypass_ack')):
     io, ap = fresh()

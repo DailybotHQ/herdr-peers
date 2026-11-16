@@ -20,11 +20,16 @@ changes bumped the minor version).
   one allowed command; three denials in an hour retire it
   (`brain_replaced why=misbehaving`) and a replacement launches within the
   cap. The brief now names the single allowed command and says nothing
-  else is approved and the question carries all the context. Outside the
-  brain, a menu whose every row refuses or widens permissions is denied the
-  same way (`denied`) instead of left blocked, and the agent is told once,
-  when idle, to continue another way. Login, the bypass-permissions consent
-  and folder trust stay the human's.
+  else is approved and the question carries all the context.
+- **Behaviour change outside the brain:** a permission or plan approval the
+  daemon cannot accept (every row refuses or widens permissions) is now
+  **denied** (`denied`: its refusal row, never a row naming exit or quit,
+  else `esc` — except on Codex, where `esc` would abort the turn and the
+  dialog is left), where it used to wait for a human; the agent is told
+  once, when idle, to continue another way or record a blocker. An agent's
+  own question is never denied: it is a decision about the work and stays
+  the human's. Login, the bypass-permissions consent and folder trust stay
+  the human's too.
 - **The brain may be asked about a classed blocker.** `ask_lead_to_resolve`
   refused every blocker that named a class, and pack 8.0.0's
   plan-snapshot/v8 always records one, so the brain would never have been
