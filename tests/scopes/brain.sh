@@ -438,6 +438,14 @@ assert any(o[2] == 'brain_replaced' and o[4] == 'permission_mode' for o in io.lo
 assert any(o[2] == 'brain_profile_excluded' and o[4] == '@work1' for o in io.log), io.log
 st = ap.brain.status(now[0])
 assert st['excluded'] == ['@work1'] and st['retired']['why'] == 'permission_mode' and st['retired']['profile'] == '@work1', st
+import fleet_report
+# A long-running daemon never makes its own map invalid: the map lists at most 16
+# excluded profiles; the exclusion itself keeps them all.
+ap.brain.excluded |= set('@p%02d' % i for i in range(30))
+st = ap.brain.status(now[0])
+assert len(st['excluded']) == autopilot.EXCLUDED_SHOWN == 16 and len(ap.brain.excluded) == 31, st['excluded']
+doc = {'schema': fleet_report.FLEET_SCHEMA, 'machines': [], 'daemon': {'brain': st}}
+assert fleet_report.valid_fleet(doc), 'the capped map is valid'
 # The brain closes: lease released, workspace closed.
 io, ap = fresh()
 ap.run_pass()

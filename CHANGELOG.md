@@ -33,7 +33,12 @@ changes bumped the minor version).
   ([#51](https://github.com/DailybotHQ/herdr-peers/issues/51)): keys of
   items or queues a machine's report no longer lists are dropped (only after
   a report that answered), and a reason that clears and returns is reported
-  again.
+  again. A queue reported invalid (a `queue.json` caught mid-write) lists no
+  items, so its repository keeps its state until a valid read: a started
+  item's lead is never prompted a second time.
+- **A long-running daemon never makes its own map invalid.** The map lists at
+  most 16 excluded brain profiles, fleet-v1's limit; the daemon's exclusion
+  itself still holds every profile it excluded.
 - **An appointee must not be a lane of another open plan.** The loop's
   appointment check (`leads_elsewhere`) ignored lanes; it now uses the same
   membership as the queue (lead, successors and lanes).
