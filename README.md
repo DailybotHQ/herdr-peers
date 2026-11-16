@@ -16,6 +16,9 @@ keeps every open plan running to its end, and keeps it going even when its
 lead is gone — and nothing it does is hidden from you or decided by a
 message.
 
+**New in 2.0:** lead appointment (protocol 2), the daemon's brain, and the plan
+queue. Upgrading from 1.x: [docs/MIGRATING.md](docs/MIGRATING.md).
+
 [![CI](https://github.com/DailybotHQ/herdr-peers/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/DailybotHQ/herdr-peers/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/DailybotHQ/herdr-peers?sort=semver)](https://github.com/DailybotHQ/herdr-peers/releases)
 [![License: MIT](https://img.shields.io/github/license/DailybotHQ/herdr-peers)](LICENSE)
@@ -48,7 +51,7 @@ permissions, never types over your draft, and records every action
 watches every plan that has a lead record, on every enabled machine: it asks
 an idle lead to continue, leaves a blocked plan for you, stops after three
 prompts without progress, asks a successor to take over a lead that is gone,
-and keeps a map of the fleet (`fleet`, `fleet ui`). *Guarantees:* nothing is
+keeps a map of the fleet (`fleet`, `fleet ui`), and starts the next approved plan of a repository's queue (`.dwp/queue.json`, written by the plan tool) when the current one finishes. *Guarantees:* nothing is
 installed on other machines (a report module goes over SSH to `python3`);
 plan content stays on the daemon's machine; `--notify` runs your command in
 its own process group with a minimal environment.
