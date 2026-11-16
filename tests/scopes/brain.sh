@@ -9,7 +9,7 @@ B_SCRIPTS="$ROOT/skills/herdr-peers/scripts"
 
 # --- the launch line from pick-v2 ------------------------------------------------------------
 run python3 - "$B_SCRIPTS" "$ROOT/tests/fixtures/screens/claude__blocked__permission_bash.screen" <<'PY'
-import copy, shlex, sys
+import copy, json, shlex, sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, sys.argv[1])
 import brain as B
@@ -28,6 +28,18 @@ def refused(mut, why):
     except B.PickRefused:
         return
     raise AssertionError('accepted: ' + why)
+# coding-agents-kit 1.5.0 ends an ask-mode launch with exactly one ak --ask (pick-v2 launch.argv
+# byte for byte, kit #51 lib/pick.py): accepted, dropped, never doubled
+for kind, tail in (('claude', ['--ask']), ('claude', ['--model', 'sonnet', '--ask']),
+                   ('codex', ['--ask']), ('codex', ['--model', 'gpt-5.1', '--ask']), ('grok', ['--ask'])):
+    doc = copy.deepcopy(good); doc['kind'] = doc['cli'] = kind; doc['profile'] = '@work'
+    doc['launch']['argv'] = json.loads(json.dumps(['ak', kind, '@work'] + tail))
+    got = B.launch_line(doc, AK)[2]
+    assert got == [AK, kind, '@work', '--ask', '--trust-cwd'] + tail[:-1], got
+for cli in (['--ask', '--model', 'sonnet'], ['--ask', '--ask'], ['--permission-mode', 'default'],
+            ['-a', 'on-request', '--sandbox', 'workspace-write'], ['--', '--permission-mode', 'default', '--ask'],
+            ['--ask=1'], ['--ASK'], ['--auto', '--ask']):
+    refused(lambda d, c=cli: d['launch'].update(argv=['ak', 'claude', '@work1'] + c), 'not one trailing --ask: %r' % (cli,))
 refused(lambda d: d.update(schema='pick-v1'), 'another schema')
 refused(lambda d: d.update(interface=2), 'another interface')
 refused(lambda d: d.update(qualifies=False), 'nothing qualifies')
@@ -533,6 +545,11 @@ for bad in ({'excluded': '@work1'}, {'excluded': [1]}, {'retired': 'gone'}, {'re
     assert not fleet_report.valid_fleet(doc), bad
 old = json.loads(json.dumps(base)); del old['daemon']['brain']['excluded']; del old['daemon']['brain']['retired']
 assert fleet_report.valid_fleet(old), 'a 2.0.0 map without them is still read'
+# an address with a trailing newline is not an address (ADDR_RE ends in \\Z, not $)
+for mod in (herdr_peers, fleet_report):
+    assert mod.ADDR_RE.match('local:w1:p2') and not mod.ADDR_RE.match('local:w1:p2\n'), mod.__name__
+assert not fleet_report.valid_queue({'schema': 'dwp-queue-v1', 'items': [
+    {'plan': 'P1', 'after': None, 'state': 'started', 'lead': 'local:w1:p2\n', 'start': 'prompt-lead'}]})
 PY
 assert_eq "a retirement's reason and an excluded profile are recorded; the map carries them" "0" "$?"
 # an answers line longer than a read never stalls the reader

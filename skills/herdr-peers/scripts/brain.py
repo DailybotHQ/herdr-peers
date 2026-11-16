@@ -40,7 +40,8 @@ QUESTION_RE = re.compile(r'q-[0-9a-f]{12}')
 # The only dash-leading elements a launch line may carry: what pick-v2 itself
 # documents (--model, the -- separator) and the two the daemon adds.
 HEAD_FLAGS = ('--model',)
-ADDED_FLAGS = ('--ask', '--trust-cwd')
+ASK_FLAG = '--ask'
+ADDED_FLAGS = (ASK_FLAG, '--trust-cwd')
 
 # case -> (actions, default). The first action of a list is never implied:
 # the default is what happens without a valid answer.
@@ -109,7 +110,11 @@ def launch_line(doc, ak_path):
     `argv` is what `ak` returned with its first element replaced by the
     resolved path of the `ak` the daemon ran and `--ask --trust-cwd` added
     right after the profile; `line` is that argv quoted for a shell. Every
-    element is checked against its pattern first."""
+    element is checked against its pattern first. Exactly one bare `--ask` as
+    the last element of ak's argv (coding-agents-kit 1.5.0 ends an ask-mode
+    launch with it) is accepted and dropped, since the daemon adds its own; an
+    `--ask` anywhere else, the CLI's own permission flags and anything after
+    `--` are still refused."""
     if not isinstance(doc, dict) or doc.get('schema') != PICK_SCHEMA or doc.get('interface') != 1:
         raise PickRefused('not a pick-v2 document')
     if doc.get('qualifies') is not True:
@@ -128,16 +133,19 @@ def launch_line(doc, ak_path):
         raise PickRefused('unexpected kind in the launch')
     if not PROFILE_RE.fullmatch(profile) or profile != doc.get('profile'):
         raise PickRefused('unexpected profile in the launch')
-    rest, i = argv[3:], 0
+    rest, kept, i = argv[3:], [], 0
+    if rest[-1:] == [ASK_FLAG]:
+        rest = rest[:-1]  # ak's own ask head flag (kit 1.5.0): ADDED_FLAGS carries it once
     while i < len(rest):
         item = rest[i]
         if item in HEAD_FLAGS:
             if i + 1 >= len(rest) or not MODEL_RE.fullmatch(rest[i + 1]):
                 raise PickRefused('a launch flag without a valid value')
+            kept += rest[i:i + 2]
             i += 2
             continue
         raise PickRefused('an element the daemon does not allow in a launch')
-    out = [ak_path, kind, profile] + list(ADDED_FLAGS) + rest
+    out = [ak_path, kind, profile] + list(ADDED_FLAGS) + kept
     return kind, profile, out, ' '.join(shlex.quote(a) for a in out)
 
 

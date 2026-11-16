@@ -55,7 +55,7 @@ CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 ULID_RE = re.compile(r'^[0-7][0-9A-HJKMNP-TV-Z]{25}$')
 MACHINE_RE = r'(?:local|[A-Za-z0-9][A-Za-z0-9._-]{0,63})'  # never starts with '-'
 PANE_RE = r'[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}'
-ADDR_RE = re.compile(r'^(%s):(%s)$' % (MACHINE_RE, PANE_RE))
+ADDR_RE = re.compile(r'^(%s):(%s)\Z' % (MACHINE_RE, PANE_RE))  # \Z: no trailing newline
 TOKEN_RE = re.compile(r'([a-z][a-z-]*)=(\S+)')
 DEPTH_RE = re.compile(r'[0-9]{1,3}')
 ASK_KEYS = frozenset(['protocol', 'from', 'reply', 'depth', 'id'])

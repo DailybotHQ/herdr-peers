@@ -9,6 +9,22 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The brain launches with coding-agents-kit 1.5.0.** Kit 1.5.0 ends an
+  ask-mode `pick-v2` `launch.argv` with one `--ask` of its own
+  (`["ak", "claude", "@work", "--ask"]`, after `--model <name>` when present).
+  2.0.1 refused any element but `--model <name>` after the profile, so every
+  brain launch failed closed (`brain_launch_failed`, no brain). Exactly one
+  `--ask` as the last element is now accepted and dropped: the daemon adds
+  `--ask --trust-cwd` itself, so `--ask` is never doubled. An `--ask`
+  anywhere else, a CLI's own permission flags, and anything after `--` are
+  still refused. Kit 1.4.x argv is unchanged and still accepted.
+- **A pane address with a trailing newline is not an address.** `ADDR_RE`
+  (helper and machine report) ended in `$`, which Python also matches before
+  a final newline, so `local:w1:p2\n` was accepted where the JSON schemas
+  refuse it. It now ends in `\Z`.
+
 ## [2.0.1] - 2026-11-16
 
 A patch on 2.0.0: why a brain was retired, a Claude-only default brain, and
