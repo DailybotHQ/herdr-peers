@@ -711,7 +711,7 @@ Every variable is optional; each default is the code's.
 | `HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT` | 20 | Seconds one `--notify` command may run (1–60; §8). |
 | `HERDR_PEERS_AUTOPILOT_NOTIFY_BUDGET` | 20 | Seconds all `--notify` commands of one pass may run together (1–120). |
 | `HERDR_PEERS_AUTOPILOT_APPOINT_GRACE` | 900 | Seconds lead and successors must be gone, the plan frozen, before `--appoint` asks a lane (0–86400; §7). |
-| `HERDR_PEERS_APPOINT_PROBE_GAP` | 60 | Seconds between the two probes of `lead takeover --as-lane` (0–600; §7). |
+| `HERDR_PEERS_APPOINT_PROBE_GAP` | 60 | Seconds between the two probes of `lead takeover --as-lane` (0–600; §7). **0 is for tests only**: it collapses the two probes protocol §12 spaces apart into one moment; never set it below the default on a real fleet. |
 | `HERDR_PEERS_SCOPE` | every enabled machine | The allow-list, as for every verb. |
 | `HERDR_PEERS_UI_SERVER` | — | Set by the helper for `fleet ui` (this server's key) — never by hand. |
 | `HERDR_PEERS_BRAIN_KEY_FILE` | — | Set by the daemon in the brain's environment (its answer-key file) — never by hand. |

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""herdr-peers — protocol 1 over the Herdr CLI (python3 standard library only).
+"""herdr-peers — protocol 2 (lead notices of granted plans; every other message stays protocol 1)
+over the Herdr CLI (python3 standard library only).
 
 Verbs: ask, notify, reply, list, wait, log, check, cancel, status, lanes, lead,
 debate (debate.py). See ../protocol.md for the
@@ -4447,7 +4448,8 @@ def build_parser():
     p = argparse.ArgumentParser(
         prog='herdr-peers',
         description='Ask any agent in any Herdr pane, on any machine, and get one '
-                    'authorized reply back (protocol 1).')
+                    'authorized reply back (protocol 2; every message but a granted '
+                    'plan\'s lead notice stays protocol 1).')
     p.add_argument('--version', action='version',
                    version='herdr-peers %s (protocol %d)' % (VERSION, PROTOCOL))
     p.add_argument('--skill', action='store_true', help='print SKILL.md and exit')

@@ -116,7 +116,7 @@ Environment (all optional):
 | `HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT` | Seconds one `--notify` command may run (default 20; 1–60). |
 | `HERDR_PEERS_AUTOPILOT_NOTIFY_BUDGET` | Seconds all `--notify` commands of one pass may run together (default 20; 1–120); one command's timeout never widens it. |
 | `HERDR_PEERS_AUTOPILOT_APPOINT_GRACE` | Seconds the lead and every successor must be gone, with the plan's progress frozen, before `--appoint` asks a lane (default 900; 0–86400). |
-| `HERDR_PEERS_APPOINT_PROBE_GAP` | Seconds between the two probes `lead takeover --as-lane` makes of every member (default 60; 0–600). |
+| `HERDR_PEERS_APPOINT_PROBE_GAP` | Seconds between the two probes `lead takeover --as-lane` makes of every member (default 60; 0–600; 0 is for tests only — it collapses the two probes into one). |
 | `HERDR_PEERS_UI_SERVER` | Set by the helper for `fleet ui` (this server's key, so the watcher reaches `local` panes only on the daemon's own server) — never by hand. |
 | `HERDR_PEERS_BRAIN_KEY_FILE` | Set by the daemon in the brain's environment (the path of its private answer-key file) — never by hand. |
 | `DWP_PLAN`, `DWP_TASK` | Plan directory or id: ids resolve under the git checkout root using the `.dwp`, `plans`, `<id>` path components when that directory exists. Records mirror to `analysis_results/delegations.ndjson`, tagged with the task. A directory basename or the id itself is the default `--plan` (including `repo/id`). Missing directories warn and skip the mirror. |

@@ -34,6 +34,11 @@ changes bumped the minor version).
   items or queues a machine's report no longer lists are dropped (only after
   a report that answered), and a reason that clears and returns is reported
   again.
+- **An appointee must not be a lane of another open plan.** The loop's
+  appointment check (`leads_elsewhere`) ignored lanes; it now uses the same
+  membership as the queue (lead, successors and lanes).
+- The helper's module docstring and `-h` description say protocol 2; the
+  docs say `HERDR_PEERS_APPOINT_PROBE_GAP=0` is for tests only.
 
 ### Documentation
 

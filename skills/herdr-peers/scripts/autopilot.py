@@ -1166,12 +1166,14 @@ class PlanLoop(object):
         return False
 
     def leads_elsewhere(self, machine, pane, plan_id):
-        """True when `pane` leads or succeeds another open plan on `machine`."""
+        """True when `pane` leads, succeeds or is a lane of another open plan on
+        `machine` (the same membership the queue checks)."""
         report = (self.machines.get(machine) or {}).get('report') or {}
         for other in report.get('plans', []):
             if other['plan'] == plan_id or other['class'] not in ('open', 'blocked'):
                 continue
-            if local_pane(other['lead']) == pane or pane in [local_pane(a) for a in other['succession']]:
+            members = [other.get('lead')] + list(other.get('succession') or []) + list(other.get('lanes') or [])
+            if pane in [local_pane(a) for a in members]:
                 return True
         return False
 

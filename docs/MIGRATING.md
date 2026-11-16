@@ -118,7 +118,7 @@ that reads that file could still forge an allowed (harmless) answer.
 | `HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT` | 20 | Seconds one `--notify` command may run |
 | `HERDR_PEERS_AUTOPILOT_NOTIFY_BUDGET` | 20 | Seconds all `--notify` commands of one pass may run together |
 | `HERDR_PEERS_AUTOPILOT_APPOINT_GRACE` | 900 | Seconds lead and successors must be gone, with the plan frozen, before an appointment |
-| `HERDR_PEERS_APPOINT_PROBE_GAP` | 60 | Seconds between the appointee's two probes |
+| `HERDR_PEERS_APPOINT_PROBE_GAP` | 60 | Seconds between the appointee's two probes (0 is for tests only) |
 
 ## New contracts
 
