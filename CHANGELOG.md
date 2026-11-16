@@ -9,6 +9,13 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-16
+
+fleet ui's views (one facet model in every grouping), nothing left blocked — not
+even the brain — a classed blocker may reach the brain, and pack 8.0.0's records.
+Protocol 2, unchanged. The map gains two optional fields (`state_updated_at`,
+`unreadable_reason`): a 2.0 map is still read.
+
 ### Fixed
 
 - **Nothing is left blocked, not even the brain.** A request in the brain's
@@ -20,15 +27,17 @@ changes bumped the minor version).
   one allowed command; three denials in an hour retire it
   (`brain_replaced why=misbehaving`) and a replacement launches within the
   cap. The brief now names the single allowed command and says nothing
-  else is approved and the question carries all the context.
+  else is approved and the question carries all the context. A Codex brain
+  whose dialog has no refusal row is left blocked (Esc would abort its
+  turn): one more reason the default brain kind is Claude.
 - **Behaviour change outside the brain:** a permission or plan approval the
   daemon cannot accept (every row refuses or widens permissions) is now
   **denied** (`denied`: its refusal row, never a row naming exit or quit,
   else `esc` — except on Codex, where `esc` would abort the turn and the
   dialog is left), where it used to wait for a human; the agent is told
   once, when idle, to continue another way or record a blocker. An agent's
-  own question is never denied: it is a decision about the work and stays
-  the human's. Login, the bypass-permissions consent and folder trust stay
+  own question is never denied: it is a decision about the work and is left
+  waiting for the human. Login, the bypass-permissions consent and folder trust stay
   the human's too.
 - **The brain may be asked about a classed blocker.** `ask_lead_to_resolve`
   refused every blocker that named a class, and pack 8.0.0's
@@ -991,7 +1000,8 @@ First release. Interface version: **protocol 1** (`metadata.protocol: 1` in
   `harness lint protocol helper skill templates security live`; CI on Ubuntu
   and macOS.
 
-[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v2.0.2...HEAD
+[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/DailybotHQ/herdr-peers/compare/v2.0.2...v2.1.0
 [2.0.2]: https://github.com/DailybotHQ/herdr-peers/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/DailybotHQ/herdr-peers/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/DailybotHQ/herdr-peers/compare/v1.3.1...v2.0.0

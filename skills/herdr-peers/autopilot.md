@@ -157,7 +157,7 @@ one of those, it moves to the first row that is not.
 | A login, a sign-in, an API-key or device-code prompt | **Never touched.** A human signs in. |
 | Claude's bypass-permissions acknowledgement | **Never touched.** The developer accepts it once per profile. |
 | A permission or plan approval where every row refuses or widens permissions | **Denied, never left blocked** (a change in 2.1.0: it used to wait for a human): its first refusal row (`No`, `Deny`, `Cancel` — never a row naming exit or quit), else `esc` — except on Codex, where `esc` aborts the whole turn, so the dialog is left. Recorded `denied`. Once the agent is idle again it is told once, with a fixed prompt, to continue another way within its plan's gates or record a blocker. |
-| An agent's own question whose rows all refuse or open free text | Left: it is a decision about the work, never answered "No" for the human (the prose nudge still applies when its turn ends asking). |
+| An agent's own question whose rows all refuse or open free text | Left waiting for the human: it is a decision about the work, never answered "No" by the daemon (no prose nudge either: nudges go only to idle panes). |
 | A blocked pane with no menu it recognises | Left, and recorded as `unknown`. |
 
 Verified on real panes of Claude Code, Codex, Cursor, Grok, Pi and
@@ -434,7 +434,9 @@ with a fixed prompt, that the only command it may run is `herdr-peers
 autopilot answer <qid> <action>` and that the question carries all it
 needs. Three denials in an hour retire it as misbehaving (`brain_replaced
 why=misbehaving`), and a replacement is launched within the hourly cap. Its
-brief says so up front: one command, nothing else approved. For now that makes
+brief says so up front: one command, nothing else approved. A Codex brain
+whose dialog has no refusal row is left blocked, since `esc` would abort its
+turn — one more reason the default brain kind is Claude. For now that makes
 Claude the only kind whose brain can answer; others are launched but their
 answers are never approved. An injected brain can
 still choose any allowed action for an open question — that is the
