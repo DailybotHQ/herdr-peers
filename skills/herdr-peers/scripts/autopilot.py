@@ -1296,6 +1296,7 @@ class PlanLoop(object):
                               'blocker_class': plan['blocker_class'],
                               'progress': plan.get('progress'), 'updated_at': plan.get('updated_at'),
                               'state_updated_at': plan.get('state_updated_at'),
+                              'unreadable_reason': plan.get('unreadable_reason'),
                               'tasks_done': plan.get('tasks_done'),
                               'tasks_total': plan.get('tasks_total'),
                               'current_task': plan.get('current_task'),
@@ -1340,7 +1341,7 @@ class PlanLoop(object):
 
 MAP_MAX_BYTES = 2 * 1024 * 1024 - 4096   # under the store's 2 MB cap, with room to spare
 REMOTE_PLAN_KEYS = ('plan', 'class', 'blocker_class', 'progress', 'lead', 'lanes', 'succession',
-                    'epoch', 'updated_at', 'state_updated_at', 'repo_root', 'situation',
+                    'epoch', 'updated_at', 'state_updated_at', 'unreadable_reason', 'repo_root', 'situation',
                     'tasks_done', 'tasks_total', 'current_task')
 
 

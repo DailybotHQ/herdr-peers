@@ -577,20 +577,34 @@ need me, is it moving, is it waiting, is it done.
 
 | View | Plans | Agents (by repository or machine) | Queue items |
 | --- | --- | --- | --- |
-| **Attention** | blocked; situation `plan_stalled`, `plan_no_lead`, `plan_blocked` or a moved lead; unreadable; or open with **no movement for 24 h** (its `state.json` unchanged, shown as `◷ no movement for 2d 4h`) | waiting at a question or approval, a state the map could not read, and (by machine) a machine that did not answer | queued with a reason that blocks it (`no lead named`, `not approved`, …) |
+| **Attention** | something you can act on now: blocked; situation `plan_stalled`, `plan_no_lead`, `plan_blocked` or a moved lead; or open with **no movement for 24 h** (its `state.json` unchanged, shown as `◷ no movement for 2d 4h`) | waiting at a question or approval, a state the map could not read, and (by machine) a machine that did not answer | queued with a reason that blocks it (`no lead named`, `not approved`, …) |
 | **Active** | open and moving | working | started |
 | **Waiting** | queued, not started (also a queued plan with no lead record yet, as `QUEUED`) | free (idle or done) | queued: ready, or waiting its turn (`waiting for …`, `another plan …`) |
 | **Done** | completed | — an agent is never done (always empty) | done or skipped |
-| **All** | everything | everything | everything |
+| **All** | everything, unreadable plans last | everything | everything |
 
 - **The default is Attention and Active together** — what needs you and
   what is moving. It never opens on Done.
+- **Attention means you can act on it now.** Inside it: NO LEAD and blocked
+  plans first, then the daemon's other judgments (stalled, a moved lead),
+  then the plans with no movement; each sorted by progress (nearest to done
+  first) or by how long they have been still (longest first).
+- **Unreadable plans are not Attention.** They show only under All, as a
+  dimmed group at the very end, each saying why when its machine's report
+  knows (`unreadable_reason`): no `state.json` where its lead record points,
+  a `state.json` that does not parse, or a shape this helper does not read
+  (an older or newer plan generation). Attention shows one quiet line for
+  them: `14 unreadable plans: see All (5)`.
 - Every view shows a live count: `Attention 2 · Active 5 · Waiting 3 · Done
   14`. Plans count plans (and queued plans not yet on the map); repositories
   and machines count agents (by machine, an unreachable machine counts once,
   as Attention); queues count items (an invalid queue file counts once, as
-  Attention). Only Attention takes the alert colour, and only when it holds
-  something. A narrow terminal shows `A2 Ac5 W3 D14 All24`.
+  Attention). Unreadable plans count under All only. Only Attention takes
+  the alert colour, and only when it holds something. A narrow terminal
+  shows `A2 Ac5 W3 D14 All24`.
+- The header's counts row degrades the same way: the brain's details go
+  first, then the agent states compact (`●7 ◆0 ○35 ?0`), then the brain; the
+  plans summary (`3 need you · 1 running · 15 done`) is never cut.
 - `←` `→` or `[` `]` cycle the views (the default, then each one); `1`–`5`
   jump to one; a click on the row picks it. The view combines with the
   search (`/`), and each grouping keeps its own view for the session.
@@ -602,9 +616,10 @@ need me, is it moving, is it waiting, is it done.
   one view as text; `--filter` also picks the view the live watcher opens
   on, and `--group plan|repo|machine|queue` the grouping.
 
-The stale threshold reads `state_updated_at`, which the map carries since
-2.1.0 (an optional field: a map written by an older daemon has none, and
-its open plans are never called stale). Each classification is a pure
+The stale threshold reads `state_updated_at`, and the unreadable reason
+`unreadable_reason`; the map carries both since 2.1.0 (optional fields: a
+map written by an older daemon has none, its open plans are never called
+stale, and its unreadable plans say the report does not say why). Each classification is a pure
 function (`plan_facet`, `agent_facet`, `queue_item_facet`), the counts are
 built when the map, the grouping, the view or the search changes — never
 per frame — and nothing new is read from disk or from Herdr.

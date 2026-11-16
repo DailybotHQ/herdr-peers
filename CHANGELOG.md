@@ -33,10 +33,13 @@ changes bumped the minor version).
   five views everywhere — **Attention** (needs you), **Active** (moving),
   **Waiting** (queued or free), **Done**, **All** — each with a live count
   (`Attention 2 · Active 7 · Waiting 3 · Done 21`; `A2 Ac7 W3 D21` when
-  narrow). Plans: Attention is blocked, stalled, no lead, a moved lead,
-  unreadable, or open with no movement for 24 h (`◷ no movement for 2d
-  4h`); a queued plan with no lead record yet shows as `QUEUED` under
-  Waiting. Agents: Attention is waiting at a question or unreachable;
+  narrow). Plans: Attention is what you can act on now — no lead and
+  blocked first, then stalled or a moved lead, then open with no movement
+  for 24 h (`◷ no movement for 2d 4h`), each by progress or by how long it
+  has been still; a queued plan with no lead record yet shows as `QUEUED`
+  under Waiting. Unreadable plans are not Attention: they show only under
+  All, dimmed, at the end, each with its reason, and Attention keeps one
+  quiet line (`14 unreadable plans: see All (5)`). Agents: Attention is waiting at a question or unreachable;
   Active is working; Waiting is free. Queue items: Attention is a reason
   that blocks; Active is started; Waiting is queued; Done is done or
   skipped. The default view is Attention plus Active and never Done.
@@ -48,8 +51,13 @@ changes bumped the minor version).
   `agent_facet`, `queue_item_facet`) and counts are pure functions, built
   once per change, never per frame.
 - **The map carries `state_updated_at`** for each plan (when its
-  `state.json` last changed), an optional fleet-v1 field: a 2.0 map without
-  it is still read, and its open plans are never called stale.
+  `state.json` last changed) **and `unreadable_reason`** (`missing`,
+  `parse` or `shape`: no `state.json`, one that does not parse, or a shape
+  this helper does not read), optional fleet-v1 and plans-v1 fields: a 2.0
+  map without them is still read, and its open plans are never called stale.
+- **`fleet ui`'s header degrades in steps** when narrow (the brain's
+  details, then compact agent states, then the brain), so the plans summary
+  is never cut.
 
 ### Changed
 

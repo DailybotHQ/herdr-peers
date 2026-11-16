@@ -501,7 +501,7 @@ P = ix.plan_by_key
 # plan_facet, case by case
 q = lambda pid: (ix.queue_pos.get('local/' + pid) or (0, 0, None))[2]
 want = {'P_moving': 'active', 'P_blocked': 'attention', 'P_stalled': 'attention', 'P_nolead': 'attention',
-        'P_still': 'attention', 'P_queued': 'waiting', 'P_done': 'done', 'P_unread': 'attention',
+        'P_still': 'attention', 'P_queued': 'waiting', 'P_done': 'done', 'P_unread': 'unreadable',
         'P_oldmap': 'active'}
 got = dict((pid, ui.plan_facet(P['local/' + pid], NOW, q(pid))) for pid in want)
 assert got == want, got
@@ -525,27 +525,28 @@ assert ui.queue_item_facet({'state': 'odd'}) == 'attention'
 # counts, per grouping, and under a search
 c = ui.facet_counts(ix, 'plan', '', NOW)
 # plans: 9 rows + P_next and P_stuck (queued, no plan row); P_finished/P_skipped are not queued
-assert c == {'attention': 6, 'active': 2, 'waiting': 2, 'done': 1, 'all': 11}, c
-assert ui.facet_counts(ix, 'repo', '', NOW) == {'attention': 2, 'active': 2, 'waiting': 2, 'done': 0, 'all': 6}
-assert ui.facet_counts(ix, 'machine', '', NOW) == {'attention': 3, 'active': 2, 'waiting': 2, 'done': 0, 'all': 7}, \
+assert c == {'attention': 5, 'active': 2, 'waiting': 2, 'done': 1, 'unreadable': 1, 'all': 11}, c
+assert ui.facet_counts(ix, 'repo', '', NOW) == {'attention': 2, 'active': 2, 'waiting': 2, 'done': 0, 'unreadable': 0, 'all': 6}
+assert ui.facet_counts(ix, 'machine', '', NOW) == {'attention': 3, 'active': 2, 'waiting': 2, 'done': 0, 'unreadable': 0, 'all': 7}, \
     'an unreachable machine counts as attention'
-assert ui.facet_counts(ix, 'queue', '', NOW) == {'attention': 2, 'active': 1, 'waiting': 2, 'done': 2, 'all': 7}, \
+assert ui.facet_counts(ix, 'queue', '', NOW) == {'attention': 2, 'active': 1, 'waiting': 2, 'done': 2, 'unreadable': 0, 'all': 7}, \
     'an invalid queue file counts as attention'
-assert ui.facet_counts(ix, 'plan', 'p_st', NOW) == {'attention': 3, 'active': 0, 'waiting': 0, 'done': 0, 'all': 3}
-assert ui.facet_counts(None, 'plan') == {'attention': 0, 'active': 0, 'waiting': 0, 'done': 0, 'all': 0}
+assert ui.facet_counts(ix, 'plan', 'p_st', NOW) == {'attention': 3, 'active': 0, 'waiting': 0, 'done': 0, 'unreadable': 0, 'all': 3}
+assert ui.facet_counts(None, 'plan') == {'attention': 0, 'active': 0, 'waiting': 0, 'done': 0, 'unreadable': 0, 'all': 0}
 
 # views: the default is attention + active, never done
 titles = lambda g, f, n='': [x.title for x in ui.build_view(ix, g, n, f, NOW)]
 focus = titles('plan', ui.FOCUS)
-assert focus[:6] and set(focus) >= {'P_blocked', 'P_stalled', 'P_nolead', 'P_still', 'P_unread', 'P_stuck',
-                                    'P_moving', 'P_oldmap'}, focus
+assert set(focus) >= {'P_blocked', 'P_stalled', 'P_nolead', 'P_still', 'P_stuck', 'P_moving', 'P_oldmap'}, focus
+assert 'P_unread' not in focus and 'P_unread' not in titles('plan', 'attention'), 'Attention means you can act on it now'
+assert titles('plan', 'all')[-1] == 'P_unread', 'an unreadable plan comes at the very end, under All'
 assert 'P_done' not in focus and 'P_queued' not in focus and 'Doing nothing — free to take work' not in focus
 assert titles('plan', 'done') == ['P_done']
 assert set(titles('plan', 'waiting')) == {'P_queued', 'P_next', 'Doing nothing — free to take work'}
 assert set(titles('plan', 'active')) == {'P_moving', 'P_oldmap', 'Working outside any plan'}
 assert len([t for t in titles('plan', 'all') if t.startswith('P_')]) == 11
 v = ui.build_view(ix, 'plan', '', 'attention', NOW)
-assert [g.facet for g in v if g.kind in ('plan', 'queued')] == ['attention'] * 6
+assert [g.facet for g in v if g.kind in ('plan', 'queued')] == ['attention'] * 5
 assert [g.stale for g in v if g.title == 'P_still'] == [2 * 86400 + 4 * 3600]
 text = '\n'.join(l.text() for l in ui.render_list(v, NOW, 120))
 assert 'no movement for 2d 4h' in text and 'QUEUED' in text and 'no lead named' in text, text
@@ -561,10 +562,10 @@ assert [g.subtitle.endswith('INVALID queue file') for g in ui.build_view(ix, 'qu
 # the facet row: counts, the selected view, the alert tone, narrow fallback, mouse spans
 line, spans = ui.render_facets(ui.FOCUS, c, 130, 'plan')
 t = line.text()
-for want_text in ('1 Attention 6', '2 Active 2', '3 Waiting 2', '4 Done 1', '5 All 11', 'needs you + moving', '←→ 1-5'):
+for want_text in ('1 Attention 5', '2 Active 2', '3 Waiting 2', '4 Done 1', '5 All 11', 'needs you + moving', '←→ 1-5'):
     assert want_text in t, (want_text, t)
 styles = dict((text.strip(), style) for text, style in line.segs)
-assert styles['1 Attention 6'] == 'bad_badge' and styles['2 Active 2'] == 'tab_on' and styles['4 Done 1'] == 'tab'
+assert styles['1 Attention 5'] == 'bad_badge' and styles['2 Active 2'] == 'tab_on' and styles['4 Done 1'] == 'tab'
 calm, _ = ui.render_facets('done', dict(c, attention=0), 130, 'plan')
 calm_styles = dict((text.strip(), style) for text, style in calm.segs)
 assert calm_styles['1 Attention 0'] == 'tab' and calm_styles['4 Done 1'] == 'tab_on', 'only Attention alerts, and only when it holds something'
@@ -572,11 +573,64 @@ assert [f for _, _, f in spans] == list(ui.FACETS)
 for x0, x1, f in spans:
     assert t[x0:x1].strip().split(' ')[1] == ui.FACET_LABEL[f], (t[x0:x1], f)
 narrow, nspans = ui.render_facets(ui.FOCUS, c, 50, 'plan')
-assert narrow.text().strip() == 'A6 Ac2 W2 D1 All11' and len(nspans) == 5, narrow.text()
+assert narrow.text().strip() == 'A5 Ac2 W2 D1 All11' and len(nspans) == 5, narrow.text()
 mid = ui.render_facets(ui.FOCUS, c, 90, 'plan')[0].text()
-assert '1 Attention 6' in mid and '←→' not in mid, 'a middle width drops the hints before the words'
+assert '1 Attention 5' in mid and '←→' not in mid, 'a middle width drops the hints before the words'
 for width in (50, 60, 90, 130):
     assert ui.width_of(ui.render_facets('all', c, width, 'machine')[0].text()) == width
+
+# unreadable plans: only under All, dimmed, each saying why; Attention gets one quiet hint
+assert ui.unreadable_hint('plan', ui.FOCUS, c) == '1 unreadable plan: see All (5)'
+assert ui.unreadable_hint('plan', 'attention', dict(c, unreadable=14)) == '14 unreadable plans: see All (5)'
+assert ui.unreadable_hint('plan', 'all', c) is None and ui.unreadable_hint('plan', 'active', c) is None
+assert ui.unreadable_hint('repo', ui.FOCUS, c) is None and ui.unreadable_hint('plan', ui.FOCUS, dict(c, unreadable=0)) is None
+whys = json.loads(json.dumps(FLEET))
+rows = whys['machines'][0]['plans']
+for pid, why in (('P_w_missing', 'missing'), ('P_w_parse', 'parse'), ('P_w_shape', 'shape'), ('P_w_none', None)):
+    r = prow(pid, 'unreadable', moved=None); r['unreadable_reason'] = why; rows.append(r)
+assert fleet_report.valid_fleet(whys)
+bad_why = json.loads(json.dumps(whys)); bad_why['machines'][0]['plans'][-1]['unreadable_reason'] = 'because'
+assert not fleet_report.valid_fleet(bad_why), 'an unknown reason is refused'
+wix = ui.Index(whys)
+allv = ui.build_view(wix, 'plan', '', 'all', NOW)
+unr = [g for g in allv if g.kind == 'plan' and g.plan.cls == 'unreadable']
+assert [g.tone for g in unr] == ['dim'] * 5 and allv.index(unr[0]) > max(allv.index(g) for g in allv
+                                                                         if g.kind == 'plan' and g.plan.cls != 'unreadable')
+wtext = '\n'.join(l.text() for l in ui.render_list(allv, NOW, 160))
+for want_text in ('no state.json where its lead record points', 'does not parse', 'older or newer plan generation',
+                  'the report does not say why'):
+    assert want_text in wtext, (want_text, wtext)
+# the order inside Attention: NO LEAD and blocked first, then stalled or a moved lead, then no movement;
+# nearest to done first, the longest still first
+order = {'schema': 'herdr-peers/fleet-v1', 'daemon': {}, 'machines': [{'machine': 'local', 'label': 'Mac',
+         'agents_state': 'ok', 'plans_state': 'ok', 'agents': [], 'plans': []}]}
+def orow(pid, done, cls='open', situation=None, moved=60):
+    r = prow(pid, cls, situation, moved); r['tasks_done'], r['tasks_total'] = done, 10; return r
+order['machines'][0]['plans'] = [
+    orow('S_still_short', 1, moved=2 * 86400), orow('S_still_long', 9, moved=9 * 86400),
+    orow('J_stalled', 2, situation='plan_stalled'), orow('J_moved', 8, situation='plan_lead_moved'),
+    orow('N_nolead_low', 1, situation='plan_no_lead'), orow('B_blocked_high', 7, 'blocked'),
+    orow('N_nolead_high', 9, situation='plan_no_lead'), orow('A_active', 5)]
+oix = ui.Index(order)
+assert [g.title for g in ui.build_view(oix, 'plan', '', 'attention', NOW)] == [
+    'N_nolead_high', 'B_blocked_high', 'N_nolead_low', 'J_moved', 'J_stalled', 'S_still_long', 'S_still_short']
+assert [g.title for g in ui.build_view(oix, 'plan', '', ui.FOCUS, NOW)][-1] == 'A_active', 'Attention before Active'
+# the header's second row degrades in steps; the plans summary is never cut
+brain = {'state': 'ready', 'kind': 'claude', 'profile': '@work1', 'asked_last_hour': 3,
+         'last': {'action': 'ask_lead_to_resolve', 'plan': 'PLAN_123_something_long', 'case': 'c', 'at': 'x'},
+         'retired': None, 'excluded': ['@a', '@b']}
+cnt = {'working': 7, 'waiting': 1, 'idle': 35, 'unknown': 0}
+pl = {'needs_you': 3, 'open': 1, 'completed': 15}
+for width in (200, 140, 110, 90, 70, 60, 52):
+    t = ui.header_counts(cnt, pl, brain, width).text()
+    assert '3 need you · 1 running · 15 done' in t, (width, t)   # never cut
+    assert ui.width_of(t.rstrip()) <= width, (width, t)
+assert 'last: ask_lead_to_resolve' in ui.header_counts(cnt, pl, brain, 260).text()
+assert '● 7 working' in ui.header_counts(cnt, pl, brain, 140).text()
+assert '●7 ◆1 ○35 ?0' in ui.header_counts(cnt, pl, brain, 70).text()
+assert 'brain' not in ui.header_counts(cnt, pl, brain, 52).text()
+for width in (60, 110):
+    assert ui.width_of(ui.render_header(ix, 30, 'plan', '', width)[1].text()) == width
 
 # empty states say why, and where the rest is
 assert ui.empty_note('plan', 'attention', {'active': 7}) == 'Nothing needs you · 7 plans moving'

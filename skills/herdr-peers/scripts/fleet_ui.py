@@ -49,6 +49,10 @@ FILTERS = (FOCUS,) + FACETS
 FACET_LABEL = {'attention': 'Attention', 'active': 'Active', 'waiting': 'Waiting', 'done': 'Done', 'all': 'All'}
 FACET_SHORT = {'attention': 'A', 'active': 'Ac', 'waiting': 'W', 'done': 'D', 'all': 'All'}
 STALE_PLAN_AFTER = 24 * 3600   # an open plan whose state has not moved for this long needs attention
+# Why a plan is unreadable, as its machine's report says (2.1.0 maps).
+UNREADABLE_WHY = {'missing': 'no state.json where its lead record points',
+                  'parse': 'its state.json does not parse (or is too large)',
+                  'shape': 'a state.json shape this helper does not read (an older or newer plan generation)'}
 QUEUE_MARK = {'queued': ('○', 'dim'), 'started': ('▶', 'accent'), 'done': ('✓', 'ok'), 'skipped': ('–', 'dim')}
 
 # Agent states as the map reports them, folded into what a human reads.
@@ -248,7 +252,7 @@ class Agent(object):
 class Plan(object):
     __slots__ = ('key', 'machine', 'label', 'plan', 'cls', 'lead', 'epoch', 'situation',
                  'done', 'total', 'current', 'repo', 'blocker_class', 'detail', 'members', 'search',
-                 'moved')
+                 'moved', 'why')
 
     def __init__(self, machine, label, row):
         self.machine, self.label = machine, label
@@ -266,6 +270,7 @@ class Plan(object):
         self.blocker_class = clean(row.get('blocker_class'), 4) or None
         self.detail = row.get('detail') if isinstance(row.get('detail'), dict) else None
         self.moved = parse_ts(row.get('state_updated_at'))  # when its state last changed (2.1.0 maps)
+        self.why = row.get('unreadable_reason') if row.get('unreadable_reason') in UNREADABLE_WHY else None
         self.members = []  # (role, Agent)
         self.search = ' '.join([self.plan, self.label, self.repo, self.current or '',
                                 clean((self.detail or {}).get('title'), 200)]).lower()
@@ -381,7 +386,7 @@ def _matches(text, needle):
 def wanted(facet):
     """The facets a view shows."""
     if facet == 'all':
-        return frozenset(FACETS[:4])
+        return frozenset(FACETS[:4] + ('unreadable',))   # an unreadable plan shows only under All
     if facet in FACETS:
         return frozenset([facet])
     return frozenset(('attention', 'active'))     # FOCUS, and anything unknown
@@ -396,11 +401,14 @@ def stale_for(plan, now, stale_after=STALE_PLAN_AFTER):
 
 
 def plan_facet(plan, now=None, queue_state=None, stale_after=STALE_PLAN_AFTER):
-    """attention: blocked, stalled, no lead, a moved lead, unreadable, or open with no
-    movement past the threshold; active: open and moving; waiting: queued, not
-    started; done: completed."""
+    """attention: blocked, stalled, no lead, a moved lead, or open with no movement
+    past the threshold — something the developer can act on now; active: open and
+    moving; waiting: queued, not started; done: completed; unreadable: the map
+    cannot say (shown only under All)."""
     if plan.cls == 'completed':
         return 'done'
+    if plan.cls == 'unreadable':
+        return 'unreadable'
     if plan.needs_you or plan.cls != 'open':
         return 'attention'
     if queue_state == 'queued':
@@ -408,6 +416,21 @@ def plan_facet(plan, now=None, queue_state=None, stale_after=STALE_PLAN_AFTER):
     if stale_for(plan, now, stale_after) is not None:
         return 'attention'
     return 'active'
+
+
+def attention_order(plan, now=None):
+    """The order inside Attention: NO LEAD and blocked first, then the daemon's other
+    judgments (stalled, a moved lead), then no movement; nearest to done first,
+    and among the still ones the longest still first."""
+    pct = (plan.done or 0) / float(plan.total) if plan.total else 0.0
+    if plan.situation in ('plan_no_lead', 'plan_blocked') or plan.cls == 'blocked':
+        return (0, -pct, plan.plan)
+    if plan.needs_you:
+        return (1, -pct, plan.plan)
+    return (2, -(stale_for(plan, now) or 0), plan.plan)
+
+
+FACET_ORDER = {'attention': 0, 'active': 1, 'waiting': 2, 'done': 3, 'unreadable': 4}
 
 
 def agent_facet(agent):
@@ -458,10 +481,11 @@ def _plan_units(index, needle, now):
 
 def facet_counts(index, grouping='plan', needle='', now=None):
     """How many items each facet holds in a grouping, under the search. Pure.
-    Plans count plans (and queued plans not yet on the map); repositories and
+    Plans count plans (and queued plans not yet on the map; unreadable plans count
+    under All and in `unreadable`, never under Attention); repositories and
     machines count agents (and, by machine, each machine that did not answer, as
     attention); queues count items (and each invalid queue file, as attention)."""
-    out = dict((f, 0) for f in FACETS)
+    out = dict((f, 0) for f in FACETS + ('unreadable',))
     if index is None:
         return out
     needle = (needle or '').strip().lower()
@@ -493,22 +517,22 @@ def build_view(index, grouping='plan', needle='', facet=FOCUS, now=None):
     want = wanted(facet)
     groups = []
     if grouping == 'plan':
-        in_plan = set()
+        in_plan, unreadable = set(), []   # unreadable plans: a dimmed group at the very end (All only)
         units = _plan_units(index, needle, now)
         shown = [(f, p) for f, kind, p in units if kind == 'plan' and f in want]
-        for f, plan in sorted(shown, key=lambda u: (u[1].rank if u[0] != 'attention' else 0,
-                                                    u[1].label, u[1].plan)):
+        for f, plan in sorted(shown, key=lambda u: (FACET_ORDER.get(u[0], 5),) + (
+                attention_order(u[1], now) if u[0] == 'attention' else (0, u[1].label, u[1].plan))):
             members = [(r, a) for r, a in plan.members if _matches(a.search, needle)]
             if not needle:
                 members = list(plan.members)
             for _, a in plan.members:
                 in_plan.add(a.key)
-            tone = 'bad' if f == 'attention' else ('dim' if plan.cls == 'completed' else 'normal')
+            tone = 'bad' if f == 'attention' else ('dim' if plan.cls in ('completed', 'unreadable') else 'normal')
             group = Group(plan.key, 'plan', plan.plan, plan.label, plan, members, tone)
             group.queue_pos = index.queue_pos.get(plan.key)
             group.facet = f
             group.stale = stale_for(plan, now)
-            groups.append(group)
+            (unreadable if f == 'unreadable' else groups).append(group)
         for f, kind, (m, q, it, pos) in [u for u in units if u[1] == 'queued' and u[0] in want]:
             name = os.path.basename(q['repo'].rstrip('/')) or '(repository)'
             reason = 'ready — starts next' if it['ready'] else (it['blocked'] or 'waiting its turn')
@@ -527,6 +551,7 @@ def build_view(index, grouping='plan', needle='', facet=FOCUS, now=None):
         if idle:
             groups.append(Group('idle', 'idle', 'Doing nothing — free to take work', '', None,
                                 sorted(idle, key=lambda m: m[1].key), 'free'))
+        groups.extend(unreadable)
     elif grouping == 'queue':
         for m in index.machines:
             for q in m.get('queues') or []:
@@ -570,6 +595,15 @@ def build_view(index, grouping='plan', needle='', facet=FOCUS, now=None):
                                 sorted(members, key=lambda x: (STATE_ORDER.index(x[1].state), x[1].key)),
                                 'dim' if down else 'normal'))
     return groups
+
+
+def unreadable_hint(grouping, facet, counts):
+    """The one quiet line Attention shows about plans it leaves out: unreadable
+    plans live under All."""
+    n = (counts or {}).get('unreadable', 0)
+    if grouping != 'plan' or not n or facet not in (FOCUS, 'attention'):
+        return None
+    return '%d unreadable plan%s: see All (5)' % (n, '' if n == 1 else 's')
 
 
 def empty_note(grouping, facet, counts, needle='', free=0):
@@ -725,6 +759,9 @@ def render_list(groups, now, width):
         lines.append(group_header(g, width))
         if g.kind == 'plan':
             p = g.plan
+            if p.cls == 'unreadable':
+                lines.append(Line(target=('plan', g.key)).add(
+                    '    ? unreadable: %s' % UNREADABLE_WHY.get(p.why, 'the report does not say why'), 'dim'))
             if getattr(g, 'stale', None):
                 lines.append(Line(target=('plan', g.key)).add('    ◷ no movement for %s' % span(g.stale), 'bad'))
             if p.current and p.cls != 'completed':
@@ -799,6 +836,58 @@ def render_facets(facet, counts, width, grouping='plan'):
     return fit_line(line, width), spans
 
 
+def header_counts(counts, plans, brain, width):
+    """The second header row: agent states, the plans summary, the brain. When it
+    does not fit it degrades in steps — the brain's details go first, then the
+    states compact, then the brain — so the plans summary is never cut."""
+    def states(compact):
+        segs = []
+        for state, label in (('working', 'working'), ('waiting', 'waiting'), ('idle', 'idle'),
+                             ('unknown', 'unknown')):
+            n = counts.get(state, 0)
+            mark = {'working': '●', 'waiting': '◆', 'idle': '○', 'unknown': '?'}[state]
+            segs.append((('%s%d ' % (mark, n)) if compact else ('%s %d %s   ' % (mark, n, label)),
+                         state if n else 'dim'))
+        return segs
+
+    def plan_summary(short=False):
+        return [('│ ' if short else '│ plans: ', 'dim'),
+                ('%d need you' % plans.get('needs_you', 0), 'bad' if plans.get('needs_you') else 'dim'),
+                (' · %d running · %d done   ' % (plans.get('open', 0), plans.get('completed', 0)), 'dim')]
+
+    def brain_segs(level):
+        if not brain or level in ('none', 'bare'):
+            return []
+        bstate = clean(brain.get('state'), 12)
+        segs = [('│ brain ', 'dim'), ('◎ ', 'working' if bstate == 'ready' else 'warn')]
+        if level == 'min':
+            return segs + [(bstate, 'accent')]
+        segs.append(('%s %s %s' % (clean(brain.get('kind'), 12) or '-', clean(brain.get('profile'), 24) or '',
+                                   bstate), 'accent'))
+        if level == 'short':
+            return segs
+        last = brain.get('last') if isinstance(brain.get('last'), dict) else None
+        if isinstance(brain.get('asked_last_hour'), int):
+            segs.append((' · %d asked/h' % brain['asked_last_hour'], 'dim'))
+        if last:
+            segs.append((' · last: %s %s' % (clean(last.get('action'), 24), clean(last.get('plan'), 40)), 'dim'))
+        retired = brain.get('retired') if isinstance(brain.get('retired'), dict) else None
+        if retired and bstate != 'ready':
+            segs.append((' · retired: %s' % clean(retired.get('why'), 20), 'warn'))
+        excluded = [clean(p, 24) for p in brain.get('excluded') or [] if isinstance(p, str)]
+        if excluded:
+            segs.append((' · excluded: %s' % clean(','.join(excluded), 60), 'warn'))
+        return segs
+
+    line = None
+    for compact, level in ((False, 'full'), (False, 'short'), (True, 'short'), (True, 'min'), (True, 'none'),
+                           (True, 'bare')):
+        line = Line([(' ', 'normal')] + states(compact) + plan_summary(level == 'bare') + brain_segs(level))
+        if sum(width_of(t) for t, _ in line.segs[:-1]) + width_of(line.segs[-1][0].rstrip()) <= width:
+            break
+    return line
+
+
 def render_header(index, age, grouping, needle, width, error=None, facet=FOCUS, facet_counts=None):
     """The two header rows, the tab row and the facet row."""
     counts, plans, answering = index.counts() if index else ({}, {}, 0)
@@ -818,33 +907,8 @@ def render_header(index, age, grouping, needle, width, error=None, facet=FOCUS, 
         used = sum(width_of(t) for t, _ in top.segs)
         if used + width_of(right) < width:
             top.add(' ' * (width - used - width_of(right))).add(right, 'dim')
-    second = Line().add(' ')
-    for state, label in (('working', 'working'), ('waiting', 'waiting'), ('idle', 'idle'),
-                         ('unknown', 'unknown')):
-        n = counts.get(state, 0)
-        mark = {'working': '●', 'waiting': '◆', 'idle': '○', 'unknown': '?'}[state]
-        second.add('%s %d %s   ' % (mark, n, label), state if n else 'dim')
     brain = ((index.daemon or {}).get('brain') if index else None)
-    if isinstance(brain, dict):
-        bstate = clean(brain.get('state'), 12)
-        second.add('│ brain ', 'dim').add('◎ ', 'working' if bstate == 'ready' else 'warn')
-        second.add('%s %s %s' % (clean(brain.get('kind'), 12) or '-', clean(brain.get('profile'), 24) or '',
-                                 bstate), 'accent')
-        last = brain.get('last') if isinstance(brain.get('last'), dict) else None
-        if isinstance(brain.get('asked_last_hour'), int):
-            second.add(' · %d asked/h' % brain['asked_last_hour'], 'dim')
-        if last:
-            second.add(' · last: %s %s' % (clean(last.get('action'), 24), clean(last.get('plan'), 40)), 'dim')
-        retired = brain.get('retired') if isinstance(brain.get('retired'), dict) else None
-        if retired and bstate != 'ready':
-            second.add(' · retired: %s' % clean(retired.get('why'), 20), 'warn')
-        excluded = [clean(p, 24) for p in brain.get('excluded') or [] if isinstance(p, str)]
-        if excluded:
-            second.add(' · excluded: %s' % clean(','.join(excluded), 60), 'warn')
-        second.add('   ')
-    second.add('│ plans: ', 'dim')
-    second.add('%d need you' % plans.get('needs_you', 0), 'bad' if plans.get('needs_you') else 'dim')
-    second.add(' · %d running · %d done' % (plans.get('open', 0), plans.get('completed', 0)), 'dim')
+    second = header_counts(counts, plans, brain if isinstance(brain, dict) else None, width)
     tabs = Line().add(' ')
     for key, label in (('plan', 'Plans'), ('repo', 'Repos'), ('machine', 'Machines'), ('queue', 'Queues')):
         style = 'tab_on' if key == grouping else 'tab'
@@ -1110,6 +1174,9 @@ class App(object):
                                   self.index.counts()[0].get('idle', 0)) if self.index else \
                     'no map on this machine yet — start `herdr-peers autopilot --loop`'
                 self.lines = [fit_line(Line().add('  ' + note, 'dim'), width)]
+            hint = unreadable_hint(self.grouping, self.facet, self.counts) if self.index else None
+            if hint:
+                self.lines.append(fit_line(Line().add('  ◌ ' + hint, 'dim'), width))
             self.place_selection()
         elif self.mode == 'plan':
             plan = self.index.plan_by_key.get(self.target[1]) if self.index else None
@@ -1507,6 +1574,9 @@ def snapshot(source, now, width=100, grouping='plan', facet=FOCUS):
             out.extend(l.text().rstrip() for l in lines)
         else:
             out.append('  ' + empty_note(grouping, facet, counts, '', index.counts()[0].get('idle', 0)))
+        hint = unreadable_hint(grouping, facet, counts)
+        if hint:
+            out.append('  ◌ ' + hint)
         shown = [g.plan for g in groups if g.kind == 'plan']
         for plan in sorted(shown, key=lambda p: (p.rank, p.plan)):
             if plan.cls in ('open', 'blocked'):

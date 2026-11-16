@@ -151,6 +151,19 @@
             ],
             "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
           },
+          "unreadable_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "missing",
+              "parse",
+              "shape",
+              null
+            ],
+            "description": "Why a plan is unreadable (2.1.0; optional): missing = no state.json where its lead record points; parse = its state.json does not parse or is too large; shape = a state.json shape this helper does not read (an older or newer plan generation). Null for a readable plan."
+          },
           "updated_at": {
             "type": "string",
             "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
