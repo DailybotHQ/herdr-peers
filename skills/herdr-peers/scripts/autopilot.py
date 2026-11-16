@@ -656,7 +656,10 @@ class Autopilot(object):
         forever."""
         now = self.clock()
         if self.brain is not None and self.brain.is_brain(addr):
-            return  # the brain's own limit is the keeper's to handle, never keyed
+            # The brain's own limit is the keeper's to handle, never keyed: marked
+            # so that the keeper replaces it on its next tick.
+            memo.limit_tries = max(memo.limit_tries, 1)
+            return
         if not memo.limit_at:
             memo.limit_at = now
             self.record(addr, kind, choice, 'left')

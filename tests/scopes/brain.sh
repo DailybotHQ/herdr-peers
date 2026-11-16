@@ -369,6 +369,19 @@ for _ in range(4):
     io.rows['local'] = []
     step(ap)
 assert len(io.launched) == B.MAX_REPLACEMENTS, len(io.launched)
+# A brain at its usage limit is marked by the screen pass (never keyed) and replaced.
+io, ap = fresh()
+io.rows['local'] = [row('w9:p1', 'idle', 2)]
+ap.run_pass(); step(ap)
+assert ap.brain.b.state == 'ready'
+limited = open(os.path.join(os.path.dirname(sys.argv[2]), 'claude__blocked__usage_limit.screen')).read()
+io.rows['local'] = [row('w9:p1', 'blocked', 3)]
+io.screens['w9:p1'] = limited
+sent = len(io.sent)
+step(ap); step(ap)
+assert not [t for p, t in io.sent[sent:] if p == 'w9:p1'], 'nothing keyed or prompted in the brain pane'
+assert any(o[2] == 'brain_replaced' and o[1] == 'local:w9:p1' for o in io.log), io.log[-4:]
+assert len(io.launched) == 2 and ap.brain.b.pane != 'w9:p1', io.launched
 # A failed launch is recorded and retried within the cap; a dry run launches nothing.
 io, ap = fresh()
 io.fail_launch = True
@@ -444,8 +457,10 @@ run "$HELPER" autopilot --loop --once --brain --brain-model claude=sonnet
 assert_rc "a loop pass with a brain exits 0" 0
 assert_eq "a launch starts the answers file empty (an earlier brain's answers are void)" "0" "$(wc -c <"$(state_dir)/brain-answers.ndjson" | tr -d ' ')"
 WSLOG0=$(cat "$FAKE_HERDR_DIR/local/workspaces.log")
-assert_contains "the launch key is put in the brain's environment" "$WSLOG0" '"HERDR_PEERS_BRAIN_KEY='
-assert_not_contains "and never typed" "$(cat "$FAKE_HERDR_DIR/local/runs.log")" "HERDR_PEERS_BRAIN_KEY"
+assert_contains "the brain's environment names its key file" "$WSLOG0" "\"HERDR_PEERS_BRAIN_KEY_FILE=$(state_dir)/brain-key-"
+KEYS_IN_ARGV=$(printf '%s' "$WSLOG0$(cat "$FAKE_HERDR_DIR/local/runs.log")" | grep -Eo '[^0-9a-f][0-9a-f]{32}[^0-9a-f]' || true)
+assert_eq "no key on any command line" "" "$KEYS_IN_ARGV"
+if ls "$(state_dir)"/brain-key-* >/dev/null 2>&1; then t_fail "the key file is removed when the brain is closed"; else t_ok "the key file is removed when the brain is closed"; fi
 assert_contains "pick runs in ask mode" "$(cat "$FAKE_AK_DIR/env.log")" "AGENTKIT_PERMISSIONS=ask"
 assert_contains "with the kinds, the model and the owner" "$(cat "$FAKE_AK_DIR/argv.log")" "pick --kinds claude,codex,grok --model-for claude=sonnet --owner local:w1:p1 --max-age 300 --json"
 assert_contains "the account is leased first" "$(cat "$FAKE_AK_DIR/argv.log")" "lease claude @work1 --owner local:w1:p1 --ttl 4h --purpose brain"
@@ -503,12 +518,18 @@ new_world brain_answer
 run "$HELPER" autopilot answer q-0123456789ab nudge_once_more
 assert_rc "autopilot answer outside the brain's environment is refused" 6
 if [ -e "$(state_dir)/brain-answers.ndjson" ]; then t_fail "and records nothing"; else t_ok "and records nothing"; fi
-export HERDR_PEERS_BRAIN_KEY=0123456789abcdef0123456789abcdef
+KEYF="$(state_dir)/brain-key-0123456789abcdef"; mkdir -p "$(state_dir)"
+printf 0123456789abcdef0123456789abcdef >"$KEYF"; chmod 600 "$KEYF"
+export HERDR_PEERS_BRAIN_KEY_FILE="$WORLD/elsewhere/brain-key-0123456789abcdef"
+mkdir -p "$WORLD/elsewhere"; cp "$KEYF" "$HERDR_PEERS_BRAIN_KEY_FILE"
+run "$HELPER" autopilot answer q-0123456789ab nudge_once_more
+assert_rc "a key file outside the state directory is refused" 6
+export HERDR_PEERS_BRAIN_KEY_FILE="$KEYF"
 run "$HELPER" autopilot answer q-0123456789ab nudge_once_more
 assert_rc "autopilot answer records an answer" 0
 assert_contains "with its pane and terminal" "$(cat "$(state_dir)/brain-answers.ndjson")" '"pane": "w1:p1"'
 assert_contains "and the launch key's proof" "$(cat "$(state_dir)/brain-answers.ndjson")" '"mac": "'
-assert_not_contains "never the key itself" "$(cat "$(state_dir)/brain-answers.ndjson")" "$HERDR_PEERS_BRAIN_KEY"
+assert_not_contains "never the key itself" "$(cat "$(state_dir)/brain-answers.ndjson")" "0123456789abcdef0123456789abcdef"
 assert_eq "the answers file is private" "600" "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$(state_dir)/brain-answers.ndjson")"
 run "$HELPER" autopilot answer not-an-id leave
 assert_rc "a malformed question id is a usage error" 2
@@ -516,6 +537,6 @@ run "$HELPER" autopilot answer q-0123456789ab "rm -rf"
 assert_rc "an action that is not one word is a usage error" 2
 run "$HELPER" autopilot run q-0123456789ab
 assert_rc "answer arguments outside answer are a usage error" 2
-unset HERDR_PEERS_BRAIN_KEY
+unset HERDR_PEERS_BRAIN_KEY_FILE
 export PATH=$OLDPATH
 unset FAKE_AK_DIR

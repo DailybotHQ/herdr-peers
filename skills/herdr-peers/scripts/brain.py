@@ -212,7 +212,8 @@ def new_question_id(rand):
     return 'q-' + rand(6).hex()
 
 
-KEY_ENV = 'HERDR_PEERS_BRAIN_KEY'
+KEY_FILE_ENV = 'HERDR_PEERS_BRAIN_KEY_FILE'   # names the key file; the key itself is never in argv or env
+KEY_FILE_RE = re.compile(r'brain-key-[0-9a-f]{16}')
 KEY_RE = re.compile(r'[0-9a-f]{32}')
 START_DEADLINE = 120    # seconds a launched brain has to show an idle agent
 

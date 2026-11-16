@@ -441,9 +441,12 @@ Start it without `--brain` to run without one.
    and types the quoted line into that fresh shell — never into an agent's
    pane. The directory is removed when the brain is closed. Its PATH starts
    with this very helper's directory, so it answers with `herdr-peers` by
-   name, and its environment carries a fresh random **answer key** for this
-   launch (`HERDR_PEERS_BRAIN_KEY`), kept otherwise only in the daemon's
-   memory: never typed, never on a screen, never in a file. The answers file
+   name. Each launch has a fresh random **answer key**, kept in the daemon's
+   memory and in one private file in the state directory (`0600`, created
+   exclusively, never through a symlink, removed when the brain closes);
+   the brain's environment carries only that file's path
+   (`HERDR_PEERS_BRAIN_KEY_FILE`). The key is never typed, never on a
+   screen and never on a command line. The answers file
    starts empty at each launch. If anything fails after the lease, the
    lease, the workspace and the directory are released before the failure
    is recorded.
@@ -458,7 +461,8 @@ Start it without `--brain` to run without one.
 The brain is replaced when its pane is gone, it sits at its usage limit,
 or its agent has not come up idle within two minutes of the launch (`ak`
 failed, a login screen; you are told) — at most three launches an hour. The
-screen pass never keys or prompts the brain's own pane for its usage limit;
+screen pass never keys or prompts the brain's own pane for its usage limit,
+it marks it so the brain is replaced on the next pass;
 the brain is never nudged in prose and never
 treated as a plan's lead. On `autopilot stop` its lease is released and its
 workspace closed. The fleet map and `fleet ui` show it: state, account,
@@ -480,11 +484,12 @@ question is one it asked, still open and within its time, the action is in
 that case's list, the answer names the brain's own pane and terminal, and
 it ran under the brain pane's own process (its pid is in the answer's
 recorded process ancestry), and it carries an HMAC of the answer under this
-launch's answer key, which `autopilot answer` reads from the brain's
-environment (outside it, the verb refuses). Anything else is recorded as
+launch's answer key, which `autopilot answer` reads from the key file the
+brain's environment names (a file of the state directory, owned by you,
+read without following a symlink; anything else, the verb refuses). Anything else is recorded as
 refused and the case keeps its default. **What remains:** a process of the
-same user that can read the brain process's environment (`ps`, `/proc`)
-can learn the key and forge an answer to an open question with an allowed
+same user can read the key file (or learn its path from the brain's
+environment) and forge an answer to an open question with an allowed
 action; every allowed action is harmless under that assumption (one more
 fixed prompt, one fixed request to a lead, a notification, or nothing). An
 `ask_lead_to_resolve` answer is bound to the blocker it was about: if the
