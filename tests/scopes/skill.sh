@@ -43,7 +43,7 @@ print("" if isinstance(d, dict) else d)' "$fm" "$1"
 
 assert_eq "SKILL.md has YAML frontmatter" "True" "$(fmget ok)"
 assert_eq "frontmatter name is herdr-peers" "herdr-peers" "$(fmget name)"
-assert_eq "metadata.protocol is 1 (interface version)" "1" "$(fmget metadata.protocol)"
+assert_eq "metadata.protocol is 2 (interface version)" "2" "$(fmget metadata.protocol)"
 helper_version=$("$HELPER" --version | sed -n 's/^herdr-peers \([0-9.]*\) .*/\1/p')
 assert_eq "metadata.version matches the helper" "$helper_version" "$(fmget metadata.version)"
 assert_eq "top-level version matches the helper" "$helper_version" "$(fmget version)"

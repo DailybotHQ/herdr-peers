@@ -25,9 +25,11 @@
         "plan_blocked",
         "plan_no_lead",
         "plan_completed",
-        "plan_lead_moved"
+        "plan_lead_moved",
+        "plan_appointment_prompted",
+        "plan_appointed"
       ],
-      "description": "stalled: three loop prompts without progress; blocked: the plan state records a blocker; no_lead: the lead is gone and no successor could be asked; completed: a plan the loop watched while open has finished. lead_moved: the pane the lead record names now works outside the plan's repository (a stale record); nobody is prompted."
+      "description": "stalled: three loop prompts without progress; blocked: the plan state records a blocker; no_lead: the lead is gone and no successor could be asked; completed: a plan the loop watched while open has finished. lead_moved: the pane the lead record names now works outside the plan's repository (a stale record); nobody is prompted. appointment_prompted: lead and every successor were gone for the appointment grace, the plan carries the grant and the daemon runs with --appoint, so its first live lane was asked to run `lead takeover --as-lane`; appointed: that lane now leads the plan."
     },
     "plan": {
       "type": "string",

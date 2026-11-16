@@ -48,6 +48,7 @@ TS_RE = re.compile(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z')
 SERVER_DIR_RE = re.compile(r'[0-9a-f]{64}')
 BRANCH_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._/@+-]{0,199}')
 BLOCK_CLASS_RE = re.compile(r'\bC[1-7]\b')
+APPOINT_GRANTS = ('lanes', 'lanes:any-kind')
 TASK_STATUSES = ('pending', 'in_progress', 'completed', 'blocked', 'skipped')
 TITLE_MAX = 120
 SUMMARY_LINES = 14        # lines of the plan's PROGRESS.md shown as its summary
@@ -124,6 +125,10 @@ def lead_record(data):
     rec = dict(data['record'])
     if 'repo_root' in data:
         rec['repo_root'] = data['repo_root']
+    # lead-v2's grant lives in the envelope (the stored record stays lead-v1).
+    grant = data.get('appoint')
+    rec['appoint'] = grant if grant in APPOINT_GRANTS else None
+    rec['appointed'] = data.get('record_via') == 'appointment'  # this epoch came by appointment
     if rec.get('schema') != LEAD_SCHEMA:
         return None
     if not isinstance(rec.get('plan'), str) or not PLAN_RE.fullmatch(rec['plan']):
@@ -580,6 +585,7 @@ def describe_plan(root, server, rec, panes, git, now=None, logs=None):
         'blocker_class': block_class, 'progress': progress, 'state_updated_at': updated,
         'updated_at': rec['updated_at'], 'lead_in_repo': lead_in_repo,
         'tasks_done': done, 'tasks_total': total, 'current_task': current, 'detail': detail,
+        'appoint': rec.get('appoint'), 'appointed': bool(rec.get('appointed')),
         'open_asks': open_asks(root, server, lead_pane, now, logs) if lead_local else None,
     }
 
@@ -715,7 +721,7 @@ def read_fleet(root=None):
 PLAN_KEYS = frozenset(('plan', 'server', 'lead', 'epoch', 'succession', 'lanes', 'repo_root',
                        'plan_dir', 'class', 'blocker_class', 'progress', 'state_updated_at',
                        'updated_at', 'lead_in_repo', 'open_asks', 'tasks_done', 'tasks_total',
-                       'current_task', 'detail'))
+                       'current_task', 'detail', 'appoint', 'appointed'))
 AGENT_KEYS = frozenset(('pane', 'cwd', 'repo_root', 'branch'))
 
 
@@ -733,6 +739,9 @@ def valid_report(doc):
         return False
     for plan in plans:
         if not isinstance(plan, dict) or not PLAN_KEYS <= set(plan):
+            return False
+        if plan.get('appoint') not in APPOINT_GRANTS + (None,) \
+                or not isinstance(plan.get('appointed'), bool):
             return False
         if plan.get('lead_in_repo') not in (True, False, None):
             return False

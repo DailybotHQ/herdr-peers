@@ -9,6 +9,35 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Added
+
+- **Lead appointment (protocol 2).** When a plan's lead and every successor
+  are gone, the plan's first live lane may take the lead — only when the
+  human granted it (`lead claim --allow-appointment`, recorded in the lead
+  record as `appoint`) and only with strong evidence the lane's helper checks
+  twice (`lead takeover --as-lane`). Receivers verify it themselves with the
+  new fence rule F10 (and a lane-order tie, like F8). At most two
+  appointments per plan.
+- **`lead verify --plan P`**: before a merge, tag or release, is this pane
+  still the lead here and on the plan's other machines (read-only reports)?
+  It refuses on a higher epoch and names machines it could not reach.
+  Nothing is written to git or any remote.
+- **`autopilot --loop --appoint`**: the daemon asks the first live lane of a
+  granted plan to take the lead once lead and successors have been gone for
+  15 minutes (`HERDR_PEERS_AUTOPILOT_APPOINT_GRACE`) with no progress; a lead
+  at its usage limit counts only after the screen pass gave up on it. Events
+  `plan_appointment_prompted` and `plan_appointed`.
+- Schema `lead-v2` (`lead-v1` plus `appoint` and `via`); `plans-v1` gains
+  `appoint` and `appointed`.
+
+### Changed
+
+- **Protocol 2** (breaking: herdr-peers 2.0.0). Only the lead notice of a
+  granted plan is stamped `protocol=2`; every other message stays
+  `protocol=1`, byte-compatible. A 1.x receiver decides protocol 2 never and
+  fails closed. `metadata.protocol` and `--version` report 2. Every lane and
+  successor of a granted plan must run 2.0 or later.
+
 ## [1.3.1] - 2026-11-16
 
 ### Fixed

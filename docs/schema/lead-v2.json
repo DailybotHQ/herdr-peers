@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "herdr-peers/lead-v2",
+  "title": "herdr-peers lead record (lead-v2)",
+  "description": "lead-v1 plus the two keys of lead appointment (protocol 2, protocol.md §12): `appoint`, the human's standing grant, and `via`, set to \"appointment\" on the epoch an appointment made. A record with either key is lead-v2 and travels only in a protocol=2 notice. Stored records keep the seven-key lead-v1 record and hold these keys in the local envelope, so a 1.x helper on the same server still reads them. What `herdr-peers lead show --json` prints (local records include optional repo_root) and what a lead notice carries on its `swarm-lead:` line (repo_root omitted): who leads one plan, at which epoch, who succeeds it and which lanes it notifies. Stored per plan in the helper's machine-scoped state (0600). Only the holder of the highest epoch acts as lead; receivers accept a new record only through the fencing rules (protocol.md §12). repo_root is optional for legacy records; receivers reject other unknown keys. Never carries prompt text or secrets.",
+  "type": "object",
+  "required": [
+    "schema",
+    "plan",
+    "lead",
+    "epoch",
+    "succession",
+    "lanes",
+    "updated_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "herdr-peers/lead-v2"
+    },
+    "plan": {
+      "type": "string",
+      "pattern": "^(?=.{1,128}$)[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$",
+      "description": "The plan id or repo/id (--plan, else DWP_PLAN id or directory basename)."
+    },
+    "repo_root": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^/.{0,4095}$",
+      "description": "Local-only claiming repository git common root; null outside git. Optional on legacy or received records; preserved across local succession, omitted from broadcasts and fencing."
+    },
+    "lead": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(local|[A-Za-z0-9._-]{1,64}):[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}$",
+      "description": "The lead's address as the holder of this record reaches it; null after `lead release`."
+    },
+    "epoch": {
+      "type": "integer",
+      "description": "1 for a first claim; +1 on every handover, takeover, release and claim after a release (1..1000000)."
+    },
+    "succession": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(local|[A-Za-z0-9._-]{1,64}):[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}$"
+      },
+      "description": "Successors in order (at most 32, no duplicates, never the lead). The first reachable one takes over when the lead is gone."
+    },
+    "lanes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(local|[A-Za-z0-9._-]{1,64}):[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}$"
+      },
+      "description": "Lanes that receive every lead notice (at most 32, no duplicates, never the lead)."
+    },
+    "updated_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "description": "UTC time this holder last wrote the record."
+    },
+    "appoint": {
+      "enum": [
+        "lanes",
+        "lanes:any-kind",
+        null
+      ],
+      "description": "The human's standing appointment grant (lead claim --allow-appointment): when lead and every successor are gone, the first live lane may take the lead. null or absent: no grant."
+    },
+    "via": {
+      "enum": [
+        "appointment",
+        null
+      ],
+      "description": "\"appointment\" on the epoch a lane took the lead under the grant; dropped on the next refresh."
+    }
+  }
+}
