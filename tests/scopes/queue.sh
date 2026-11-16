@@ -39,9 +39,12 @@ for bad in ({'schema': 'other', 'items': []}, {'schema': 'dwp-queue-v1', 'items'
             {'schema': 'dwp-queue-v1', 'items': [{'plan': 'P1', 'state': 'running'}]},
             {'schema': 'dwp-queue-v1', 'items': [{'plan': 'P1', 'state': 'queued', 'lead': 'x y'}]},
             {'schema': 'dwp-queue-v1', 'items': [{'plan': 'P1', 'state': 'queued'}, {'plan': 'P1', 'state': 'queued'}]},
-            {'schema': 'dwp-queue-v1', 'items': [], 'parallel': 'yes'}):
+            {'schema': 'dwp-queue-v1', 'items': [], 'parallel': 'yes'},
+            {'schema': 'dwp-queue-v1', 'items': [{'plan': 'P%d' % i, 'state': 'done'} for i in range(F.MAX_QUEUE_ITEMS + 1)]}):
     json.dump(bad, open(os.path.join(b, '.dwp', 'queue.json'), 'w'))
     assert F.read_queue(b)[0] == 'invalid', bad
+queue(b, [{'plan': 'P%d' % i, 'state': 'done'} for i in range(F.MAX_QUEUE_ITEMS)])
+assert F.read_queue(b)[0] != 'invalid', 'a queue of exactly the cap is read'
 with open(os.path.join(b, '.dwp', 'queue.json'), 'w') as fh:
     fh.write('{"schema": "dwp-queue-v1", "items": []}' + ' ' * (F.MAX_QUEUE_BYTES + 1))
 assert F.read_queue(b)[0] == 'invalid', 'oversized'
