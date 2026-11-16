@@ -1,10 +1,32 @@
 # Security — herdr-peers threat model
 
-This document is the threat model of herdr-peers protocol 1 and its helper:
-what is protected, from whom, how, and what risk remains. The normative rules
-are in [`skills/herdr-peers/protocol.md`](../skills/herdr-peers/protocol.md);
-every mitigation below is exercised by `bash tests/run.sh security` (and the
-`protocol`, `helper` and `templates` scopes).
+This document is the threat model of herdr-peers (protocols 1 and 2) and its
+helper: what is protected, from whom, how, and what risk remains. The
+normative rules are in [`skills/herdr-peers/protocol.md`](../skills/herdr-peers/protocol.md);
+every mitigation below is exercised by the test suite (the scope named in
+each row; `bash tests/run.sh <scope>`).
+
+## Residual risks you accept
+
+The short list; each is explained under
+[Residual risk (accepted)](#residual-risk-accepted) and in its threat row.
+
+1. **No sender authentication.** Herdr has none: `from=` is a claim, and a
+   process that can drive Herdr can type anything into a pane. Fencing and
+   scope govern cooperating peers; they are not authentication (T6, T20, T43).
+2. **Autopilot approves what agents ask** — including a command you would
+   have refused. There is no deny-list (T30).
+3. **The brain is a prompt-injection target.** Its answers are bounded to a
+   closed list of harmless actions and its only approved command is its own
+   answer, but an injected brain can still choose any allowed action (T42).
+4. **A partition can briefly give a plan two leads** after an appointment.
+   Nothing is written remotely to prevent it; `lead verify` catches what it
+   can reach (T44).
+5. **Screens change.** A CLI upgrade can stop a screen from being recognised
+   (left alone) or recognised by the generic rule only (T29).
+6. **Secret detection and redaction are filters**, not guarantees (T13).
+7. **The local record is local**: anyone who can write the state directory
+   can edit it; it is an audit aid, not evidence (T15).
 
 ## Reporting a vulnerability
 
@@ -81,10 +103,10 @@ human named (T34–T38).
 | T16 | **Malformed or hostile JSON from Herdr** | Every field is type-checked; malformed machines/agents are dropped; nothing crashes into a traceback. | `security` |
 | T17 | **Panes and layout** — closing or moving others' work. | Discipline: close only panes you created; layout changes are recorded intent; launched peers get default permissions, never a bypass flag. | `skill` (marketplace rules) |
 | T18 | **Stale sender address** — an agent inherits a `HERDR_PANE_ID` that names a gone pane or another session's pane, so its `from=` routes replies nowhere or into someone else's pane. | `ask` and `reply` verify their own pane first: it must exist on the local server and, when Herdr's `pane process-info` pids are visible in this process table, one of them must be an ancestor of the helper; otherwise exit 6 and nothing is sent or recorded. Pids from another PID namespace (a container) cannot be compared: the pane's existence is the check there. An agent that runs its tools from a background server (Codex: no terminal anywhere in the caller's ancestry) is never trusted on the inherited id, which names the server's first pane; it declares its pane with `--pane`, accepted only when that pane runs the same agent program and refused when it runs another. A terminal-attached caller always needs the ancestry match, with or without `--pane`. | `orchestra` |
+| T19 | **Screen reading** — `status`/`lanes` read a waiting lane's visible screen, which may show secrets or hostile text, and could be tempted to answer it. | Read-only: they print a class and the name of the matched pattern, never screen text, and never send keys (`argv.log` proves no `send-keys`). Only folder trust may be keyed through — by the lead, on a pane it launched itself, under the user's standing authorization (the only screen with keys in `UNBLOCK_KEYS`). Claude's bypass-permissions acknowledgement is never keyed by an agent: the developer accepts it once per profile. A usage-limit screen (`usage_limit`: the CLI's own banner anchored at the start of a line, also read from the last 15 lines of an idle lane) is handed off — the lead relaunches the lane's plan on an account with capacity — and never keyed. Because a peer can deliver text that looks like a banner into an idle pane, an idle-pane match never counts as "gone" for a receiver's fencing and needs a recorded `--reason` for a takeover. Login, permission and unknown screens escalate. | `orchestra` |
 | T20 | **Forged or replayed lead notice** — a peer claims leadership, jumps the epoch, takes over out of turn, or replays an old notice. | A receiver stores a record only through the fencing rules (protocol §12): first claim only from the briefer (`HERDR_PEERS_BRIEFER` or a recorded asker), handover only from the stored lead at epoch+1, takeover only by a listed successor at epoch+1 when every earlier successor is gone (the receiver checks), ties to the earlier position; a stale epoch, a duplicate notice id (rule 12) and anything else are rejected and recorded. Received records are validated strictly (exact keys, address and plan patterns, epoch range, list sizes) after a size (8 KiB) and nesting (2 levels) pre-check, so a hostile line cannot crash the parser; the helper also validates every record before writing it. Reachability is read before the state lock is taken; the decision is re-made under the lock from the reloaded record. A former lead on the same server (whose shared record the successor already rewrote) is still told to step down. `notify` refuses a hand-written `swarm-lead:` line. A former lead that adopts a newer epoch steps down and its lead verbs are refused. | `lead`, `helper` |
 | T21 | **Notice abuse** — notices skip the fan-out cap and may be sent while holding an ask. | A notice grants nothing and is never answered, so it cannot start a loop or a chain; it has the ask's hygiene (size, control characters, marker, secrets, scope, self, blocked peer). Receivers record each id once (rule 12). | `helper`, `security`, `protocol` |
 | T22 | **Lead-record file tricks** | Lead records live in the machine-scoped state (`leads/`, directory `0700`, files `0600`), are written atomically (temp file + rename) and never read or written through a symlink; a corrupt record stops every lead verb instead of being guessed at. Records hold plan ids and addresses only. | `lead` |
-| T19 | **Screen reading** — `status`/`lanes` read a waiting lane's visible screen, which may show secrets or hostile text, and could be tempted to answer it. | Read-only: they print a class and the name of the matched pattern, never screen text, and never send keys (`argv.log` proves no `send-keys`). Only folder trust may be keyed through — by the lead, on a pane it launched itself, under the user's standing authorization (the only screen with keys in `UNBLOCK_KEYS`). Claude's bypass-permissions acknowledgement is never keyed by an agent: the developer accepts it once per profile. A usage-limit screen (`usage_limit`: the CLI's own banner anchored at the start of a line, also read from the last 15 lines of an idle lane) is handed off — the lead relaunches the lane's plan on an account with capacity — and never keyed. Because a peer can deliver text that looks like a banner into an idle pane, an idle-pane match never counts as "gone" for a receiver's fencing and needs a recorded `--reason` for a takeover. Login, permission and unknown screens escalate. | `orchestra` |
 | T23 | **Debate inputs** — ballots, claims ledgers and filings are written by other agents and may be hostile (huge, malformed, symlinked, instructions in prose, shell text in a verdict). | `debate tally` and `debate claims` read JSON files of at most 4 MiB each, never through a symlink, validate every id, ranking (strings only: a hostile shape exits 2, never a traceback), verdict (uppercase word only), stance, evidence level and confidence, cap claims (500 per lane), text (500 characters) and sources (20 of 300 characters), and refuse duplicates — a voter or lane is one identity whatever its case or a `local:` prefix, and `lead` is excluded in any case; `filings` accepts plain names only (no paths). Nothing in a filing or ballot is executed, evaluated or forwarded; the lead never votes (`lead` is always excluded). | `debate` |
 | T24 | **Un-blinding** — the anonymization key, the order's secret or identities leak to the panel. | `debate anon` derives the filing order from a random 128-bit secret (or `--seed`) kept only in the key file and never printed (without that secret the public filing names do not rebuild the map; anyone holding the key file or a guessable `--seed` can, so keep both away from the panel); refuses a key inside the filings or the output directory, never overwrites a key or a non-empty output directory, writes the key `0600` with `O_EXCL`/`O_NOFOLLOW`, and redacts pane ids, Herdr addresses, profile handles, filename stems, model and vendor names and each `--redact` word. `debate claims --anonymous` renames lanes and angles (`Lane_A`, `Angle_A`), drops vendors and redacts the same identities from every claim's text and sources. | `debate` |
 | T25 | **Panel provisioning** — a helper that launches agents or spends accounts on its own. | `debate panel` is read-only: it reads Herdr's agent list, this server's lead records and `ak pick` (once per call), and prints commands — lease, split, launch, release — that the lead runs only with the human's go-ahead (the fakes prove no prompt, key, split, run or lease is issued). Panes that lead or serve another plan's lead record are never offered; proposed launches carry no permission flag (agentkit's own posture, which the human controls, applies). | `debate` |

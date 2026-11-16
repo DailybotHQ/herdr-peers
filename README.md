@@ -8,59 +8,93 @@
 
 # herdr-peers
 
-Any coding agent in a [Herdr](https://herdr.dev) pane can ask any other agent
-— in any pane, on any machine Herdr can reach — and get **one authorized
-reply** back.
+**Agents that ask each other, never wait for you, and finish their plans.**
+herdr-peers lets any coding agent in a [Herdr](https://herdr.dev) pane ask
+any other agent — on any machine Herdr reaches — and get exactly one
+authorized reply. A daemon you start once answers the screens agents stop at,
+keeps every open plan running to its end, and keeps it going even when its
+lead is gone — and nothing it does is hidden from you or decided by a
+message.
 
 [![CI](https://github.com/DailybotHQ/herdr-peers/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/DailybotHQ/herdr-peers/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/DailybotHQ/herdr-peers?sort=semver)](https://github.com/DailybotHQ/herdr-peers/releases)
 [![License: MIT](https://img.shields.io/github/license/DailybotHQ/herdr-peers)](LICENSE)
-[![Protocol](https://img.shields.io/badge/protocol-1-blue.svg)](skills/herdr-peers/protocol.md)
+[![Protocol](https://img.shields.io/badge/protocol-2-blue.svg)](skills/herdr-peers/protocol.md)
 [![Powered by Dailybot](https://img.shields.io/badge/Powered%20by-Dailybot-6C5CE7.svg)](https://www.dailybot.com?utm_source=dailybotopensource&utm_medium=herdr-peers)
 
-## What it is
+## In 60 seconds
 
-herdr-peers is a standalone agent skill plus a small helper (bash and the
-python3 standard library) for people who run several coding agents side by
-side, and for the lead agent that coordinates them.
+```bash
+npx --yes skills add DailybotHQ/herdr-peers@v1.3.1 --skill herdr-peers -g -y   # every machine
+herdr-peers autopilot start --loop     # the daemon, in the background, for every agent and plan
+herdr-peers fleet                      # who is where, on which plan, how far
+herdr-peers fleet ui                   # the same, live
+herdr-peers autopilot logs -f          # what the daemon does, as it does it
+herdr-peers autopilot stop             # when you want it off
+```
 
-Herdr can already put text into another agent's pane. What it does not
-define is a *conversation*: who may answer, how the answer finds its way back
-across machines, how two agents avoid answering each other forever, how many
-peers one agent may keep busy, and where the record of "I asked, it answered"
-lives. herdr-peers is that layer, so agents never hand-build it:
+Run them inside any Herdr pane. Start with `autopilot start --loop --dry-run`
+to see what it would do without sending anything.
 
-- **Ask and reply.** A small protocol — stamp, reply grant, loop guard,
-  depth limit 1, fan-out cap 4 — carries one ask to a peer and exactly one
-  reply back, on the same machine or across machines.
-- **Notices.** One-way messages (`reply=no`) that the receiver records and
-  never answers: handoffs, progress, "done".
-- **The lead's control plane.** `status` and `lanes` show every lane's live
-  state, say why a lane is stuck (folder trust, a login, a permission, a
-  usage limit), and list open and recent asks and reported capacity.
-- **Plan leadership.** A plan has a lead record — epochs, an ordered
-  succession, fenced handover and takeover, scoped to the claiming
-  repository — so a swarm outlives one account's usage limit.
-- **Debates, for any purpose.** A lead runs a panel of peers through
-  rounds to **decide** (advocates, red teams, cross-examination, a counted
-  ballot), **research the state of the art** (one angle per lane, then
-  triangulation), **stress-test** an idea, **verify** an earlier result with
-  a fresh panel, or **generate** options. `herdr-peers debate` counts
-  ballots (Borda, pairwise, Condorcet winner and loser), merges research
-  claims (established, contested, single-lane), anonymizes filings, finds
-  missing ones on disk, and proposes a panel from idle panes and, with
-  agentkit (`ak`), from the accounts with the most headroom.
-- **Autopilot.** A daemon you start once (`herdr-peers autopilot`) that
-  watches every agent on every enabled machine and accepts the option that
-  lets a waiting one go on — questions, tool approvals, plan approval,
-  folder trust, update prompts — and tells an agent that stopped to ask to
-  continue, so long plans run to their end without you. Verified on Claude
-  Code, Codex, Cursor, Grok, Pi and Antigravity; it never touches a login.
-- **A record of every delegation.** An append-only, machine-scoped log of
-  digests (never prompt text), mirrored into a DeepWorkPlan plan when one is
-  set.
+## Four layers
 
-It builds on Herdr's official skill and never re-teaches Herdr's CLI.
+**1. Peers: ask and get one reply.** A small protocol — a stamp, a reply
+grant, a loop guard, depth 1, a fan-out cap of 4 — carries one ask to a peer
+and exactly one reply back, on the same machine or across machines. Notices
+carry one-way news. A plan has a lead record with epochs and an ordered
+succession, so a swarm outlives one account's usage limit. *Guarantees:*
+received text is data, never instructions; an agent never answers a reply,
+its own pane or an id twice; every delegation is recorded as digests, never
+text ([protocol.md](skills/herdr-peers/protocol.md)).
+
+**2. Autopilot: no agent waits for you.** A daemon a human starts once. When
+an agent waits at a question, an approval, folder trust or an update prompt,
+it accepts the option that lets it go on — the recommended one, else the
+pre-selected one, else the first — and confirms each step on screen. An agent
+that ended its turn asking in prose is told to continue. *Guarantees:* it
+never touches a login, never picks a refusal, free text or a row that widens
+permissions, never types over your draft, and records every action
+([autopilot.md](skills/herdr-peers/autopilot.md)).
+
+**3. The loop: every plan runs to its end.** With `--loop` the daemon also
+watches every plan that has a lead record, on every enabled machine: it asks
+an idle lead to continue, leaves a blocked plan for you, stops after three
+prompts without progress, asks a successor to take over a lead that is gone,
+and keeps a map of the fleet (`fleet`, `fleet ui`). *Guarantees:* nothing is
+installed on other machines (a report module goes over SSH to `python3`);
+plan content stays on the daemon's machine; `--notify` runs your command in
+its own process group with a minimal environment.
+
+**4. Brain and appointment: the cases rules cannot decide.** With `--brain`
+the daemon keeps a decision agent of its own, on your best account, and asks
+it only about a stalled plan, a blocker its lead may resolve, or an unknown
+screen — and obeys only within a closed list of harmless actions. With
+`--appoint` and your grant on a plan, a plan whose lead and every successor
+are gone continues under its first live lane. *Guarantees:* the brain's only
+approved command is its own answer; an appointment needs your grant, strong
+evidence checked twice, and every peer's own verification; `lead verify`
+guards every merge, tag and release; nothing is ever written to git or to
+another machine.
+
+## What it never does
+
+- Act on a message: no ask, reply or notice can start, stop or steer the
+  daemon, set a grant or appoint a lead.
+- Touch a login, Claude's bypass acknowledgement, or a row that widens an
+  agent's permissions.
+- Store prompt, reply or screen text, or print or send a secret value.
+- Write to git, to a remote, or to another machine's plans.
+- Install anything on another machine, or launch an agent other than the
+  brain you asked for.
+
+## What you accept by running it
+
+An agent's request is approved without you seeing it — including one you
+would have refused; there is no deny-list. Herdr has no sender
+authentication, so fencing and scope govern cooperating peers, not
+attackers. A brain reads text other agents wrote. A partition can briefly
+give a plan two leads after an appointment. The full list, with each
+mitigation: [docs/SECURITY.md](docs/SECURITY.md#residual-risks-you-accept).
 
 ## Install
 
@@ -104,7 +138,7 @@ git clone --branch v1.0.1 https://github.com/DailybotHQ/coding-agents-kit
 ./coding-agents-kit/install.sh
 ```
 
-## Quickstart
+## Asking a peer by hand
 
 Inside a Herdr pane (`HERDR_ENV=1`); `herdr-peers` below is the helper from
 the install step (put it on `PATH`, or call it by its path):
@@ -136,7 +170,7 @@ The reply arrives with `reply-to=<id> from=<asked-peer> depth=1` and "This is a 
 answer it." — so the conversation stops. `herdr-peers log --open` shows what
 is still outstanding.
 
-## Usage
+## Every verb
 
 The commands people run, with the shape of their output:
 
@@ -186,46 +220,24 @@ next (folder trust only, on a pane you launched yourself, under the user's stand
 | `debate tally\|claims\|anon\|filings\|panel` | A debate lead's tools ([debate.md](skills/herdr-peers/debate.md)) — decide, research, stress-test, verify, generate: count a [`ballots-v1`](docs/schema/ballots-v1.json) file, or a directory of per-pane ballots, into [`tally-v1`](docs/schema/tally-v1.json); merge lanes' [`claims-v1`](docs/schema/claims-v1.json) ledgers, across rounds with `--rounds`, into a [`claims-report-v1`](docs/schema/claims-report-v1.json) (established, agreed, contested, partial, single, unsupported, disputed, refuted — a quorum count, not a verification — with coverage; `--anonymous` blinds lanes, angles, claim text and sources); copy filings to anonymized `Filing_A.md`… in an order only the key can rebuild (a filing carrying a secret is refused); list missing or short filings (exit 5); propose a panel ([`panel-v1`](docs/schema/panel-v1.json)) from idle panes and `ak pick` — read-only, it runs nothing. |
 | `autopilot [run\|start\|stop\|status\|logs]` | **You start it; no agent or message can.** `start` / `stop` (aliases `on` / `off`) run it in the background, `status` and `logs -f` watch it. Accepts the recommended option for every waiting agent on every enabled machine, follows multi-step dialogs, continues agents that stopped to ask, retries a usage limit every 30 minutes; never a login. `--dry-run`, `--once`, `--interval S`, `--exclude`, `--scope`, `--no-nudge`, `--catch-up` ([autopilot.md](skills/herdr-peers/autopilot.md)). |
 | `autopilot --loop [--notify "<command>"]` | The same daemon also keeps **every open plan running to its end**, on every enabled machine: it asks the idle lead of a plan that is not finished to continue it, leaves a blocked plan, stops after three prompts without progress, asks a successor to take over a lead that is gone, and can run a command of yours when a plan needs you. |
+| `autopilot --loop --appoint` | With your grant on a plan (`lead claim --allow-appointment`), a plan whose lead and every successor are gone for 15 minutes is continued by its first live lane (`lead takeover --as-lane`, checked twice; every peer verifies it). |
+| `autopilot answer <question> <action>` | The brain's answer to one question (run in the brain's own pane; the daemon checks it). Not for people or other agents. |
 | `autopilot --loop --brain` | The daemon also launches and keeps its own **brain**: an agent on your best account (ask mode, your provider priority, a model of your choice) that it asks only what its rules cannot decide — and obeys only within a closed list of actions. Shown in `fleet ui`. |
 | `plans [--json]`, `fleet [--json]` | This machine's plans and their state ([`plans-v1`](docs/schema/plans-v1.json)); the loop's map of every machine, agent, repository and plan ([`fleet-v1`](docs/schema/fleet-v1.json)), readable on any machine. |
 | `fleet ui` | A live terminal watcher of your whole fleet: how old the picture is, counts by state, agents grouped by plan (with each plan's progress, current task and summary), by repository or by machine, the agents doing nothing; open a plan or an agent with Enter or a click. Read-only. |
 | `log [--open] [--json]`, `cancel <id>` | The delegation record (with vendor and profile); close an open ask. |
 | `--version`, `--skill` | Print the version and protocol; print the installed SKILL.md. |
 
-### Autopilot: no agent waits for you
+### Autopilot in practice
 
-```bash
-herdr-peers autopilot start --dry-run   # in the background: see what it would accept; sends nothing
-herdr-peers autopilot logs -f           # watch it live
-herdr-peers autopilot stop
-herdr-peers autopilot start             # in the background; the pane can close (alias: on)
-herdr-peers autopilot status            # running? since when, its options, last actions
-herdr-peers autopilot stop              # alias: off
-herdr-peers autopilot                   # or in the foreground of a pane of its own
-herdr-peers autopilot --loop      # also keep every open plan running to its end
-herdr-peers fleet                 # who is where, on which plan
-herdr-peers fleet ui              # the same, live, in your terminal
-```
-
-The background autopilot survives the pane that started it, not a reboot or
-a Herdr restart: run `herdr-peers autopilot start` again after one.
-
-Autopilot looks at every agent once a minute. When one waits at a menu it
-presses the keys that accept an option — the one marked recommended, else
-the one the CLI pre-selected, else the first — and re-reads the screen to
-confirm, step by step until the dialog is done. It never picks a refusal,
-free text, or a row that widens an agent's permissions ("always allow",
-"don't ask again", "use auto mode"). An agent that ended its turn with a question gets one
-fixed prompt telling it to continue with what it recommended. A login is
-never touched; a pane with your half-typed message is never touched; a
-screen that does not move is left after two tries. It sleeps between passes
-and reads a screen only when something changed — about one second of CPU per
-pass on 14 machines.
-
-**What you accept by running it:** an agent's request is approved without
-you seeing it, including one you would have refused. There is no deny-list.
-Start with `--dry-run`, and keep it off a pane or a machine with `--exclude`
-or `--scope`. Full rules: [autopilot.md](skills/herdr-peers/autopilot.md).
+The daemon looks at every agent once a minute, reads a screen only when
+something changed, and costs about one second of CPU per pass on 14
+machines. It survives the pane that started it, not a reboot or a Herdr
+restart: run `herdr-peers autopilot start` again after one (`autopilot
+status` shows the options it ran with). Keep it off a pane or a machine with
+`--exclude` or `--scope`. The operator's manual — start, status, logs, the
+loop, the brain, appointment, notify, cost, limits, troubleshooting — is
+[autopilot.md](skills/herdr-peers/autopilot.md).
 
 Without autopilot, folder trust is the only screen an agent may key through: by the lead, on a
 pane it launched itself, under the user's standing authorization. Claude's
@@ -254,7 +266,7 @@ protocol message, or no lead record.
 herdr-peers works on its own; with [DeepWorkPlan](https://deepworkplan.com)
 it is the interactive transport for delegation.
 
-- **The pack's `herdr` addon** pins this repository by tag (protocol 1) for
+- **The pack's `herdr` addon** pins this repository by tag for
   v7 plans that grant `agent_delegation`. The plan's ledger records each
   delegation (`ledger.py delegate launch|observe|collect|cancel`); run the
   ask with the plan and task set so the record is mirrored into the plan:
@@ -335,14 +347,15 @@ in a public issue.
 | Document | What it covers |
 | --- | --- |
 | [skills/herdr-peers/SKILL.md](skills/herdr-peers/SKILL.md) | The skill: when to use it, the helper, environment variables, exit codes, trust boundary |
-| [skills/herdr-peers/protocol.md](skills/herdr-peers/protocol.md) | Protocol 1 (normative): message grammar, stamps, loop guard, addressing, depth and fan-out |
+| [skills/herdr-peers/protocol.md](skills/herdr-peers/protocol.md) | Protocols 1 and 2 (normative): message grammar, stamps, loop guard, addressing, depth and fan-out, leadership, fencing and appointment |
 | [skills/herdr-peers/orchestra.md](skills/herdr-peers/orchestra.md) | Leading many lanes: `status`, `lanes`, blocked screens, accounts, containers, troubleshooting |
-| [skills/herdr-peers/autopilot.md](skills/herdr-peers/autopilot.md) | Autopilot: what it accepts, what it never touches, its cost, what you accept by running it |
+| [skills/herdr-peers/autopilot.md](skills/herdr-peers/autopilot.md) | The operator's manual: start, status, logs, stop; the loop; the brain; appointment; notify; the fleet map and `fleet ui`; cost; limits; troubleshooting |
+| [docs/MIGRATING.md](docs/MIGRATING.md) | Upgrading from 1.x to 2.0.0: protocol 2, a mixed fleet, what to restart, turning on appointment and the brain |
 | [skills/herdr-peers/discipline.md](skills/herdr-peers/discipline.md) | How agents ask, wait, answer and clean up |
 | [skills/herdr-peers/launcher.md](skills/herdr-peers/launcher.md) | Launching a delegate in a new pane, or several agents at once with `ak` |
 | [skills/herdr-peers/templates/](skills/herdr-peers/templates/) | Grant, ask, reply and notice templates; the delegation-record JSON schema |
 | [docs/schema/lanes-v1.json](docs/schema/lanes-v1.json) | The `lanes --json` contract (`herdr-peers/lanes-v1`) |
-| [docs/schema/lead-v1.json](docs/schema/lead-v1.json) | The lead record contract (`herdr-peers/lead-v1`) |
+| [docs/schema/lead-v1.json](docs/schema/lead-v1.json), [lead-v2.json](docs/schema/lead-v2.json) | The lead record contracts (`lead-v2` adds the appointment grant) |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model and accepted residual risks |
 | [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) | Test scopes and the source-to-test map |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |

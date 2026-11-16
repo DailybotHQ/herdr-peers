@@ -9,54 +9,76 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+The 2.0.0 release: lead appointment under protocol 2, and the daemon's brain.
+Upgrading from 1.x: [docs/MIGRATING.md](docs/MIGRATING.md).
+
+### Breaking
+
+- **Protocol 2.** One message only is stamped `protocol=2`: the lead notice
+  of a plan whose lead record carries the appointment grant (`lead-v2`).
+  Every other message — asks, replies, notices, lead notices of ungranted
+  plans — stays `protocol=1`, byte-identical to 1.x. A 1.x receiver decides
+  protocol 2 never and fails closed (tested against a frozen 1.3.0
+  receiver). `metadata.protocol` and `--version` report 2. Every lane and
+  successor of a granted plan must run 2.0 or later; until you grant
+  appointment on a plan, a 2.0 fleet is wire-identical to 1.x.
+
 ### Added
 
+- **Lead appointment.** When a plan's lead and every successor are gone, the
+  plan's first live lane may take the lead — only under the human's
+  standing grant (`lead claim --allow-appointment [--any-kind]`,
+  `--no-appointment`) and only on strong evidence, which the lane's helper
+  checks twice (`lead takeover --as-lane`; no `--reason`; a member on a
+  machine that cannot be reached is not proof). Receivers verify it with
+  their own probes (fence rule F10). Two records at one epoch settle by one
+  total order — the previous lead, then its successors, then its lanes —
+  whatever order the notices arrive in. At most two appointments per plan.
+- **`lead verify --plan P`**: before a merge, tag or release, is this pane
+  still the lead here and on the plan's other machines (read-only reports)?
+  Exit 4 on a newer or earlier-ranked lead, exit 5 when a machine cannot be
+  reached (`--allow-unreached` accepts that, recorded). Nothing is written
+  to git or any remote.
+- **`autopilot --loop --appoint`**: the daemon asks the first live lane of a
+  granted plan to take the lead once lead and successors have been gone for
+  15 minutes (`HERDR_PEERS_AUTOPILOT_APPOINT_GRACE`) with no progress; a
+  live successor always comes first; a lead at its usage limit counts only
+  after the screen pass gave up on it. Events `plan_appointment_prompted`
+  and `plan_appointed`.
 - **`autopilot --loop --brain`: the daemon keeps a brain it launches
   itself.** A dedicated decision agent on the human's best account
   (`--brain-kinds`, default claude, codex, grok; `--brain-model kind=model`),
-  launched in ask mode through coding-agents-kit 1.3.0+ (`ak pick --kinds`,
-  pick-v2, the account leased first) in a workspace of the daemon's own,
-  briefed once, replaced when gone or at its usage limit, released and
-  closed on stop. The daemon asks it only what its rules cannot decide — a
-  stalled plan, a blocked plan whose blocker is not the human's, an unknown
+  launched in ask mode through coding-agents-kit 1.3.0+ in a workspace and
+  an empty private directory of its own, briefed once, replaced when gone or
+  at its usage limit, retired at once if its profile skips approvals,
+  released and closed on stop. The daemon asks it only what its rules cannot
+  decide — a stalled plan, a blocked plan its lead may resolve, an unknown
   screen — and acts only on one action from that case's closed list,
-  answered with `herdr-peers autopilot answer <question> <action>` from the
-  brain's own pane. Anything else, or silence, gives the case's default.
-- Brain answers carry an HMAC under a per-launch key held in a private key
-  file whose path alone is in the brain's environment (never on a command
-  line); an `ask_lead_to_resolve` answer is bound to the
+  answered with `herdr-peers autopilot answer <question> <action>`. The only
+  approval the daemon gives the brain is that one command; anything else, or
+  silence, gives the case's default.
+- Brain answers carry an HMAC under a per-launch key held in a private
+  `0600` key file whose path alone is in the brain's environment (never on a
+  command line or a screen); an `ask_lead_to_resolve` answer is bound to the
   blocker it was about; a brain not up within two minutes is retired; a
-  failed launch releases everything it took. `--brain` is fail-closed: a
-  missing or older coding-agents-kit stops the daemon from starting.
+  failed launch releases everything it took. **`--brain` is fail-closed:** a
+  missing or older coding-agents-kit (before 1.3.0) stops the daemon from
+  starting.
 - The fleet map and `fleet ui` show the brain: state, account, questions in
   the last hour, last decision.
-- `plan-event-v1` gains `needs_human` (the brain chose to tell the human).
-- **Lead appointment (protocol 2).** When a plan's lead and every successor
-  are gone, the plan's first live lane may take the lead — only when the
-  human granted it (`lead claim --allow-appointment`, recorded in the lead
-  record as `appoint`) and only with strong evidence the lane's helper checks
-  twice (`lead takeover --as-lane`). Receivers verify it themselves with the
-  new fence rule F10 (and a lane-order tie, like F8). At most two
-  appointments per plan.
-- **`lead verify --plan P`**: before a merge, tag or release, is this pane
-  still the lead here and on the plan's other machines (read-only reports)?
-  It refuses on a higher epoch and names machines it could not reach.
-  Nothing is written to git or any remote.
-- **`autopilot --loop --appoint`**: the daemon asks the first live lane of a
-  granted plan to take the lead once lead and successors have been gone for
-  15 minutes (`HERDR_PEERS_AUTOPILOT_APPOINT_GRACE`) with no progress; a lead
-  at its usage limit counts only after the screen pass gave up on it. Events
-  `plan_appointment_prompted` and `plan_appointed`.
-- Schema `lead-v2` (`lead-v1` plus `appoint` and `via`); `plans-v1` gains
-  `appoint` and `appointed`.
+- Contracts: `lead-v2` (`lead-v1` plus `appoint` and `via`); `plans-v1`
+  gains `appoint` and `appointed`; `plan-event-v1` gains
+  `plan_appointment_prompted`, `plan_appointed` and `needs_human`.
+- **Docs:** [docs/MIGRATING.md](docs/MIGRATING.md); the README as a product
+  page; `autopilot.md` as the operator's manual (one minute, the loop, the
+  brain, appointment, notify, watching, cost, limits, troubleshooting, and
+  where each guarantee is tested); a short list of the residual risks you
+  accept at the top of `docs/SECURITY.md`.
 
-### Changed
+### Fixed
 
-- **Protocol 2** (breaking: herdr-peers 2.0.0). Only the lead notice of a
-  granted plan is stamped `protocol=2`; every other message stays
-  `protocol=1`, byte-compatible. A 1.x receiver decides protocol 2 never and
-  fails closed. `metadata.protocol` and `--version` report 2. Every lane and
-  successor of a granted plan must run 2.0 or later.
+- `herdr-peers autopilot logs -f` test: the follower is waited for before a
+  line is appended (it raced its own start-up on a loaded machine).
 
 ## [1.3.1] - 2026-11-16
 
