@@ -91,13 +91,20 @@ The rules and the residual risk are in
 ### Turn on the brain
 
 1. Install coding-agents-kit 1.3.0 or later (`ak`) and add your accounts.
+   `--brain` is fail-closed: with `ak` missing or older, the daemon refuses
+   to start at all (start it without `--brain` to run without one).
 2. Make sure the profile it will use does not default to a mode that skips
-   approvals (auto, bypass, accept edits): the daemon retires such a brain.
+   approvals (auto, bypass, accept edits) — the daemon retires such a brain —
+   and that its own settings do not pre-allow tools (Bash on an allowlist,
+   say): those run without any dialog the daemon could see.
 3. `herdr-peers autopilot start --loop --brain` (`--brain-kinds codex,claude`
    to choose the order; `--brain-model claude=sonnet` for a model).
 
 What it may decide, and what it never does, is in
-[autopilot.md](../skills/herdr-peers/autopilot.md) §6.
+[autopilot.md](../skills/herdr-peers/autopilot.md) §6. Its answers carry an
+HMAC under a per-launch key kept in memory and in one private `0600` file
+whose path alone is in the brain's environment; a process of the same user
+that reads that file could still forge an allowed (harmless) answer.
 
 ## New environment variables
 

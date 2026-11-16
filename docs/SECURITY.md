@@ -18,7 +18,10 @@ The short list; each is explained under
    have refused. There is no deny-list (T30).
 3. **The brain is a prompt-injection target.** Its answers are bounded to a
    closed list of harmless actions and its only approved command is its own
-   answer, but an injected brain can still choose any allowed action (T42).
+   answer, but an injected brain can still choose any allowed action; a
+   process of the same user that reads its key file can forge an allowed
+   answer; and a profile whose own settings pre-allow tools runs them
+   without the dialog the ask-mode launch relies on (T41, T42).
 4. **A partition can briefly give a plan two leads** after an appointment.
    Nothing is written remotely to prevent it; `lead verify` catches what it
    can reach (T44).

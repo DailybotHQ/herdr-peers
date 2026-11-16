@@ -615,7 +615,8 @@ Use `--scope` to keep it to some machines.
 | An agent stays at a screen | its screen is not one autopilot recognises (`herdr-peers status <pane>` shows `screen: unknown`), it is `--exclude`d or out of `--scope`, it is a login, it has your draft on its input line, or it is the foreground daemon's own pane | answer it yourself; autopilot never keys what it does not recognise |
 | An agent at its usage limit is not continued | the retry runs every 30 minutes, at most 48 times | wait for the reset, or move the lane (orchestra.md) |
 | A plan is reported `plan_stalled`, `plan_blocked` or `plan_no_lead` | three prompts without progress, a blocker in its state, or a gone lead with no successor to ask | look at the plan; `--brain` may decide stalls and some blockers; `--appoint` covers a lost lead if you granted it |
-| The brain is retired at once | its account's profile defaults to a mode that skips approvals (auto, bypass, accept edits) | change that profile's default, or exclude it with `--brain-kinds` |
+| `start --brain` refuses to start | `ak` is missing or older than 1.3.0 (`--brain` is fail-closed) | install or upgrade coding-agents-kit, or start without `--brain` |
+| The brain is retired at once | its account's profile defaults to a mode that skips approvals (auto, bypass, accept edits), or its agent did not come up within two minutes | change that profile's default, or exclude it with `--brain-kinds`; read `autopilot logs` |
 | `lead verify` exits 5 | a machine of the plan could not be reached | wait until it answers, or pass `--allow-unreached` to accept the risk (recorded) |
 | `autopilot logs -f` shows nothing | only the background daemon writes `autopilot.out`; an idle daemon writes one pass line every tenth pass | `autopilot status` to see whether it runs, and how |
 | `--notify` never runs | it needs `--loop` and a program that exists; a dry run runs nothing | check `autopilot status` (its options) and the log |
