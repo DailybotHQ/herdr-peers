@@ -343,7 +343,10 @@ Start it without `--brain` to run without one.
    that qualifies, `launch.permissions == ask`. The line to type is `ak`'s own
    argv, every element matched against its pattern, the resolved path of the
    `ak` the daemon ran first, and only `--ask` and `--trust-cwd` added — never
-   an autonomy or bypass flag.
+   an autonomy or bypass flag. coding-agents-kit 1.5.0 ends an ask-mode argv
+   with one `--ask` of its own: exactly one, as the last element, is accepted
+   and dropped (the daemon adds `--ask` once); an `--ask` anywhere else, a
+   CLI's own permission flags and anything after `--` are refused.
 3. The account is leased (`ak lease … --purpose brain`, renewed every two
    hours) so no lead or second daemon books it.
 4. The daemon creates a workspace of its own, `autopilot brain`, whose

@@ -50,7 +50,7 @@ OPEN_ASK_WINDOW = 2 * 3600   # an ask older than this was abandoned, not awaited
 
 MACHINE_RE = r'(?:local|[A-Za-z0-9][A-Za-z0-9._-]{0,63})'
 PANE_RE = r'[A-Za-z0-9]{1,32}:[A-Za-z0-9]{1,32}'
-ADDR_RE = re.compile(r'^(%s):(%s)$' % (MACHINE_RE, PANE_RE))
+ADDR_RE = re.compile(r'^(%s):(%s)\Z' % (MACHINE_RE, PANE_RE))  # \Z: no trailing newline
 PLAN_RE = re.compile(r'(?=.{1,128}$)[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*')
 TS_RE = re.compile(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z')
 SERVER_DIR_RE = re.compile(r'[0-9a-f]{64}')
