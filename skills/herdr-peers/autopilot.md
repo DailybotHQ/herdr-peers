@@ -698,3 +698,21 @@ Every rule above is pinned by the suite (`bash tests/run.sh <scope>`):
 | Lead appointment: the grant, `--as-lane`, fence F10 and the one order, `lead verify`, protocol 2 vs a frozen 1.3.0 receiver | `lead` (`appoint.sh`) and `autopilot` (the drill) |
 | `fleet ui`: hostile maps, cleaned text, read-only | `fleet_ui` |
 | No secret, prompt or screen text in any record | `security`, `autopilot` |
+
+## 16. Environment reference
+
+Every variable is optional; each default is the code's.
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `HERDR_PEERS_AUTOPILOT_CONFIRM` | 1.5 | Seconds between a key and the re-read that confirms it (0–30). |
+| `HERDR_PEERS_AUTOPILOT_GRACE` | 300 | Seconds a lead's pane must stay unchanged before a loop prompt (§5). |
+| `HERDR_PEERS_AUTOPILOT_SSH_TIMEOUT` | 25 | Seconds one machine's plans report may take (1–120). |
+| `HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT` | 20 | Seconds one `--notify` command may run (1–60; §8). |
+| `HERDR_PEERS_AUTOPILOT_NOTIFY_BUDGET` | 20 | Seconds all `--notify` commands of one pass may run together (1–120). |
+| `HERDR_PEERS_AUTOPILOT_APPOINT_GRACE` | 900 | Seconds lead and successors must be gone, the plan frozen, before `--appoint` asks a lane (0–86400; §7). |
+| `HERDR_PEERS_APPOINT_PROBE_GAP` | 60 | Seconds between the two probes of `lead takeover --as-lane` (0–600; §7). |
+| `HERDR_PEERS_SCOPE` | every enabled machine | The allow-list, as for every verb. |
+| `HERDR_PEERS_UI_SERVER` | — | Set by the helper for `fleet ui` (this server's key) — never by hand. |
+| `HERDR_PEERS_BRAIN_KEY_FILE` | — | Set by the daemon in the brain's environment (its answer-key file) — never by hand. |
+

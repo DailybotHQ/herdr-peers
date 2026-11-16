@@ -35,6 +35,24 @@ changes bumped the minor version).
   a report that answered), and a reason that clears and returns is reported
   again.
 
+### Documentation
+
+- The skill covers everything new in 2.0: the `autopilot` verb row names
+  `--appoint`, `--brain`, `--notify` and the plan queue; `autopilot answer`
+  has its own row (the brain's verb only); `lead show` names `lead-v2` and
+  protocol 2; the environment table adds the notify timeout and budget, the
+  appointment grace and probe gap, and the two variables set by the helper
+  and the daemon (`HERDR_PEERS_UI_SERVER`, `HERDR_PEERS_BRAIN_KEY_FILE`); the
+  trust boundary gains a 2.0 paragraph (the brain's workspace and key file,
+  appointment, the read-only queue); the description mentions the queue, the
+  brain and appointment; the migration guide is named.
+- `orchestra.md` §10, *Leading on 2.0*: the grant, `lead verify` before every
+  merge, tag or release, `--as-lane`, stalled plans under `--appoint`, the
+  queue, and the brain is not a lane.
+- `autopilot.md` §16, an environment reference with every default from the
+  code; the README names what is new in 2.0 and links the migration guide at
+  the top, and describes the queue in the loop's layer.
+
 ## [2.0.0] - 2026-11-16
 
 The 2.0.0 release: lead appointment under protocol 2, the daemon's brain, and the plan queue.
