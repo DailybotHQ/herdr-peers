@@ -89,7 +89,9 @@ MAX_APPOINTMENTS = 2       # appointments one daemon prompts per plan; then only
 
 # Reasons that are usually a passing state (the lead has not marked the queue yet,
 # it is finishing another plan, its directory is not listed this pass).
-QUEUE_TRANSIENT = ('started, queue not updated', 'lead busy with another plan', 'lead directory unknown')
+# 'started, queue not updated' is not here: a plan that began while the queue still says queued
+# (the pack leaves it so outside Herdr) is running, never reported.
+QUEUE_TRANSIENT = ('lead busy with another plan', 'lead directory unknown')
 # The repository path is quoted as JSON data: it is never read as words of the prompt.
 QUEUE_TEXT = ("Plan %s is next in the queue of the repository at %s and approved. In that repository, "
               "run the plan tool's execute flow for it (its start gate checks the approval again) and "
@@ -1048,13 +1050,14 @@ class PlanLoop(object):
             pane = local_pane(item.get('lead'))
             if not reason and item.get('ready') and pane is None:
                 reason = 'lead on another machine'  # this daemon can prompt only its own panes
-            if not reason or reason.startswith('waiting for') or reason.startswith('another plan'):
+            in_flight = bool(reason) and reason.startswith('started')   # began; the queue not updated (outside Herdr)
+            if not reason or in_flight or reason.startswith('waiting for') or reason.startswith('another plan'):
                 # Its reason cleared: a reason that returns later is reported again.
                 self.queue_told.pop(key, None)
                 self.queue_since.pop(key, None)
             if reason:
-                if reason.startswith('waiting for'):
-                    continue  # its `after` plan decides; the queue's order is the pack's
+                if reason.startswith('waiting for') or in_flight:
+                    continue  # its `after` plan decides; or it runs already: never reported
                 if not reason.startswith('another plan'):
                     self.tell_queue(machine, repo, item, key, reason, now)
                 if sequential:

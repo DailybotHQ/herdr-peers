@@ -161,13 +161,20 @@ def clean(value, limit=REASON_MAX):
     return ' '.join(text.split())[:limit]
 
 
+# The escalation classes only the human resolves: approval (C1), consent or login (C2),
+# damage (C5), terms (C6). The pack refuses `resolver: lead` for exactly these.
+HUMAN_CLASSES = ('C1', 'C2', 'C5', 'C6')
+KNOWN_CLASSES = ('C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7')
+
+
 def blocker_is_askable(plan):
     """True when a blocked plan's blocker may be put to the brain: the plan
     itself recorded it as one its lead may resolve (`resolver: lead` — a
-    field the plan writes, not prose), it names no C-class (those are the
-    human's), and its text names no sensitive subject (an extra guard, not
-    the reason to ask)."""
-    if plan.get('blocker_class'):
+    field the plan writes, not prose), its class is none or one the lead may
+    handle (C3, C4, C7; never C1, C2, C5, C6, nor an unknown class), and its
+    text names no sensitive subject (an extra guard, not the reason to ask)."""
+    klass = plan.get('blocker_class')
+    if klass is not None and (klass not in KNOWN_CLASSES or klass in HUMAN_CLASSES):
         return False
     detail = plan.get('detail') or {}
     block = detail.get('blocker') if isinstance(detail, dict) else None

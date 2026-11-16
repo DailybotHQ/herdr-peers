@@ -521,6 +521,18 @@ assert dict((k, ui.queue_item_facet(v)) for k, v in items.items()) == {
     'P_next': 'waiting', 'P_stuck': 'attention'}
 assert ui.queue_item_facet({'state': 'queued', 'blocked': 'another plan of this repository runs'}) == 'waiting'
 assert ui.queue_item_facet({'state': 'odd'}) == 'attention'
+# a plan that began while the queue still says queued (outside Herdr) is running: Active, not Attention
+running = {'state': 'queued', 'blocked': 'started, queue not updated'}
+assert ui.queue_in_flight(running) and ui.queue_item_facet(running) == 'active'
+fl = json.loads(json.dumps(FLEET))
+fl['machines'][0]['queues'][0]['items'][3]['blocked_reason'] = 'started, queue not updated'   # P_queued
+fl['machines'][0]['queues'][0]['items'][3]['ready'] = False
+fix = ui.Index(fl)
+assert fix.queue_pos['local/P_queued'][2] == 'started'
+assert ui.plan_facet(fix.plan_by_key['local/P_queued'], NOW, fix.queue_pos['local/P_queued'][2]) == 'attention', \
+    'it began: no longer waiting; its state.json has not moved for 9 days, so no movement'
+qtext = '\n'.join(l.text() for l in ui.render_list(ui.build_view(fix, 'queue', '', 'active', NOW), NOW, 120))
+assert 'P_queued' in qtext and 'started, queue not updated' in qtext, qtext
 
 # counts, per grouping, and under a search
 c = ui.facet_counts(ix, 'plan', '', NOW)

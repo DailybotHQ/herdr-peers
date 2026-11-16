@@ -291,6 +291,17 @@ for reason in autopilot.QUEUE_TRANSIENT:
     assert io.events == [('queue_blocked', 'PLAN_2_next')], (reason, io.events)
     step(ap, 400)
     assert io.events == [('queue_blocked', 'PLAN_2_next')], 'once'
+# a plan that began while the queue still says queued (outside Herdr the pack leaves it so)
+# is in flight: never reported, however long it runs, and nothing else is prompted for it
+io, ap = fresh()
+io.rows = [row('w1:p2')]
+io.report = {'plans': [], 'agents': [], 'queues': [{'repo_root': '/r', 'parallel': False, 'items': [
+    qi('PLAN_2_next', ready=False, reason='started, queue not updated')]}]}
+ap.run_pass()
+for _ in range(4):
+    step(ap, autopilot.APPOINT_GRACE)
+assert io.events == [] and io.sent == [] and not ap.plans.queue_told, (io.events, io.sent)
+assert 'started, queue not updated' not in autopilot.QUEUE_TRANSIENT
 # in a sequential queue nothing after a stuck item starts; a parallel queue goes on
 for parallel, want in ((False, []), (True, ['w1:p3'])):
     io, ap = fresh()

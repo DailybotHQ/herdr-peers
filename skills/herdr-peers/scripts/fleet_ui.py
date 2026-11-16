@@ -332,7 +332,9 @@ class Index(object):
                                   'agents': agents, 'plans': plans, 'queues': queues})
             for q in queues:
                 for n, it in enumerate(q['items']):
-                    self.queue_pos['%s/%s' % (machine, it['plan'])] = (n + 1, len(q['items']), it['state'])
+                    # A plan that began while the queue still says queued counts as started.
+                    self.queue_pos['%s/%s' % (machine, it['plan'])] = (
+                        n + 1, len(q['items']), 'started' if queue_in_flight(it) else it['state'])
             self.agents.extend(agents)
             self.plans.extend(plans)
             for a in agents:
@@ -439,15 +441,22 @@ def agent_facet(agent):
     return {'working': 'active', 'idle': 'waiting'}.get(agent.state, 'attention')
 
 
+def queue_in_flight(item):
+    """A queued item whose plan already began (the pack leaves it `queued` outside
+    Herdr; the report says 'started, queue not updated'): it is running."""
+    return item.get('state') == 'queued' and (item.get('blocked') or '').startswith('started')
+
+
 def queue_reason_blocks(reason):
-    return bool(reason) and not (reason.startswith('waiting') or reason.startswith('another plan'))
+    return bool(reason) and not (reason.startswith('waiting') or reason.startswith('another plan')
+                                 or reason.startswith('started'))
 
 
 def queue_item_facet(item):
     """attention: a queued item whose reason blocks it; active: started; waiting:
     queued (ready, or waiting its turn); done: done or skipped."""
     state = item.get('state')
-    if state == 'started':
+    if state == 'started' or queue_in_flight(item):
         return 'active'
     if state in ('done', 'skipped'):
         return 'done'
@@ -782,7 +791,7 @@ def render_list(groups, now, width):
                 if it['ready']:
                     line.add('ready — starts next', 'ok')
                 elif it['blocked'] and it['state'] == 'queued':
-                    waiting = it['blocked'].startswith('waiting') or it['blocked'].startswith('another plan')
+                    waiting = not queue_reason_blocks(it['blocked'])
                     line.add(it['blocked'], 'dim' if waiting else 'bad')
                 if it['lead']:
                     line.add('  lead ' + it['lead'], 'dim')

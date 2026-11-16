@@ -1113,4 +1113,100 @@ PY
 assert_eq "a returning successor resets the appointment grace" "1000.0 None 1080.0" "$out"
 unset HERDR_PEERS_AUTOPILOT_APPOINT_GRACE HERDR_PEERS_APPOINT_PROBE_GAP
 unset TELL_OUT HERDR_PEERS_AUTOPILOT_GRACE
+
+# --- pack 8.0.0 records: journal-event/v8 (a blocker event) and plan-snapshot/v8 (a blocker object) ---
+run python3 - "$SCRIPTS" "$WORK" <<'PY'
+import json, os, sys, time
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import fleet_report, fleet_ui
+root = sys.argv[2]
+J8 = 'https://deepworkplan.com/schema/journal-event/v8.json'
+S8 = 'https://deepworkplan.com/schema/plan-snapshot/v8.json'
+def plan_dir(name, events, snapshot):
+    d = os.path.join(root, 'v8', name)
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, 'journal.ndjson'), 'w') as fh:
+        for n, e in enumerate(events, 1):
+            fh.write(json.dumps(dict({'schema': J8, 'seq': n, 'ts': '2026-11-16T10:00:%02dZ' % n}, **e)) + '\n')
+    with open(os.path.join(d, 'state.json'), 'w') as fh:
+        json.dump(snapshot, fh)
+    return d
+blocker = {'class': 'C3', 'reason': 'a flaky migration test keeps failing',
+           'needs': 'a green migration run', 'resolver': 'lead', 'task': 'T-b', 'since': '2026-11-16T10:00:03Z'}
+snap = lambda blk, statuses=('completed', 'in_progress'), at='2026-11-16T10:00:05Z': {
+    'schema': S8, 'blocker': blk, 'checkpoint': None, 'updated_at': at,
+    'tasks': [{'id': 'T-%s' % c, 'status': st, 'criteria': []} for c, st in zip('ab', statuses)]}
+approval = {'type': 'approval', 'contract_id': 'c' * 64}
+raised = {'type': 'blocker', 'state': 'raised', 'task': 'T-b', 'reason': blocker['reason'], 'resolver': 'lead',
+          'note': 'raised right after the task_start of T-b'}
+resolved = {'type': 'blocker', 'state': 'resolved', 'task': 'T-b', 'note': 'resolved; next task_start pending'}
+
+# 1. A v8 plan that started a task, then raised a blocker: started, blocked, the blocker projected.
+d = plan_dir('P8_blocked', [approval, {'type': 'task_start', 'task': 'T-a'}, raised], snap(blocker))
+state = json.load(open(os.path.join(d, 'state.json')))
+cls, block_class, progress = fleet_report.classify(state)
+assert cls == 'blocked' and block_class == 'C3' and progress, (cls, block_class)
+assert fleet_report.plan_started(d, state)
+det = fleet_report.plan_detail(state, d)
+assert det['blocker'] == {'reason': 'a flaky migration test keeps failing',
+                          'needs': 'a green migration run', 'resolver': 'lead'}, det['blocker']
+last, started = fleet_report.journal_facts(d)
+assert last['type'] == 'approval' and started is True
+# the class the v8 snapshot records wins over a class named in its prose; an unknown class backs no resolver
+import brain
+prose = dict(blocker, reason='waiting on C1-style approval wording, not the class')
+assert fleet_report.classify(snap(prose))[1] == 'C3'
+odd = dict(blocker, **{'class': 'C9'})
+assert fleet_report.classify(snap(odd))[1] is None and fleet_report.plan_detail(snap(odd), d)['blocker']['resolver'] is None
+for klass, askable in (('C3', True), ('C4', True), ('C7', True), ('C1', False), ('C2', False), ('C5', False),
+                       ('C6', False), ('C9', False)):
+    st = snap(dict(blocker, **{'class': klass}))
+    row = {'blocker_class': fleet_report.classify(st)[1], 'detail': fleet_report.plan_detail(st, d)}
+    assert brain.blocker_is_askable(row) is askable, (klass, row)
+st = snap(dict(blocker, resolver='human'))
+assert not brain.blocker_is_askable({'blocker_class': 'C3', 'detail': fleet_report.plan_detail(st, d)})
+
+# 2. A v8 journal with ONLY blocker events (whose text even says "task_start"): never a task start.
+d = plan_dir('P8_only_blockers', [approval, raised, resolved],
+             snap(None, statuses=('pending', 'pending')))
+state = json.load(open(os.path.join(d, 'state.json')))
+last, started = fleet_report.journal_facts(d)
+assert started is False, 'a blocker event is never read as a task start'
+assert not fleet_report.plan_started(d, state)
+assert fleet_report.classify(state)[0] == 'open'
+
+# 3. Resolved: the v8 snapshot's blocker is null again: open, no blocker on the map.
+d = plan_dir('P8_resolved', [approval, {'type': 'task_start', 'task': 'T-a'}, raised, resolved], snap(None))
+state = json.load(open(os.path.join(d, 'state.json')))
+assert fleet_report.classify(state)[0] == 'open' and fleet_report.plan_detail(state, d)['blocker'] is None
+assert fleet_report.plan_started(d, state)
+
+# 4. The stale rule reads the v8 snapshot's updated_at, as describe_plan copies it to state_updated_at.
+old = snap(None, at='2026-11-10T08:00:00Z')
+assert fleet_report.TS_RE.fullmatch(old['updated_at'])
+row = {'plan': 'P8_still', 'class': 'open', 'lead': None, 'repo_root': '/r', 'situation': None,
+       'tasks_done': 1, 'tasks_total': 2, 'current_task': None, 'detail': None, 'blocker_class': None,
+       'state_updated_at': old['updated_at']}
+p = fleet_ui.Plan('local', 'Mac', row)
+now = fleet_ui.parse_ts('2026-11-12T12:00:00Z')
+assert fleet_ui.stale_for(p, now) == 2 * 86400 + 4 * 3600 and fleet_ui.plan_facet(p, now) == 'attention'
+
+# 5. The queue's view of a v8 plan: began (journal) while still queued -> in flight, never 'ready'.
+base = os.path.join(root, 'v8repo')
+os.makedirs(os.path.join(base, '.dwp', 'plans'), exist_ok=True)
+import shutil
+shutil.copytree(os.path.join(root, 'v8', 'P8_resolved'), os.path.join(base, '.dwp', 'plans', 'P8_resolved'))
+shutil.copytree(os.path.join(root, 'v8', 'P8_only_blockers'), os.path.join(base, '.dwp', 'plans', 'P8_only_blockers'))
+json.dump({'schema': 'dwp-queue-v1', 'items': [
+    {'plan': 'P8_resolved', 'after': None, 'state': 'queued', 'lead': 'local:w1:p2', 'start': 'prompt-lead'},
+    {'plan': 'P8_only_blockers', 'after': None, 'state': 'queued', 'lead': 'local:w1:p3', 'start': 'prompt-lead'}]},
+    open(os.path.join(base, '.dwp', 'queue.json'), 'w'))
+state_, q = fleet_report.read_queue(base)
+items = dict((i['plan'], i) for i in q['items'])
+assert items['P8_resolved']['blocked_reason'] == 'started, queue not updated' and not items['P8_resolved']['ready']
+assert items['P8_only_blockers']['blocked_reason'] == 'another plan of this repository is running', items
+print('ok')
+PY
+assert_eq "pack 8.0.0 records: the v8 journal's blocker events and the v8 snapshot's blocker read correctly" "ok" "$OUT"
 export XDG_STATE_HOME=$LOOP_XDG_STATE

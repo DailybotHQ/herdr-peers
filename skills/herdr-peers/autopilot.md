@@ -396,7 +396,7 @@ profiles are excluded. Each retirement is recorded with `why=`, and
 | Case | Allowed actions | Default (no valid answer in 3 minutes) |
 | --- | --- | --- |
 | A plan is stalled (three prompts without progress) | `nudge_once_more` (one more prompt to its lead, once per plan), `notify_human`, `leave` | `leave` |
-| A plan is blocked, its state records the blocker as one its lead may resolve (`"resolver": "lead"` in the blocker record — a field the plan writes, not prose), and the blocker names no escalation class and no sensitive subject (credential, login, consent, payment, a push to main, a merge, a release, a deletion, a secret, production — in English and Spanish) | `ask_lead_to_resolve` (one fixed prompt asking the lead to resolve it within its recorded authority), `notify_human`, `leave` | `leave` |
+| A plan is blocked, its state records the blocker as one its lead may resolve (`"resolver": "lead"` in the blocker record — a field the plan writes, not prose), its class is none or one a lead may handle (C3, C4, C7 — never C1 approval, C2 consent or login, C5 damage, C6 terms, nor a class outside C1–C7; an explicit `class` in the blocker record, as pack 8.0.0's plan-snapshot/v8 always writes, wins over a class named in its prose), and it names no sensitive subject (credential, login, consent, payment, a push to main, a merge, a release, a deletion, a secret, production — in English and Spanish) | `ask_lead_to_resolve` (one fixed prompt asking the lead to resolve it within its recorded authority), `notify_human`, `leave` | `leave` |
 | An agent waits at a screen autopilot does not recognise | `leave`, `notify_human` | `leave` |
 
 The question is one fixed prompt: the case, the plan and machine, the

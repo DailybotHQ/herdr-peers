@@ -64,7 +64,16 @@ for text in ('needs the staging API key', 'waiting for login', 'push to main', '
              'authorize the app', 'falta la contraseña', 'credenciales vencidas', 'hay que publicar',
              'desplegar a producción', 'borrar la tabla', 'fusionar la rama', 'iniciar sesión otra vez'):
     assert not B.blocker_is_askable(plan(text)), text
-assert not B.blocker_is_askable(plan('a flaky test', cls='C4'))
+# the class rule (pack 8.0.0's plan-snapshot/v8 always records a class): C3, C4, C7 may go to the
+# lead; C1 approval, C2 consent/login, C5 damage, C6 terms never; an unknown class never
+for klass in ('C3', 'C4', 'C7'):
+    assert B.blocker_is_askable(plan('a flaky test', cls=klass)), klass
+for klass in ('C1', 'C2', 'C5', 'C6', 'C9', 'X', ''):
+    assert not B.blocker_is_askable(plan('a flaky test', cls=klass)) or klass == '', klass
+assert not B.blocker_is_askable(plan('a flaky test', cls='C3', resolver='human'))
+assert not B.blocker_is_askable(plan('a flaky test', cls='C3', resolver=None))
+assert B.blocker_is_askable(plan('a flaky test', cls=None)), 'no class and resolver lead: as before'
+assert not B.blocker_is_askable(plan('needs the staging API key', cls='C3')), 'the sensitive guard still holds'
 # the only approval the daemon gives the brain: exactly its answer command
 screen = open(sys.argv[2]).read()
 i = screen.rindex(' touch created.txt')
