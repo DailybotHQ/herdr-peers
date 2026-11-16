@@ -536,7 +536,7 @@
           },
           "queues": {
             "type": "array",
-            "description": "Each repository's plan queue (.dwp/queue.json, written by the pack, read only): plan ids, states, readiness and why an item cannot start. No plan content.",
+            "description": "Each repository's plan queue (queue.json beside its plans, written by the plan tool, read only): plan ids, states, readiness and why an item cannot start. No plan content.",
             "items": {
               "type": "object",
               "additionalProperties": false,

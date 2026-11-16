@@ -11,6 +11,15 @@ changes bumped the minor version).
 
 ### Added
 
+- **The plan queue.** With `--loop`, when a repository's current plan
+  finishes, the next approved plan in its `.dwp/queue.json` (`dwp-queue-v1`,
+  written by the DeepWorkPlan pack, read only by the daemon) starts: its
+  named lead gets one fixed prompt, once, one plan at a time per repository
+  unless the queue is parallel. Items that cannot start for a reason the
+  developer must fix are reported once (`queue_blocked`); a started item
+  emits `plan_queued_started`. `fleet ui` gains a Queues view (`u`) and each
+  plan shows its place in its queue; `herdr-peers fleet` lists the queues.
+
 - **`autopilot --loop --brain`: the daemon keeps a brain it launches
   itself.** A dedicated decision agent on the human's best account
   (`--brain-kinds`, default claude, codex, grok; `--brain-model kind=model`),

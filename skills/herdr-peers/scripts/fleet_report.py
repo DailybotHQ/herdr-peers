@@ -942,7 +942,8 @@ def valid_queue(doc):
 
 
 def read_queue(base):
-    """(state, queue) of `<base>/.dwp/queue.json`: ('none', None) without
+    """(state, queue) of the repository's queue file (the `.dwp`, `queue.json` path
+    components under `base`): ('none', None) without
     one; ('invalid', None) when it is not a regular file of at most 64 KiB
     with the dwp-queue-v1 shape; ('ok', {...}) with each item judged."""
     path = os.path.join(base, '.dwp', 'queue.json')

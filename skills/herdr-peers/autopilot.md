@@ -500,3 +500,28 @@ keyed, prompted to anyone or run; it cannot appoint a lead, launch an agent,
 merge, release, sign in or change a permission. Only the daemon acts, and
 only through the paths of §3 and §9.
 
+## 11. The plan queue
+
+A repository can keep a queue of approved plans in `queue.json` beside its
+plans directory (schema `dwp-queue-v1`). The plan tool writes it — create appends a
+plan when you say to queue it, you or the lead reorder it, execute marks an
+item `started` when it claims the lead, the plan's completion marks it
+`done`. **The daemon never writes it**: it reads it, bounded (64 KiB) and
+validated whole, inside each machine's report.
+
+With `--loop`, when a repository's current plan finishes, the next item
+starts without you: the daemon sends its named lead one fixed prompt,
+"Plan P is next in this repository's queue and approved; execute it to its
+end, respecting its gates.", once, under the same guards as every loop
+prompt. An item is ready when it is `queued`, the plan it waits for (`after`)
+is completed, no other plan of that repository is running (unless the queue
+says `"parallel": true`), its journal holds an approval with no amendment
+after it, and it names a lead. An item that cannot start for a reason only
+you can fix — not approved, an amendment pending, no lead named, or
+`"start": "launch"` (launching an agent for a queue item is not available
+yet) — is reported once per reason (`queue_blocked`, through `--notify`).
+
+`fleet ui` shows every queue (key `u`): each plan's place, state, whether it
+starts next or why it cannot; a plan's own row shows its place (`queue 2/3`).
+`herdr-peers fleet` lists them. The map carries plan ids and states only.
+
