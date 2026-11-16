@@ -34,7 +34,8 @@
       "required": [
         "pane",
         "local_is",
-        "server"
+        "server",
+        "brain"
       ],
       "properties": {
         "pane": {
@@ -54,6 +55,87 @@
             "null"
           ],
           "description": "A digest naming the daemon's Herdr server, so a reader can tell whether it runs on the daemon's own server."
+        },
+        "brain": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "The daemon's brain (autopilot --brain), or null without one. Never carries question or answer text.",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "kind",
+            "profile",
+            "pane",
+            "asked_last_hour",
+            "open_questions",
+            "last"
+          ],
+          "properties": {
+            "state": {
+              "enum": [
+                "none",
+                "starting",
+                "ready",
+                "failed"
+              ]
+            },
+            "kind": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "profile": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pane": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "asked_last_hour": {
+              "type": "integer"
+            },
+            "open_questions": {
+              "type": "integer"
+            },
+            "last": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "required": [
+                "case",
+                "action",
+                "plan",
+                "at"
+              ],
+              "properties": {
+                "case": {
+                  "type": "string"
+                },
+                "action": {
+                  "type": "string"
+                },
+                "plan": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "at": {
+                  "type": "string"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -383,7 +465,8 @@
                       "additionalProperties": false,
                       "required": [
                         "reason",
-                        "needs"
+                        "needs",
+                        "resolver"
                       ],
                       "properties": {
                         "reason": {
@@ -397,6 +480,14 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "resolver": {
+                          "enum": [
+                            "lead",
+                            "human",
+                            null
+                          ],
+                          "description": "Who the plan's state says may resolve the blocker (the blocker record's `resolver` field); null when it does not say."
                         }
                       }
                     },

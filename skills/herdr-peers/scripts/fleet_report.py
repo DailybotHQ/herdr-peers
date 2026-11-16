@@ -328,7 +328,10 @@ def plan_detail(state, plan_dir):
         block = {'reason': clean_text(blocker.get('reason') if isinstance(blocker.get('reason'), str)
                                       else None, SUMMARY_LINE_MAX),
                  'needs': clean_text(blocker.get('needs') if isinstance(blocker.get('needs'), str)
-                                     else None, SUMMARY_LINE_MAX)}
+                                     else None, SUMMARY_LINE_MAX),
+                 # Who the plan says may resolve it: a field the plan writes, never prose.
+                 'resolver': blocker.get('resolver') if blocker.get('resolver') in ('lead', 'human')
+                 else None}
     summary, written = plan_summary(plan_dir)
     return {'title': plan_title(plan_dir), 'tasks': tasks, 'tasks_from': start, 'blocker': block,
             'summary': summary, 'summary_at': written}
@@ -653,6 +656,15 @@ def valid_fleet(doc):
         return False
     if not isinstance(doc.get('machines'), list) or not isinstance(doc.get('daemon', {}), dict):
         return False
+    brain = doc.get('daemon', {}).get('brain')
+    if brain is not None and not (isinstance(brain, dict) and all(
+            _str(brain.get(k)) for k in ('state', 'kind', 'profile', 'pane'))
+            and (brain.get('last') is None or (isinstance(brain['last'], dict) and all(
+                _str(brain['last'].get(k)) for k in ('case', 'action', 'plan', 'at'))))
+            and all(brain.get(k) is None or (isinstance(brain.get(k), int)
+                                             and not isinstance(brain.get(k), bool))
+                    for k in ('asked_last_hour', 'open_questions'))):
+        return False
     for m in doc['machines']:
         if not isinstance(m, dict) or not isinstance(m.get('machine'), str) or not _str(m.get('label')):
             return False
@@ -830,7 +842,8 @@ def valid_detail(detail):
                 and (task['status'] is None or task['status'] in STATUS_KEYS)):
             return False
     block = detail['blocker']
-    if block is not None and not (isinstance(block, dict) and set(block) == {'reason', 'needs'}
+    if block is not None and not (isinstance(block, dict) and set(block) == {'reason', 'needs', 'resolver'}
+                                  and block['resolver'] in (None, 'lead', 'human')
                                   and valid_line(block['reason'], SUMMARY_LINE_MAX)
                                   and valid_line(block['needs'], SUMMARY_LINE_MAX)):
         return False

@@ -285,7 +285,8 @@
                 "additionalProperties": false,
                 "required": [
                   "reason",
-                  "needs"
+                  "needs",
+                  "resolver"
                 ],
                 "properties": {
                   "reason": {
@@ -299,6 +300,14 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "resolver": {
+                    "enum": [
+                      "lead",
+                      "human",
+                      null
+                    ],
+                    "description": "Who the plan's state says may resolve the blocker (the blocker record's `resolver` field); null when it does not say."
                   }
                 }
               },

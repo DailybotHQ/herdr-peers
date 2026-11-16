@@ -205,11 +205,37 @@ def main(argv):
         server_id = os.environ.get('FAKE_HERDR_SERVER_ID', 'fake-local')
         ok('cli:api:snapshot', {'snapshot': {'server_id': server_id},
                                 'type': 'session_snapshot'})
+    if group == 'workspace':
+        return workspace_cmd(srv, verb, tail)
     if group == 'agent':
         return agent_cmd(srv, verb, tail)
     if group == 'pane':
         return pane_cmd(srv, verb, tail)
     usage_error("unrecognized subcommand '%s'" % ' '.join(args[:2]))
+
+
+def workspace_cmd(srv, verb, tail):
+    """`workspace create` makes workspace w9 with a fresh shell pane w9:p1;
+    `workspace close <id>` records the close (workspaces.log)."""
+    cid = 'cli:workspace:' + verb
+    with open(os.path.join(srv.dir, 'workspaces.log'), 'a', encoding='utf-8') as fh:
+        fh.write(json.dumps({'verb': verb, 'args': tail}) + '\n')
+    if verb == 'create':
+        n = len(load_json(os.path.join(srv.dir, 'workspaces.json'), [])) + 9
+        ws = 'w%d' % n
+        made = load_json(os.path.join(srv.dir, 'workspaces.json'), [])
+        made.append(ws)
+        with open(os.path.join(srv.dir, 'workspaces.json'), 'w', encoding='utf-8') as fh:
+            json.dump(made, fh)
+        pane = ws + ':p1'
+        srv.append_pane(pane, '$ ')
+        ok(cid, {'workspace': {'workspace_id': ws, 'label': option(tail, '--label')},
+                 'tab': {'tab_id': ws + ':t1'},
+                 'root_pane': {'pane_id': pane, 'terminal_id': 'term_' + pane.replace(':', ''),
+                               'agent_status': 'unknown'}, 'type': 'workspace_created'})
+    if verb == 'close':
+        ok(cid, {'type': 'workspace_closed'})
+    usage_error("unrecognized subcommand 'workspace %s'" % verb)
 
 
 def blocked_for_now(srv, pane, verb):
@@ -352,6 +378,21 @@ def pane_cmd(srv, verb, tail):
         ok(cid, {'pane': srv.pane_object(new), 'type': 'pane_split'})
     if verb == 'send-keys' and pos:
         advance_screen(srv, pos[0])
+    if verb == 'run' and len(pos) >= 2:
+        with open(os.path.join(srv.dir, 'runs.log'), 'a', encoding='utf-8') as fh:
+            fh.write(json.dumps({'pane': pos[0], 'line': pos[1]}) + '\n')
+        words = pos[1].split()
+        if len(words) >= 2 and os.path.basename(words[0].strip("'")) == 'ak' \
+                and not os.path.exists(os.path.join(srv.dir, 'no-start')):
+            agents = srv.agents()
+            agents.append({'agent': words[1].strip("'"), 'agent_status': 'idle', 'pane_id': pos[0],
+                           'workspace_id': pos[0].split(':')[0], 'tab_id': pos[0].split(':')[0] + ':t1',
+                           'terminal_id': 'term_' + pos[0].replace(':', ''), 'cwd': '/state',
+                           'terminal_title_stripped': 'brain', 'focused': False})
+            with open(os.path.join(srv.dir, 'agents.json'), 'w', encoding='utf-8') as fh:
+                json.dump(agents, fh)
+    if verb == 'run':
+        return  # like the real server: success prints nothing
     if verb in ('close', 'run', 'send-text', 'send-keys', 'layout'):
         ok(cid, {'type': 'pane_' + verb.replace('-', '_')})
     usage_error("unrecognized subcommand 'pane %s'" % verb)

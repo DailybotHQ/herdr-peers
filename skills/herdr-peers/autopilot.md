@@ -406,3 +406,124 @@ Use `--scope` to keep it to some machines.
 - `HERDR_PEERS_AUTOPILOT_GRACE` (seconds, default 300) and
   `HERDR_PEERS_AUTOPILOT_SSH_TIMEOUT` (seconds, default 25, 1–120) tune the
   grace period and the per-machine report timeout.
+
+## 10. The brain (`--brain`)
+
+```bash
+herdr-peers autopilot start --loop --brain                         # brain on claude, then codex, then grok
+herdr-peers autopilot start --loop --brain --brain-kinds codex,claude --brain-model claude=sonnet
+```
+
+The rules of §9 decide almost everything. For the few cases they cannot,
+the daemon keeps a **brain**: one dedicated agent it launches itself, asks,
+and obeys only within a closed list of actions. Nothing is asked of you to
+set it up beyond the flag; it needs coding-agents-kit 1.3.0 or later (`ak`).
+**Fail-closed:** with `--brain`, a missing `ak` or one older than 1.3.0
+makes the daemon refuse to start at all, with a message naming the version
+it needs — it never runs a brainless daemon you asked to have a brain.
+Start it without `--brain` to run without one.
+
+### 10.1 How it is launched
+
+1. `ak pick --kinds <your priority list> [--model-for kind=model] --owner
+   <daemon> --max-age 300 --json`, in ask mode (`AGENTKIT_PERMISSIONS=ask`):
+   the first kind of your list with an account that has quota wins.
+2. The answer (`pick-v2`) is checked whole: schema, interface, an account
+   that qualifies, `launch.permissions == ask`. The line to type is `ak`'s own
+   argv, every element matched against its pattern, the resolved path of the
+   `ak` the daemon ran first, and only `--ask` and `--trust-cwd` added — never
+   an autonomy or bypass flag.
+3. The account is leased (`ak lease … --purpose brain`, renewed every two
+   hours) so no lead or second daemon books it.
+4. The daemon creates a workspace of its own, `autopilot brain`, whose
+   shell starts in a fresh, empty, private directory (never the daemon's
+   state directory, so `--trust-cwd` trusts nothing the daemon relies on),
+   and types the quoted line into that fresh shell — never into an agent's
+   pane. The directory is removed when the brain is closed. Its PATH starts
+   with this very helper's directory, so it answers with `herdr-peers` by
+   name. Each launch has a fresh random **answer key**, kept in the daemon's
+   memory and in one private file in the state directory (`0600`, created
+   exclusively, never through a symlink, removed when the brain closes);
+   the brain's environment carries only that file's path
+   (`HERDR_PEERS_BRAIN_KEY_FILE`). The key is never typed, never on a
+   screen and never on a command line. The answers file
+   starts empty at each launch. If anything fails after the lease, the
+   lease, the workspace and the directory are released before the failure
+   is recorded.
+5. If the brain's screen shows a permission mode that skips approvals
+   (auto mode, bypass permissions, accept edits — a profile's own default,
+   which `ak`'s ask launch does not override), the daemon retires that brain
+   at once, tells you, and excludes that profile from the next pick.
+6. When the agent is up it receives one brief: it decides nothing on its own,
+   changes nothing, and answers each question only with the command the
+   question shows.
+
+The brain is replaced when its pane is gone, it sits at its usage limit,
+or its agent has not come up idle within two minutes of the launch (`ak`
+failed, a login screen; you are told) — at most three launches an hour. The
+screen pass never keys or prompts the brain's own pane for its usage limit,
+it marks it so the brain is replaced on the next pass;
+the brain is never nudged in prose and never
+treated as a plan's lead. On `autopilot stop` its lease is released and its
+workspace closed. The fleet map and `fleet ui` show it: state, account,
+questions in the last hour and its last decision.
+
+### 10.2 What it is asked, and what it may answer
+
+| Case | Allowed actions | Default (no valid answer in 3 minutes) |
+| --- | --- | --- |
+| A plan is stalled (three prompts without progress) | `nudge_once_more` (one more prompt to its lead, once per plan), `notify_human`, `leave` | `leave` |
+| A plan is blocked, its state records the blocker as one its lead may resolve (`"resolver": "lead"` in the blocker record — a field the plan writes, not prose), and the blocker names no escalation class and no sensitive subject (credential, login, consent, payment, a push to main, a merge, a release, a deletion, a secret, production — in English and Spanish) | `ask_lead_to_resolve` (one fixed prompt asking the lead to resolve it within its recorded authority), `notify_human`, `leave` | `leave` |
+| An agent waits at a screen autopilot does not recognise | `leave`, `notify_human` | `leave` |
+
+The question is one fixed prompt: the case, the plan and machine, the
+allowed actions and the answer command — nothing else. The brain answers
+with `herdr-peers autopilot answer <question> <action>`, which appends one
+line to the daemon's state directory. The daemon accepts it only when the
+question is one it asked, still open and within its time, the action is in
+that case's list, the answer names the brain's own pane and terminal, and
+it ran under the brain pane's own process (its pid is in the answer's
+recorded process ancestry), and it carries an HMAC of the answer under this
+launch's answer key, which `autopilot answer` reads from the key file the
+brain's environment names (a file of the state directory, owned by you,
+read without following a symlink; anything else, the verb refuses). Anything else is recorded as
+refused and the case keeps its default. **What remains:** a process of the
+same user can read the key file (or learn its path from the brain's
+environment) and forge an answer to an open question with an allowed
+action; every allowed action is harmless under that assumption (one more
+fixed prompt, one fixed request to a lead, a notification, or nothing). An
+`ask_lead_to_resolve` answer is bound to the blocker it was about: if the
+plan unblocks, or its blocker changes or stops being one the lead may
+resolve, before the lead can be prompted, nothing is sent.
+
+The brain reads text other agents wrote, so it is treated as a
+prompt-injection target. The screen pass approves **nothing** in the
+brain's pane except Claude's Bash permission dialog whose command block —
+the lines between the two rules right above "Do you want to proceed?" — is
+exactly one line, `herdr-peers autopilot answer q-<12 hex> <word>`, by name
+and nothing else, with "Yes" as its first option. Any other layout, any
+other kind of agent (until it has its own verified fixture), any extra or
+wrapped line, any path, refuses: the approval is left, recorded
+(`brain_permission_refused`) and you are told once. For now that makes
+Claude the only kind whose brain can answer; others are launched but their
+answers are never approved. An injected brain can
+still choose any allowed action for an open question — that is the
+residual risk, bounded by the lists above. The ask-mode launch is the
+daemon's assurance that the brain's tools wait for approval; a profile
+whose own settings pre-allow tools (Bash on an allowlist, say) runs them
+without a dialog the daemon would ever see — keep the brain's profiles
+without such allowlists. `notify_human` runs your `--notify` command with a `needs_human`
+event; it never stops anything.
+
+No pass waits for the brain: questions are asked on one pass and answers
+read on later ones. At most twenty questions an hour; an idle brain costs
+nothing, each question costs a turn of its account (coding-agents-kit does
+not report tokens per account yet, so the cap counts questions).
+
+### 10.3 What it never does
+
+The brain cannot widen what the daemon does: its text is never typed,
+keyed, prompted to anyone or run; it cannot appoint a lead, launch an agent,
+merge, release, sign in or change a permission. Only the daemon acts, and
+only through the paths of §3 and §9.
+

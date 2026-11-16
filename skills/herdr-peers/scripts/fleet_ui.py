@@ -270,6 +270,7 @@ class Index(object):
     def __init__(self, fleet):
         self.agents, self.plans, self.machines = [], [], []
         self.generated_at = parse_ts((fleet or {}).get('generated_at'))
+        self.daemon = (fleet or {}).get('daemon') if isinstance((fleet or {}).get('daemon'), dict) else {}
         by_key = {}
         daemon = (fleet or {}).get('daemon') if isinstance((fleet or {}).get('daemon'), dict) else {}
         mirror = daemon.get('local_is') if isinstance(daemon.get('local_is'), str) else None
@@ -531,6 +532,18 @@ def render_header(index, age, grouping, needle, width, error=None):
         n = counts.get(state, 0)
         mark = {'working': '●', 'waiting': '◆', 'idle': '○', 'unknown': '?'}[state]
         second.add('%s %d %s   ' % (mark, n, label), state if n else 'dim')
+    brain = ((index.daemon or {}).get('brain') if index else None)
+    if isinstance(brain, dict):
+        bstate = clean(brain.get('state'), 12)
+        second.add('│ brain ', 'dim').add('◎ ', 'working' if bstate == 'ready' else 'warn')
+        second.add('%s %s %s' % (clean(brain.get('kind'), 12) or '-', clean(brain.get('profile'), 24) or '',
+                                 bstate), 'accent')
+        last = brain.get('last') if isinstance(brain.get('last'), dict) else None
+        if isinstance(brain.get('asked_last_hour'), int):
+            second.add(' · %d asked/h' % brain['asked_last_hour'], 'dim')
+        if last:
+            second.add(' · last: %s %s' % (clean(last.get('action'), 24), clean(last.get('plan'), 40)), 'dim')
+        second.add('   ')
     second.add('│ plans: ', 'dim')
     second.add('%d need you' % plans.get('needs_you', 0), 'bad' if plans.get('needs_you') else 'dim')
     second.add(' · %d running · %d done' % (plans.get('open', 0), plans.get('completed', 0)), 'dim')
