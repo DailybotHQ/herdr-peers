@@ -312,14 +312,23 @@ starts next or why it cannot; a plan's own row shows its place (`queue 2/3`).
 ## 6. The brain (`--brain`)
 
 ```bash
-herdr-peers autopilot start --loop --brain                         # brain on claude, then codex, then grok
-herdr-peers autopilot start --loop --brain --brain-kinds codex,claude --brain-model claude=sonnet
+herdr-peers autopilot start --loop --brain                         # a Claude brain (the default)
+herdr-peers autopilot start --loop --brain --brain-model claude=sonnet
 ```
 
 The rules of §5 decide almost everything. For the few cases they cannot,
 the daemon keeps a **brain**: one dedicated agent it launches itself, asks,
 and obeys only within a closed list of actions. Nothing is asked of you to
 set it up beyond the flag; it needs coding-agents-kit 1.3.0 or later (`ak`).
+The default kind is Claude only: it is, for now, the only kind whose answer
+the daemon approves (§6.2), so a brain of another kind would only spend the
+launch cap. `--brain-kinds` can still name others, in priority order.
+**coding-agents-kit before 1.5.0** does not pass Claude's own ask flag, so a
+profile whose default is auto mode starts in auto mode even through `ak
+--ask`; the daemon sees it, retires that brain (`why=permission_mode
+hint=upgrade_coding_agents_kit`), excludes the profile and tells you —
+fail-closed, but it spends a launch. Upgrade the kit (`ak update`), or give
+the profile an ask-mode default.
 **Fail-closed:** with `--brain`, a missing `ak` or one older than 1.3.0
 makes the daemon refuse to start at all, with a message naming the version
 it needs — it never runs a brainless daemon you asked to have a brain.
@@ -371,7 +380,10 @@ it marks it so the brain is replaced on the next pass;
 the brain is never nudged in prose and never
 treated as a plan's lead. On `autopilot stop` its lease is released and its
 workspace closed. The fleet map and `fleet ui` show it: state, account,
-questions in the last hour and its last decision.
+questions in the last hour and its last decision; when a brain was retired,
+why (`gone`, `usage_limit`, `start_timeout`, `permission_mode`) and which
+profiles are excluded. Each retirement is recorded with `why=`, and
+`autopilot status` prints the brain's line.
 
 ### 6.2 What it is asked, and what it may answer
 
@@ -665,7 +677,7 @@ Use `--scope` to keep it to some machines.
 | An agent at its usage limit is not continued | the retry runs every 30 minutes, at most 48 times | wait for the reset, or move the lane (orchestra.md) |
 | A plan is reported `plan_stalled`, `plan_blocked` or `plan_no_lead` | three prompts without progress, a blocker in its state, or a gone lead with no successor to ask | look at the plan; `--brain` may decide stalls and some blockers; `--appoint` covers a lost lead if you granted it |
 | `start --brain` refuses to start | `ak` is missing or older than 1.3.0 (`--brain` is fail-closed) | install or upgrade coding-agents-kit, or start without `--brain` |
-| The brain is retired at once | its account's profile defaults to a mode that skips approvals (auto, bypass, accept edits), or its agent did not come up within two minutes | change that profile's default, or exclude it with `--brain-kinds`; read `autopilot logs` |
+| The brain is retired at once | its account's profile defaults to a mode that skips approvals (auto, bypass, accept edits), or its agent did not come up within two minutes | `autopilot status` (its brain line) or `autopilot logs` names why (`why=permission_mode`, the excluded `@profile`, or `why=start_timeout`); change that profile's default, or exclude it with `--brain-kinds` |
 | A queued plan does not start | it waits for its `after` plan or another plan of its repository; or `queue_blocked` named why: not approved (or edited or amended since), no lead, its lead works elsewhere, on another machine, in a directory this machine cannot see, or on another plan, it already began, or it is a `launch` item; in a sequential queue the items after it wait too | fix what the reason names; the daemon reads the queue again on the next report |
 | `lead verify` exits 5 | a machine of the plan could not be reached | wait until it answers, or pass `--allow-unreached` to accept the risk (recorded) |
 | `autopilot logs -f` shows nothing | only the background daemon writes `autopilot.out`; an idle daemon writes one pass line every tenth pass | `autopilot status` to see whether it runs, and how |
@@ -699,7 +711,7 @@ Every variable is optional; each default is the code's.
 | `HERDR_PEERS_AUTOPILOT_NOTIFY_TIMEOUT` | 20 | Seconds one `--notify` command may run (1–60; §8). |
 | `HERDR_PEERS_AUTOPILOT_NOTIFY_BUDGET` | 20 | Seconds all `--notify` commands of one pass may run together (1–120). |
 | `HERDR_PEERS_AUTOPILOT_APPOINT_GRACE` | 900 | Seconds lead and successors must be gone, the plan frozen, before `--appoint` asks a lane (0–86400; §7). |
-| `HERDR_PEERS_APPOINT_PROBE_GAP` | 60 | Seconds between the two probes of `lead takeover --as-lane` (0–600; §7). |
+| `HERDR_PEERS_APPOINT_PROBE_GAP` | 60 | Seconds between the two probes of `lead takeover --as-lane` (0–600; §7). **0 is for tests only**: it collapses the two probes protocol §12 spaces apart into one moment; never set it below the default on a real fleet. |
 | `HERDR_PEERS_SCOPE` | every enabled machine | The allow-list, as for every verb. |
 | `HERDR_PEERS_UI_SERVER` | — | Set by the helper for `fleet ui` (this server's key) — never by hand. |
 | `HERDR_PEERS_BRAIN_KEY_FILE` | — | Set by the daemon in the brain's environment (its answer-key file) — never by hand. |

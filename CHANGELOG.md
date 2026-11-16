@@ -9,6 +9,37 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Changed
+
+- **The default `--brain-kinds` is `claude`** (was `claude,codex,grok`):
+  Claude is, for now, the only kind whose answers the daemon approves, so a
+  brain of another kind only spent the hourly launch cap. Other kinds can
+  still be named.
+
+### Fixed
+
+- **Why a brain was retired is recorded**
+  ([#54](https://github.com/DailybotHQ/herdr-peers/issues/54)). The record
+  and the log line of a `brain_replaced` carry `why=` (`gone`,
+  `usage_limit`, `start_timeout`, `permission_mode`); a profile excluded for
+  starting in a mode that skips approvals is recorded as
+  `brain_profile_excluded why=@profile`. The map's brain block gains
+  `excluded` and `retired` (optional: a 2.0.0 map is still read), `fleet ui`
+  shows them, and `autopilot status` prints a brain line. A
+  `permission_mode` retirement names its likely cause and fix
+  (`hint=upgrade_coding_agents_kit`: a kit before 1.5.0 does not pass
+  Claude's own ask flag, so an auto-mode profile starts in auto mode).
+- **The loop forgets queue state it no longer needs**
+  ([#51](https://github.com/DailybotHQ/herdr-peers/issues/51)): keys of
+  items or queues a machine's report no longer lists are dropped (only after
+  a report that answered), and a reason that clears and returns is reported
+  again.
+- **An appointee must not be a lane of another open plan.** The loop's
+  appointment check (`leads_elsewhere`) ignored lanes; it now uses the same
+  membership as the queue (lead, successors and lanes).
+- The helper's module docstring and `-h` description say protocol 2; the
+  docs say `HERDR_PEERS_APPOINT_PROBE_GAP=0` is for tests only.
+
 ### Documentation
 
 - The skill covers everything new in 2.0: the `autopilot` verb row names

@@ -307,6 +307,41 @@ io.report = {'plans': [], 'agents': [], 'queues': [{'repo_root': '/r', 'parallel
 ap.run_pass(); step(ap, 400); step(ap, 400)
 assert io.sent == [] and io.events == [('queue_blocked', 'PLAN_2_next')], (io.sent, io.events)
 assert any(o[1] == 'queue_blocked' for o in io.log)
+# queue state is forgotten for items no longer reported, kept when a machine cannot answer,
+# and a reason that clears and returns is reported again (#51)
+io, ap = fresh()
+io.rows = [row('w1:p2')]
+io.report = {'plans': [], 'agents': [], 'queues': [{'repo_root': '/r', 'parallel': True, 'items': [
+    qi('PLAN_2_next', ready=False, reason='not approved'), qi('PLAN_3_more', ready=False, reason='no lead named')]}]}
+ap.run_pass()
+assert len(ap.plans.queue_told) == 2
+io.report = {'plans': [], 'agents': [], 'queues': [{'repo_root': '/r', 'parallel': True, 'items': [
+    qi('PLAN_2_next', ready=False, reason='not approved')]}]}
+step(ap, 400)
+assert list(ap.plans.queue_told) == [('local', '/r', 'PLAN_2_next')], ap.plans.queue_told
+saved = io.plans
+io.plans = lambda m, panes, f: ('unknown', None)
+step(ap, 400)
+assert list(ap.plans.queue_told) == [('local', '/r', 'PLAN_2_next')], 'a machine that cannot answer keeps its state'
+io.plans = saved
+io.events = []
+io.report = {'plans': [], 'agents': [], 'queues': [{'repo_root': '/r', 'parallel': True, 'items': [
+    qi('PLAN_2_next', ready=False, reason='waiting for PLAN_1_now')]}]}
+step(ap, 400)
+io.report = {'plans': [], 'agents': [], 'queues': [{'repo_root': '/r', 'parallel': True, 'items': [
+    qi('PLAN_2_next', ready=False, reason='not approved')]}]}
+step(ap, 400)
+assert io.events == [('queue_blocked', 'PLAN_2_next')], 'a reason that clears and returns is reported again'
+# an appointee must not be a member (lead, successor or lane) of another open plan
+io, ap = fresh()
+other = {'plan': 'P_other', 'class': 'open', 'lead': 'local:w1:p9', 'succession': ['local:w1:p8'], 'lanes': ['local:w1:p2']}
+ap.plans.machines['local'] = {'report': {'plans': [other]}}
+for pane in ('w1:p2', 'w1:p8', 'w1:p9'):
+    assert ap.plans.leads_elsewhere('local', pane, 'P_mine'), pane
+assert not ap.plans.leads_elsewhere('local', 'w1:p3', 'P_mine')
+assert not ap.plans.leads_elsewhere('local', 'w1:p2', 'P_other'), 'its own plan'
+ap.plans.machines['local'] = {'report': {'plans': [dict(other, **{'class': 'completed'})]}}
+assert not ap.plans.leads_elsewhere('local', 'w1:p2', 'P_mine'), 'a finished plan holds nobody'
 # a daemon restart between two passes: the lead began the plan but the queue still
 # says queued; the new daemon does not prompt it again (prompted once in all)
 import hashlib, os, tempfile
@@ -332,3 +367,6 @@ print('ok')
 PY
 assert_rc "the loop starts the next ready item once, one at a time, and reports blocked items" 0
 assert_eq "(scripted queue loop checks ran to their end)" "ok" "$OUT"
+run "$HELPER" -h
+assert_contains "the helper's description names protocol 2" "$(printf '%s' "$OUT" | tr -s ' \n' ' ')" "(protocol 2;"
+assert_eq "its docstring no longer says protocol 1 alone" "0" "$(head -3 "$Q_SCRIPTS/herdr_peers.py" | grep -c 'protocol 1 over')"

@@ -671,7 +671,11 @@ def valid_fleet(doc):
                 _str(brain['last'].get(k)) for k in ('case', 'action', 'plan', 'at'))))
             and all(brain.get(k) is None or (isinstance(brain.get(k), int)
                                              and not isinstance(brain.get(k), bool))
-                    for k in ('asked_last_hour', 'open_questions'))):
+                    for k in ('asked_last_hour', 'open_questions'))
+            and isinstance(brain.get('excluded', []), list) and len(brain.get('excluded', [])) <= 16
+            and all(isinstance(p, str) for p in brain.get('excluded', []))
+            and (brain.get('retired') is None or (isinstance(brain['retired'], dict) and all(
+                _str(brain['retired'].get(k)) for k in ('why', 'profile', 'at'))))):
         return False
     for m in doc['machines']:
         if not isinstance(m, dict) or not isinstance(m.get('machine'), str) or not _str(m.get('label')):

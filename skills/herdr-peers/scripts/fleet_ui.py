@@ -591,6 +591,12 @@ def render_header(index, age, grouping, needle, width, error=None):
             second.add(' · %d asked/h' % brain['asked_last_hour'], 'dim')
         if last:
             second.add(' · last: %s %s' % (clean(last.get('action'), 24), clean(last.get('plan'), 40)), 'dim')
+        retired = brain.get('retired') if isinstance(brain.get('retired'), dict) else None
+        if retired and bstate != 'ready':
+            second.add(' · retired: %s' % clean(retired.get('why'), 20), 'warn')
+        excluded = [clean(p, 24) for p in brain.get('excluded') or [] if isinstance(p, str)]
+        if excluded:
+            second.add(' · excluded: %s' % clean(','.join(excluded), 60), 'warn')
         second.add('   ')
     second.add('│ plans: ', 'dim')
     second.add('%d need you' % plans.get('needs_you', 0), 'bad' if plans.get('needs_you') else 'dim')
