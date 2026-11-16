@@ -27,7 +27,7 @@ changes bumped the minor version).
   `excluded` and `retired` (optional: a 2.0.0 map is still read), `fleet ui`
   shows them, and `autopilot status` prints a brain line. A
   `permission_mode` retirement names its likely cause and fix
-  (`hint=upgrade_coding_agents_kit`: a kit before 1.4.1 does not pass
+  (`hint=upgrade_coding_agents_kit`: a kit before 1.5.0 does not pass
   Claude's own ask flag, so an auto-mode profile starts in auto mode).
 - **The loop forgets queue state it no longer needs**
   ([#51](https://github.com/DailybotHQ/herdr-peers/issues/51)): keys of

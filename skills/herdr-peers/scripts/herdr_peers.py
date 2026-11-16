@@ -3816,7 +3816,7 @@ class AutopilotIO(object):
             'why=%s' % choice.why if choice.cls in BRAIN_WHY_CLASSES and isinstance(choice.why, str)
             and BRAIN_WHY_RE.fullmatch(choice.why) else None,
             # The likely cause of a brain that started without approvals: a coding-agents-kit
-            # that does not pass the CLI's own ask flag (fixed in 1.4.1).
+            # that does not pass the CLI's own ask flag (fixed in 1.5.0, with token metering).
             'hint=upgrade_coding_agents_kit' if choice.cls == 'brain_replaced'
             and choice.why == 'permission_mode' else None]))
         self.store.append(make_record(outcome, 'autopilot', new_ulid(), addr,
@@ -3984,7 +3984,7 @@ def autopilot_status(store):
                          if retired else 'never')))
                 if retired.get('why') == 'permission_mode' or brain.get('excluded'):
                     print('  brain: a profile started in a mode that skips approvals; coding-agents-kit '
-                          'before 1.4.1 does not pass the CLI\'s own ask flag, so upgrade it '
+                          'before 1.5.0 does not pass the CLI\'s own ask flag, so upgrade it '
                           '(`ak update`), or give the profile an ask-mode default, then restart '
                           'autopilot')
     for rec in [r for r in store.records() if r.get('role') == 'autopilot'][-10:]:

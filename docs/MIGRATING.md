@@ -100,7 +100,7 @@ The rules and the residual risk are in
 3. `herdr-peers autopilot start --loop --brain` (a Claude brain; since
    2.0.1 Claude is the only default kind, the only one whose answers are
    approved for now; `--brain-model claude=sonnet` for a model). Use
-   coding-agents-kit 1.4.1 or later: an older kit starts a Claude profile
+   coding-agents-kit 1.5.0 or later: an older kit starts a Claude profile
    whose default is auto mode in auto mode, and the daemon retires it.
 
 What it may decide, and what it never does, is in

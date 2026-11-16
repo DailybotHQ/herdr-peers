@@ -323,7 +323,7 @@ set it up beyond the flag; it needs coding-agents-kit 1.3.0 or later (`ak`).
 The default kind is Claude only: it is, for now, the only kind whose answer
 the daemon approves (§6.2), so a brain of another kind would only spend the
 launch cap. `--brain-kinds` can still name others, in priority order.
-**coding-agents-kit before 1.4.1** does not pass Claude's own ask flag, so a
+**coding-agents-kit before 1.5.0** does not pass Claude's own ask flag, so a
 profile whose default is auto mode starts in auto mode even through `ak
 --ask`; the daemon sees it, retires that brain (`why=permission_mode
 hint=upgrade_coding_agents_kit`), excludes the profile and tells you —
