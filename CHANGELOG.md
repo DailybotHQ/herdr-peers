@@ -25,7 +25,8 @@ changes bumped the minor version).
   handover` to the fresh agent, never taken over. Caps: one per plan per 6 h,
   two per plan, two an hour fleet-wide; an agent not up in 3 minutes, a takeover
   not done in 10, a handover not done in 15 is released. The old pane is never
-  touched. Recorded with `why=`; one `plan_revived` plan-event-v1 reaches
+  closed or keyed; a stalled live lead receives one typed handover request, only
+  when idle with no dialog or draft. Recorded with `why=`; one `plan_revived` plan-event-v1 reaches
   `--notify`; the map marks a revived lead (`revived`, optional) and `fleet ui`
   shows `↻ revived`. Protocol stays 2: the `via: revive` record is adopted only
   on the daemon's own machine (fence rule F11), and a 2.0/2.1 receiver refuses

@@ -11,7 +11,7 @@
 R_SCRIPTS="$ROOT/skills/herdr-peers/scripts"
 
 # --- the daemon, scripted ----------------------------------------------------------------------
-run python3 - "$R_SCRIPTS" <<'PY'
+run python3 - "$R_SCRIPTS" "$ROOT/tests/fixtures/screens" <<'PY'
 import sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, sys.argv[1])
@@ -46,7 +46,7 @@ class IO(object):
         self.launched.append((plan, repo, list(kinds), pane))
         return {'pane': pane, 'terminal': 't', 'workspace': pane.split(':')[0], 'kind': 'claude', 'profile': '@work1'}
     def revive_release(self, kind, profile, ws): self.released.append((kind, profile, ws))
-    def revive_ticket(self, plan, pane, epoch, ttl): self.tickets.append((plan, pane, epoch, ttl))
+    def revive_ticket(self, plan, pane, epoch, ttl, workspace=None): self.tickets.append((plan, pane, epoch, ttl, workspace))
     def save_unknown(self, kind, text): self.saved_unknown.append((kind, text))
 row = lambda pane, state='idle', agent='claude': {'pane': pane, 'state': state, 'agent': agent, 'seq': 1, 'turn': 1,
                                                   'you': False, 'cwd': '/r'}
@@ -75,8 +75,9 @@ assert 'plan_revive_launched' in classes(io) and ('plan_no_lead', 'P1') not in i
 step(ap)
 assert io.tickets == [], 'no ticket before the new agent is up'
 io.rows = [row('w9:p1', 'idle')]
+io.screens['w9:p1'] = 'Claude Code\n\n❯ \n'
 step(ap)
-assert io.tickets == [('P1', 'w9:p1', 1, A.REVIVE_TICKET_TTL)], io.tickets
+assert io.tickets == [('P1', 'w9:p1', 1, A.REVIVE_TICKET_TTL, 'w9')], io.tickets
 brief = prompts_to(io, 'w9:p1')
 assert len(brief) == 1 and 'lead takeover --plan P1 --reason revive' in brief[0] and 'lead verify --plan P1' in brief[0], brief
 assert 'lost its lead (no_agent)' in brief[0], brief
@@ -151,6 +152,8 @@ io.rows = [row('w9:p1', 'idle')]
 step(ap)
 assert io.tickets
 step(ap, A.REVIVE_TICKET_TTL + 1)
+assert io.released == [], 'L1: a margin past the ticket before giving up'
+step(ap, A.REVIVE_ABORT_MARGIN)
 assert io.released == [('claude', '@work1', 'w9')] and ('left', 'revive_failed', 'takeover_timeout', 'P1') in io.log
 
 # 7. A failed launch is recorded; the notice follows.
@@ -171,7 +174,36 @@ for banner, want in (("You've hit your usage limit. Try again in 2 hours 13 minu
     io.plans_report['plans'] = [plan()]
     for _ in range(3):
         step(ap)
+    assert io.launched == [], 'M1: not before the appointment grace has held with the plan frozen'
+    step(ap, A.APPOINT_GRACE); step(ap)
     assert len(io.launched) == want, (banner, io.launched, io.log)
+# M1: progress during the grace starts it over
+io, ap = fresh()
+io.rows = [row('w1:p1', 'blocked')]
+io.screens['w1:p1'] = "You've hit your usage limit. Try again in 3 hours.\n"
+io.plans_report['plans'] = [plan()]
+step(ap); step(ap)
+step(ap, A.APPOINT_GRACE - 120)
+io.plans_report['plans'] = [plan(progress='b' * 16)]
+step(ap, 200)
+assert io.launched == [], 'the plan moved: the grace starts over'
+# M1/T49: a banner in tool output, or a stray 'reset N' line, is not a limit to revive on
+for screen in ("  ⎿  You've hit your usage limit · resets in 9 hours\n",
+               "You've hit your usage limit\nI will try again 7 times\n",
+               "You've hit your limit\ngit reset 2 files\n"):
+    io, ap = fresh()
+    io.rows = [row('w1:p1', 'blocked')]
+    io.screens['w1:p1'] = screen
+    io.plans_report['plans'] = [plan()]
+    step(ap); step(ap); step(ap, A.APPOINT_GRACE); step(ap)
+    assert io.launched == [], (screen, io.launched)
+# M2: the excluded lead's plan is left to the human
+io, ap = fresh(exclude=['local:w1:p1'])
+io.rows = [row('w1:p1', 'blocked')]
+io.screens['w1:p1'] = "You've hit your usage limit. Try again in 3 hours.\n"
+io.plans_report['plans'] = [plan()]
+step(ap); step(ap); step(ap, A.APPOINT_GRACE); step(ap)
+assert io.launched == [], 'an excluded lead is never revived away'
 
 # 9. D2: a stalled plan whose lead is alive: a fresh agent, and the lead asked once to hand over.
 io, ap = fresh()
@@ -183,13 +215,18 @@ ap.plans.memos[('local', 'P1')].situation = 'plan_stalled'
 step(ap)
 assert io.launched and io.launched[0][3] == 'w9:p1', io.launched
 io.rows = [row('w1:p1', 'idle'), row('w9:p1', 'idle')]
+io.screens['w9:p1'] = 'Claude Code\n\n❯ \n'
+io.screens['w1:p1'] = 'Claude Code\n\n❯ half-typed by the human'
+step(ap)
+assert not [t for t in prompts_to(io, 'w1:p1') if 'lead handover' in t], 'H1: never over a draft'
+io.screens['w1:p1'] = 'Claude Code\n\n❯ \n'
 step(ap)
 ask = [t for t in prompts_to(io, 'w1:p1') if 'lead handover' in t]
 assert len(ask) == 1 and 'lead handover --plan P1 --to local:w9:p1' in ask[0], io.sent
 assert io.tickets == [], 'a handover needs no ticket: it is the lead\'s own act'
 io.plans_report['plans'] = [plan(lead='local:w9:p1', epoch=2)]
 step(ap)
-handed = prompts_to(io, 'w9:p1')
+handed = [t for t in prompts_to(io, 'w9:p1') if 'You now lead' in t]
 assert len(handed) == 1 and 'You now lead plan P1' in handed[0], io.sent
 assert ('plan_revived', 'P1') in io.events
 # a stalled lead that does not hand over: released after the window
@@ -201,9 +238,62 @@ step(ap)
 ap.plans.memos[('local', 'P1')].situation = 'plan_stalled'
 step(ap)
 io.rows = [row('w1:p1', 'idle'), row('w9:p1', 'idle')]
+io.screens['w9:p1'] = 'Claude Code\n\n❯ \n'
 step(ap)
 step(ap, A.REVIVE_HANDOVER + 1)
 assert io.released and ('left', 'revive_failed', 'handover_timeout', 'P1') in io.log
+
+# H1: the brief waits while the new pane shows a dialog, a login or a draft
+for screen in (open('%s/claude__blocked__login_menu.screen' % sys.argv[2]).read(),
+               open('%s/claude__blocked__permission_bash.screen' % sys.argv[2]).read(),
+               'Claude Code\n\n❯ something typed\n'):
+    io, ap = fresh()
+    io.plans_report['plans'] = [plan()]
+    for _ in range(3):
+        step(ap)
+    io.rows = [row('w9:p1', 'idle')]
+    io.screens['w9:p1'] = screen
+    step(ap)
+    assert io.tickets == [] and prompts_to(io, 'w9:p1') == [], (screen[:40], io.sent)
+    io.screens['w9:p1'] = 'Claude Code\n\n❯ \n'
+    step(ap)
+    assert len(io.tickets) == 1 and len(prompts_to(io, 'w9:p1')) == 1
+# M2: after a revive, the old lead at its limit is never resumed beside the new lead
+io, ap = fresh()
+io.rows = [row('w1:p1', 'blocked')]
+io.screens['w1:p1'] = "You've hit your usage limit. Try again in 3 hours.\n"
+io.plans_report['plans'] = [plan()]
+step(ap); step(ap); step(ap, A.APPOINT_GRACE); step(ap)
+assert io.launched
+io.rows = [row('w1:p1', 'blocked'), row('w9:p1', 'idle')]
+io.screens['w9:p1'] = 'Claude Code\n\n❯ \n'
+step(ap)
+io.plans_report['plans'] = [plan(lead='local:w9:p1', epoch=2)]
+step(ap)
+assert 'local:w1:p1' in ap.plans.revived_away
+sent = len(io.sent)
+step(ap, A.LIMIT_RETRY + 1); step(ap, A.LIMIT_RETRY + 1)
+assert not [x for x in io.sent[sent:] if x[1] == 'w1:p1'], io.sent[sent:]
+# M4: the caps also read the lead record (a restart resets nothing)
+io, ap = fresh()
+p_ = plan(); p_['revives'] = 2
+io.plans_report['plans'] = [p_]
+for _ in range(3):
+    step(ap)
+assert io.launched == [], 'two revives recorded: only the human'
+io, ap = fresh()
+p_ = plan(); p_['revived_at'] = __import__('time').strftime('%Y-%m-%dT%H:%M:%SZ', __import__('time').gmtime(now[0] - 3600))
+io.plans_report['plans'] = [p_]
+for _ in range(3):
+    step(ap)
+assert io.launched == [], 'revived an hour ago: not again within 6 h'
+io, ap = fresh()
+io.revive_history = lambda: [now[0] - 60, now[0] - 120]
+io.revive_note = lambda t: None
+io.plans_report['plans'] = [plan()]
+for _ in range(3):
+    step(ap)
+assert io.launched == [], 'two launches this hour on record: the fleet-wide cap holds after a restart'
 
 # 10. A dry run launches nothing and says so.
 io, ap = fresh(dry_run=True)
@@ -225,7 +315,20 @@ assert A.limit_reset_seconds("You've hit your usage limit. Try again in 1 hour",
 assert A.limit_reset_seconds("You've hit your session limit · resets in 45m", t0) == 2700
 assert A.limit_reset_seconds('no limit line · resets in 45m', t0) is None
 assert A.limit_reset_seconds("You've hit your session limit · resets 25:99", t0) is None
-assert A.limit_reset_seconds("You've hit your session limit · resets 3pm", t0) is not None
+tm = __import__('time')
+t13 = tm.mktime((2026, 11, 16, 13, 0, 0, 0, 0, -1))
+z = 'America/Bogota'
+assert A.limit_reset_seconds("You've hit your session limit · resets 3pm", t13, zone=z) == 7200
+assert A.limit_reset_seconds("You've hit your session limit · resets 11am", t13, zone=z) is None, 'passed: never next day'
+assert A.limit_reset_seconds("You've hit your session limit · resets 11pm", t13, zone=z) is None, 'more than 6 h: unknown'
+assert A.limit_reset_seconds("You've hit your session limit · resets 3pm (Europe/Berlin)", t13, zone=z) is None
+assert A.limit_reset_seconds("You've hit your session limit · resets 3pm (America/Bogota)", t13, zone=z) == 7200
+assert A.limit_reset_seconds("You've hit your limit\ngit reset 2 files", t13, zone=z) is None
+assert A.limit_reset_seconds("You've hit your limit\nprogress: reset 9 of 12", t13, zone=z) is None
+assert A.limit_reset_seconds("You've hit your limit\nTry again in 45 minutes", t13, zone=z) == 2700
+assert A.limit_reset_seconds("You've hit your limit\nok\nTry again in 9 hours", t13, zone=z) is None, 'banner line or the next only'
+assert A.limit_reset_seconds("You've hit your limit\nok\nalarm resets at 2:30pm", t13, zone=z) is None
+assert A.limit_reset_seconds("  ⎿  You've hit your usage limit · resets in 9 hours", t13, zone=z) is None
 print('ok')
 PY
 assert_rc "revive: launched for an orphan, briefed with a ticket, reported; capped; timed out; D1-D3; stalled handover" 0
@@ -270,6 +373,7 @@ assert H.find_revive_ticket(store, 'P7', 'w9:p1', 1) is None, 'a symlinked ticke
 # lead_revive, with the daemon and the probes stubbed
 H.save_lead(store, H.new_lead_record('P1', 'local:w1:p1', 3, ['local:w1:p8'], ['local:w1:p7'], '/r'), None, 'claim')
 H.git_root = lambda common=False: '/r'
+H.pane_workspace = lambda pane: pane.split(':')[0]
 H.finish_lead = lambda args, store, pane, record, what, best_effort=(), required=(): 0
 state = {'gone': lambda a: (True, 'no_agent', False), 'pid': 4242, 'opts': {'revive': True},
          'screen': ''}
@@ -284,14 +388,17 @@ def attempt():
         return None
     except H.Stop as exc:
         return exc.message
-assert 'no revive grant' in attempt(), 'no ticket, no revive'
-H.write_revive_ticket(store, 'P1', 'w9:p1', 3, 600, pid=4242)
+assert 'no revive ticket' in attempt(), 'no ticket, no revive'
+other_ws = H.write_revive_ticket(store, 'P1', 'w9:p1', 3, 600, pid=4242, workspace='w5')
+assert 'not in the workspace the autopilot created' in attempt(), 'M5: a ticket for another workspace'
+os.unlink(other_ws)
+H.write_revive_ticket(store, 'P1', 'w9:p1', 3, 600, pid=4242, workspace='w9')
 state['pid'] = None
-assert 'no running autopilot started with --revive' in attempt()
+assert 'the ticket does not name the running autopilot' in attempt()
 state['pid'], state['opts'] = 4242, {'revive': False}
-assert 'no running autopilot started with --revive' in attempt()
+assert 'the ticket does not name the running autopilot' in attempt()
 state['pid'], state['opts'] = 4343, {'revive': True}
-assert 'no running autopilot started with --revive' in attempt(), 'a ticket from another daemon process'
+assert 'the ticket does not name the running autopilot' in attempt(), 'a ticket from another daemon process'
 state['pid'] = 4242
 state['gone'] = lambda a: (a != 'local:w1:p7', 'idle', False)
 assert 'local:w1:p7 is idle' in attempt(), 'a live lane refuses'
@@ -309,14 +416,28 @@ data = H.load_lead(store, 'P1')
 assert data['record']['lead'] == 'local:w9:p1' and data['record']['epoch'] == 4 and data['record_via'] == 'revive', data
 assert data['record']['succession'] == ['local:w1:p8'] and data['record']['lanes'] == ['local:w1:p7']
 assert H.find_revive_ticket(store, 'P1', 'w9:p1', 3) is None, 'the ticket is consumed'
+assert data['revives'] == 1 and data['revived_at'], 'M4: the revive is counted in the lead record'
 logged = [r for r in store.records() if r.get('state') == 'revived']
 assert logged and 'revive granted by the daemon' in logged[-1]['note'] and 'weak' in logged[-1]['note'], logged
 args2 = argparse.Namespace(reason='revive', plan='P1')
+H.write_revive_ticket(store, 'P1', 'w9:p2', 4, 600, pid=4242, workspace='w9')
 try:
     H.lead_revive(args2, 'P1', store, 'w9:p2', 'local:w9:p2', H.load_lead(store, 'P1'))
-    raise AssertionError('a second revive without a ticket')
+    raise AssertionError('a second revive within 6 h')
 except H.Stop as exc:
-    assert 'no revive grant' in exc.message
+    assert 'less than 6 hours ago' in exc.message, exc.message
+# the count survives later writes (a handover) and caps at two
+data = H.load_lead(store, 'P1')
+H.save_lead(store, H.new_lead_record('P1', 'local:w9:p3', 5, [], [], '/r'), None, 'handover')
+assert H.load_lead(store, 'P1')['revives'] == 1, 'kept across a handover'
+raw = json.load(open(H.lead_path(store, 'P1'))); raw['revives'] = 2; raw['revived_at'] = '2020-01-01T00:00:00Z'
+H.write_private(H.lead_path(store, 'P1'), json.dumps(raw))
+H.write_revive_ticket(store, 'P1', 'w9:p2', 5, 600, pid=4242, workspace='w9')
+try:
+    H.lead_revive(args2, 'P1', store, 'w9:p2', 'local:w9:p2', H.load_lead(store, 'P1'))
+    raise AssertionError('a third revive')
+except H.Stop as exc:
+    assert 'already revived 2 times' in exc.message, exc.message
 print('ok')
 PY
 assert_rc "revive protocol: via revive, receivers refuse it, the one-time ticket, the helper's checks" 0
@@ -328,7 +449,7 @@ loop_world revive_cli
 mkstate "$REPO" PLAN_990_revive "$V5_OPEN"; pane_claim w2:p1 "$REPO" PLAN_990_revive
 run sh -c "cd '$REPO' && HERDR_PANE_ID=w1:p2 '$HELPER' lead takeover --plan PLAN_990_revive --reason revive"
 assert_rc "a revive takeover with no ticket is refused" 4
-assert_contains "and says why" "$ERR" "no revive grant"
+assert_contains "and says why" "$ERR" "no revive ticket"
 run "$HELPER" autopilot --once --revive
 assert_rc "--revive without --loop is a usage error" 2
 run "$HELPER" autopilot --loop --once --revive --dry-run
@@ -379,7 +500,7 @@ io = H.AutopilotIO(H.Store(), 'w1:p1', None, None, quiet=True)
 fake = 'github_pat_' + 'A' * 44   # a fake token, built at run time
 path = io.save_unknown('claude', 'odd screen\x1b[31m red\n' + 'token ' + fake + '\nlast line‮\n')
 body = open(path).read()
-assert '\x1b' not in body and '‮' not in body and fake not in body and '[redacted: a GitHub token]' in body, body
+assert '\x1b' not in body and '[31m' not in body and '‮' not in body and fake not in body and '[redacted]' in body, body
 assert oct(os.stat(path).st_mode & 0o777) == '0o600'
 assert oct(os.stat(os.path.dirname(path)).st_mode & 0o777) == '0o700'
 assert io.save_unknown('claude', 'odd screen\x1b[31m red\n' + 'token ' + fake + '\nlast line‮\n') is None, 'kept once'
@@ -388,6 +509,24 @@ for i in range(H.UNKNOWN_MAX + 5):
 kept = [n for n in os.listdir(os.path.dirname(path)) if H.UNKNOWN_NAME_RE.fullmatch(n)]
 assert len(kept) <= H.UNKNOWN_MAX, len(kept)
 assert io.save_unknown('claude', '\n\n') is None
+# H3: a private key block is dropped whole; a wrapped or cut token never escapes
+pem = '-----BEGIN ' + 'OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU\nAAAAAAAAAAEAAAAz\n-----END ' + 'OPENSSH PRIVATE KEY-----\n'
+path = io.save_unknown('claude', 'before\n' + pem + 'after\n')
+body = open(path).read()
+assert 'b3BlbnNzaC1rZXktdjEAAAAABG5vbmU' not in body and 'AAAAAAAAAAEAAAAz' not in body and 'before' in body and 'after' in body, body
+cut = 'github_pat_' + 'B' * 20          # a token cut by the screen edge: prefix only
+wrapped = 'github_pat_' + 'C' * 30 + '\n' + 'C' * 30
+path = io.save_unknown('codex', 'x1\n' + cut + '\ny1\nkey ' + wrapped + '\nz1\n')
+body = open(path).read()
+assert 'github_pat_' not in body and 'C' * 30 not in body and 'x1' in body and 'z1' in body, body
+unclosed = '-----BEGIN ' + 'RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\n'
+path = io.save_unknown('claude', 'top\n' + unclosed)
+assert 'MIIEpAIBAAKCAQEA' not in open(path).read()
+# L8: a corpus directory with loose permissions is closed again
+folder = os.path.dirname(path)
+os.chmod(folder, 0o755)
+io.save_unknown('claude', 'another odd screen\n')
+assert oct(os.stat(folder).st_mode & 0o777) == '0o700'
 print('ok')
 PY
 assert_eq "unknown screens: a sanitized, private, capped corpus, each screen once" "ok" "$OUT"

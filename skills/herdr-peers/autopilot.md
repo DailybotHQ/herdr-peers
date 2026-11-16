@@ -528,7 +528,9 @@ record can take over, by launching **one** fresh agent:
 - **Caps.** One revive per plan per 6 hours, two per plan in all (then only you
   are told), two an hour across the fleet; an agent that is not up in 3 minutes,
   a takeover not done in 10, a handover not done in 15 is given up: its lease and
-  its workspace are released. The old lead's pane is never closed or keyed.
+  its workspace are released. The old lead's pane is never closed and never
+  sent keys; in handover mode it receives one typed prompt (the handover
+  request), and only when it is idle with no dialog, limit or human draft on it.
 - **Recorded.** `plan_revive_launched`, `plan_revive_briefed`,
   `plan_handover_asked`, `plan_revived` and `revive_failed`, each with `why=`;
   one `plan_revived` event reaches `--notify`; the map marks the revived lead

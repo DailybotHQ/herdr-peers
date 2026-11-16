@@ -1893,11 +1893,23 @@ REVIVE_REASON = 'revive'
 REVIVE_TICKET_RE = re.compile(r'revive-[0-9a-f]{16}\.json')
 REVIVE_TICKET_SCHEMA = 'herdr-peers/revive-ticket-v1'
 REVIVE_LEASE_TTL = '6h'
+MAX_REVIVES = 2             # revives per plan, kept in its lead record; then only the human
+REVIVE_LOG = 'revive-log.json'
+REVIVE_EVERY = 6 * 3600     # at most one revive per plan in this window (kept in its lead record)
 UNKNOWN_DIR = 'unknown-screens'
 UNKNOWN_NAME_RE = re.compile(r'[0-9]{8}T[0-9]{6}Z-[a-z0-9]{1,16}-[0-9a-f]{12}\.txt')
 UNKNOWN_MAX = 50          # screens kept; the oldest goes first
 UNKNOWN_BYTES = 16384     # per screen
 UNKNOWN_LINES = 60
+ANSI_SEQ = re.compile(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-_])')
+TOKEN_TAIL = re.compile(r'[A-Za-z0-9_-]{8}$')   # a line that ends inside a token
+TOKEN_HEAD = re.compile(r'[A-Za-z0-9_-]{8}')    # a next line that starts with its rest
+PEM_BEGIN = re.compile(r'-----BEGIN [A-Z0-9 ]*-----')
+PEM_END = re.compile(r'-----END [A-Z0-9 ]*-----')
+# A token's prefix is enough to drop a line: a wrapped or cut token must not escape.
+TOKEN_PREFIX = re.compile(r'\b(?:gh[pousr]_[A-Za-z0-9]{4,}|github_pat_\w{4,}|sk-ant-[\w-]{4,}|'
+                          r'sk-(?:proj-)?[A-Za-z0-9]{12,}|xox[abposr]-[\w-]{4,}|AKIA[0-9A-Z]{8,}|'
+                          r'AIza[\w-]{10,})')
 LEAD_VIAS = (APPOINT_VIA, REVIVE_VIA)
 OPTIONAL_LEAD_KEYS = frozenset(['repo_root', 'appoint', 'via'])
 MAX_APPOINTMENTS = 2          # appointments per plan; past it only the human is told
@@ -2073,9 +2085,18 @@ def all_leads(store):
     return out
 
 
-def save_lead(store, record, prior, via, appointments=None):
-    """Replace a plan's lead record atomically (0600, never via a symlink)."""
+def save_lead(store, record, prior, via, appointments=None, revived=False):
+    """Replace a plan's lead record atomically (0600, never via a symlink). The
+    envelope keeps the plan's revive count and last revive time across every
+    write (`revived=True` adds one now)."""
     store.ensure()
+    kept = {}
+    try:
+        old = read_lead_file(lead_path(store, record['plan']))
+    except Stop:
+        old = None
+    if isinstance(old, dict):
+        kept = {k: old[k] for k in ('revives', 'revived_at') if k in old}
     if not os.path.isdir(lead_dir(store)):
         os.makedirs(lead_dir(store), 0o700)
     err = lead_record_error(record)
@@ -2095,6 +2116,10 @@ def save_lead(store, record, prior, via, appointments=None):
         storage['appoint'], storage['record_via'] = grant, mark
     if appointments:
         storage['appointments'] = appointments
+    storage.update(kept)
+    if revived:
+        storage['revives'] = int(kept.get('revives') or 0) + 1
+        storage['revived_at'] = now_iso()
     write_private(tmp, json.dumps(storage, sort_keys=True) + '\n')
     os.replace(tmp, path)
 
@@ -2434,13 +2459,13 @@ def lead_appoint_self(args, plan, store, pane, me, data):
                        best_effort=(rec['lead'],) + tuple(rec['succession']))
 
 
-def write_revive_ticket(store, plan, pane, epoch, ttl, pid=None):
+def write_revive_ticket(store, plan, pane, epoch, ttl, pid=None, workspace=None):
     """The daemon's one-time revive grant for one plan, one new pane and the stored
     epoch: 0600, created exclusively, never through a symlink. Returns its path."""
     store.ensure()
     path = os.path.join(store.dir, 'revive-%s.json' % binascii.hexlify(os.urandom(8)).decode('ascii'))
     body = {'schema': REVIVE_TICKET_SCHEMA, 'plan': plan, 'pane': pane, 'epoch': epoch,
-            'expires': int(time.time() + ttl), 'daemon_pid': pid or os.getpid()}
+            'workspace': workspace, 'expires': int(time.time() + ttl), 'daemon_pid': pid or os.getpid()}
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600)
     with os.fdopen(fd, 'w') as fh:
         fh.write(json.dumps(body, sort_keys=True))
@@ -2488,6 +2513,24 @@ def find_revive_ticket(store, plan, pane, epoch, now=None):
     return None
 
 
+def pane_workspace(pane):
+    """The workspace id Herdr reports for a local pane, or None."""
+    rc, text, _ = herdr(['pane', 'get', pane], timeout=12)
+    if rc != 0:
+        return None
+    try:
+        found = (json.loads(text).get('result') or {}).get('pane') or {}
+    except (ValueError, AttributeError):
+        return None
+    ws = found.get('workspace_id')
+    return ws if isinstance(ws, str) and re.fullmatch(r'[A-Za-z0-9]{1,32}', ws) else None
+
+
+def iso_seconds(stamp):
+    import calendar
+    return calendar.timegm(time.strptime(stamp[:19], '%Y-%m-%dT%H:%M:%S'))
+
+
 def revive_gone(addr):
     """(gone, state) for a revive: strong evidence, or (D3) a usage limit whose own
     banner, read here, resets more than REVIVE_MIN_RESET away — weak evidence,
@@ -2517,16 +2560,24 @@ def lead_revive(args, plan, store, pane, me, data):
     lead, every successor and every lane gone. Writes local state only; receivers
     elsewhere never adopt a revive."""
     rec = data['record']
+    if int(data.get('revives') or 0) >= MAX_REVIVES:
+        raise Stop(EXIT_POLICY, 'plan %s was already revived %d times; only the human can restart it'
+                   % (plan, MAX_REVIVES))
+    last = data.get('revived_at')
+    if isinstance(last, str) and TS_RE.fullmatch(last) and time.time() - iso_seconds(last) < REVIVE_EVERY:
+        raise Stop(EXIT_POLICY, 'plan %s was revived less than %d hours ago' % (plan, REVIVE_EVERY // 3600))
     found = find_revive_ticket(store, plan, pane, rec['epoch'])
     if found is None:
-        raise Stop(EXIT_POLICY, 'no revive grant for this pane, plan %s and epoch %d; only a '
-                   'pane the autopilot launched for it may revive it' % (plan, rec['epoch']))
+        raise Stop(EXIT_POLICY, 'no revive ticket for this pane, plan %s and epoch %d' % (plan, rec['epoch']))
     path, ticket = found
+    if not ticket.get('workspace') or pane_workspace(pane) != ticket['workspace']:
+        raise Stop(EXIT_POLICY, 'revive refused: this pane is not in the workspace the autopilot '
+                   'created for this revive')
     pid = autopilot_pid(store)
     opts = autopilot_options(store, pid) if pid else None
     if not pid or ticket.get('daemon_pid') != pid or not (opts or {}).get('options', {}).get('revive'):
-        raise Stop(EXIT_POLICY, 'revive refused: no running autopilot started with --revive issued '
-                   'this grant')
+        raise Stop(EXIT_POLICY, 'revive refused: the ticket does not name the running autopilot, or '
+                   'that autopilot was not started with --revive')
     root = git_root(common=True)
     if rec.get('repo_root') and root != rec['repo_root']:
         raise Stop(EXIT_POLICY, 'this pane works in another repository than plan %s; a revived '
@@ -2549,17 +2600,18 @@ def lead_revive(args, plan, store, pane, me, data):
         again = load_lead(store, plan)
         if not again or again['record']['epoch'] != rec['epoch']:
             raise Stop(EXIT_POLICY, 'the lead record of %s changed meanwhile; run `lead show`' % plan)
-        if find_revive_ticket(store, plan, pane, rec['epoch']) is None:
-            raise Stop(EXIT_POLICY, 'the revive grant was used or expired meanwhile')
+        again_ticket = find_revive_ticket(store, plan, pane, rec['epoch'])
+        if again_ticket is None:
+            raise Stop(EXIT_POLICY, 'the revive ticket was used or expired meanwhile')
         try:
-            os.unlink(path)   # one time: consumed before the record is written
+            os.unlink(again_ticket[0])   # one time: consumed before the record is written
         except OSError:
             raise Stop(EXIT_POLICY, 'the revive grant could not be consumed; refused')
         record = new_lead_record(plan, me, rec['epoch'] + 1, rec['succession'],
                                  [a for a in rec['lanes'] if a not in mine_], rec.get('repo_root'),
                                  appoint=rec.get('appoint'), via=REVIVE_VIA)
         save_lead(store, record, prior_of(rec, REVIVE_VIA), REVIVE_VIA,
-                  appointments=again.get('appointments'))
+                  appointments=again.get('appointments'), revived=True)
         log_lead(store, 'revived', me, record,
                  note='revive granted by the daemon\'s --revive start flag; %s' % '; '.join(evidence)[:400])
     return finish_lead(args, store, pane, record, 'revived',
@@ -3861,6 +3913,9 @@ class AutopilotIO(object):
         if not ak:
             raise Stop(EXIT_ENV, 'ak is not on PATH')
         ak = os.path.realpath(ak)
+        kinds = [k for k in kinds if isinstance(k, str) and brain.KIND_RE.fullmatch(k)]
+        if not kinds:
+            raise Stop(EXIT_POLICY, 'no agent kind to pick')
         argv = [ak, 'pick', '--kinds', ','.join(kinds), '--owner', self.brain_owner(),
                 '--max-age', '300', '--json']
         rc, out = bounded_run(argv, b'', 256 * 1024, 30, env=dict(os.environ, AGENTKIT_PERMISSIONS='ask'))
@@ -3906,21 +3961,64 @@ class AutopilotIO(object):
         if isinstance(workspace, str) and re.fullmatch(r'[A-Za-z0-9]{1,32}', workspace):
             herdr(['workspace', 'close', workspace], timeout=15)
 
-    def revive_ticket(self, plan, pane, epoch, ttl):
-        return write_revive_ticket(self.store, plan, pane, epoch, ttl)
+    def revive_ticket(self, plan, pane, epoch, ttl, workspace=None):
+        return write_revive_ticket(self.store, plan, pane, epoch, ttl, workspace=workspace)
+
+    def revive_history(self):
+        """Launch times of the last hour, kept in a private file so a restart does
+        not reset the fleet-wide hourly cap."""
+        path = os.path.join(self.store.dir, REVIVE_LOG)
+        try:
+            fd = os.open(path, os.O_RDONLY | NOFOLLOW)
+            with os.fdopen(fd, 'r', encoding='utf-8') as fh:
+                data = json.loads(fh.read(65536))
+        except (OSError, ValueError):
+            return []
+        now = time.time()
+        return [t for t in data if isinstance(t, (int, float)) and now - t < 3600][:64] \
+            if isinstance(data, list) else []
+
+    def revive_note(self, when):
+        times = sorted(set(self.revive_history()) | {when})[-64:]
+        path = os.path.join(self.store.dir, REVIVE_LOG)
+        tmp = '%s.%d.tmp' % (path, os.getpid())
+        try:
+            write_private(tmp, json.dumps(times))
+            os.replace(tmp, path)
+        except OSError:
+            pass
 
     # -- unknown screens: a local corpus for new fixtures ----------------------
     def save_unknown(self, kind, text):
         """Keep a sanitized copy of a screen autopilot did not recognise (no key was
-        sent): cleaned of control characters, secret-shaped lines redacted, capped
-        per file and in number, 0600 in a 0700 directory under the state dir."""
-        lines = []
-        for line in (text or '').splitlines()[-UNKNOWN_LINES:]:
-            line = ''.join(' ' if unicodedata.category(ch) in ('Cc', 'Cf', 'Zl', 'Zp', 'Co', 'Cs') else ch
-                           for ch in line)[:400]
-            lines.append('[redacted: %s]' % secret_finding(line) if secret_finding(line) else line.rstrip())
+        sent): control and format characters removed; a private key block dropped
+        from BEGIN to END (or to the end when it never closes); a line dropped when
+        it, or it joined with the next (a wrapped token), shows a secret or a
+        token's prefix — checked before any cut; capped per file and in number,
+        0600 in a 0700 directory under the state dir."""
+        text = ANSI_SEQ.sub('', text or '')
+        raw = [''.join(' ' if unicodedata.category(ch) in ('Cc', 'Cf', 'Zl', 'Zp', 'Co', 'Cs') else ch
+                       for ch in line) for line in text.splitlines()[-UNKNOWN_LINES:]]
+        drop, inside = set(), False
+        for i, line in enumerate(raw):
+            if PEM_BEGIN.search(line):
+                inside = True
+            if inside:
+                drop.add(i)
+            if PEM_END.search(line):
+                inside = False
+        hit = lambda t: bool(secret_finding(t) or TOKEN_PREFIX.search(t))
+        for i, line in enumerate(raw):
+            nxt = raw[i + 1] if i + 1 < len(raw) else ''
+            if hit(line):
+                drop.add(i)
+                if TOKEN_TAIL.search(line.rstrip()) and TOKEN_HEAD.match(nxt):
+                    drop.add(i + 1)   # the token's rest, wrapped onto the next line
+            elif not hit(nxt) and hit(line.strip() + nxt.strip()):
+                drop.update((i, i + 1))   # a token wrapped across the two lines
+        lines = ['[redacted]' if i in drop else line.rstrip()[:400] for i, line in enumerate(raw)]
         body = '\n'.join(lines).strip()
-        if not body:
+        if not body or all(l in ('[redacted]', '') for l in lines):
             return None
         digest = hashlib.sha256(body.encode('utf-8')).hexdigest()[:12]
         folder = os.path.join(self.store.dir, UNKNOWN_DIR)
@@ -3929,6 +4027,8 @@ class AutopilotIO(object):
                 os.makedirs(folder, 0o700)
             if os.path.islink(folder):
                 return None
+            if stat.S_IMODE(os.stat(folder).st_mode) != 0o700:
+                os.chmod(folder, 0o700)
             names = sorted(n for n in os.listdir(folder) if UNKNOWN_NAME_RE.fullmatch(n))
             if any(n.endswith('-%s.txt' % digest) for n in names):
                 return None   # the same screen is kept once
