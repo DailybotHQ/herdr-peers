@@ -130,7 +130,7 @@ class IO(object):
     def state(self, m, p): return 'idle'
     def keys(self, *a): return True
     def prompt(self, m, p, text): self.sent.append((p, text)); return True
-    def record(self, addr, kind, choice, outcome, dry, plan=None): self.log.append((outcome, addr, choice.cls, plan))
+    def record(self, addr, kind, choice, outcome, dry, plan=None): self.log.append((outcome, addr, choice.cls, plan, choice.why))
     def warn(self, addr, exc): raise exc
     def label(self, m): return m
     def identity(self): return {}
@@ -356,6 +356,13 @@ assert any(o[2] == 'brain_default' for o in io.log), 'silence gives the default'
 # No pass waits on the brain: a pass returns although the brain never answers.
 assert ap.run_pass()['pass'] > 0
 
+# Every retire reason is recorded with the replacement (#54).
+for why in ('gone', 'usage_limit', 'start_timeout', 'permission_mode'):
+    io, ap = fresh()
+    ap.run_pass()
+    ap.brain.retire(why)
+    assert [o[4] for o in io.log if o[2] == 'brain_replaced'] == [why], (why, io.log)
+    assert ap.brain.status(now[0])['retired']['why'] == why
 # A brain that is gone or at its usage limit is replaced, at most 3 launches an hour.
 io, ap = fresh()
 io.rows['local'] = [row('w9:p1', 'idle', 2)]
@@ -421,6 +428,11 @@ assert any(o[2] == 'brain_replaced' for o in io.log) and io.released, io.log[-3:
 assert io.events.count('needs_human') == 1
 step(ap)
 assert io.excluded_seen == ['@work1'], io.excluded_seen
+# Why it was retired and which profile was excluded are recorded and on the map (#54).
+assert any(o[2] == 'brain_replaced' and o[4] == 'permission_mode' for o in io.log), io.log
+assert any(o[2] == 'brain_profile_excluded' and o[4] == '@work1' for o in io.log), io.log
+st = ap.brain.status(now[0])
+assert st['excluded'] == ['@work1'] and st['retired']['why'] == 'permission_mode' and st['retired']['profile'] == '@work1', st
 # The brain closes: lease released, workspace closed.
 io, ap = fresh()
 ap.run_pass()
@@ -485,6 +497,31 @@ run env FAKE_HERDR_FAIL="workspace create" "$HELPER" autopilot --loop --once --b
 assert_rc "a failed workspace create does not fail the pass" 0
 assert_contains "the lease is released" "$(cat "$FAKE_AK_DIR/argv.log")" "lease release claude @work1"
 if ls -d "$(state_dir)"/brain-*/ >/dev/null 2>&1; then t_fail "and the brain home removed"; else t_ok "and the brain home removed"; fi
+# the record and the out line carry why= for a retirement and an excluded profile, never free text
+python3 - "$ROOT/skills/herdr-peers/scripts" <<'PY'
+import json, os, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import herdr_peers, autopilot, fleet_report
+io = herdr_peers.AutopilotIO(herdr_peers.Store(), 'w1:p1', None, None, quiet=True)
+io.record('local:w9:p1', 'claude', autopilot.Decision('leave', 'brain_replaced', 'permission_mode'), 'left', False)
+io.record('local:w9:p1', 'claude', autopilot.Decision('leave', 'brain_profile_excluded', '@work1'), 'left', False)
+io.record('local:w9:p1', 'claude', autopilot.Decision('leave', 'brain_replaced', 'free text; rm -rf'), 'left', False)
+io.record('local:w9:p1', 'claude', autopilot.Decision('leave', 'brain_launch_failed', 'no account'), 'left', False)
+notes = [r.get('note') for r in io.store.records() if r.get('role') == 'autopilot'][-4:]
+assert notes[0].endswith('why=permission_mode') and notes[1].endswith('why=@work1'), notes
+assert 'why=' not in notes[2] and 'why=' not in notes[3], notes
+base = {'schema': fleet_report.FLEET_SCHEMA, 'machines': [], 'daemon': {'brain': {
+    'state': 'none', 'kind': None, 'profile': None, 'pane': None, 'asked_last_hour': 0, 'open_questions': 0,
+    'last': None, 'excluded': ['@work1'], 'retired': {'why': 'permission_mode', 'profile': '@work1', 'at': 'x'}}}}
+assert fleet_report.valid_fleet(base)
+for bad in ({'excluded': '@work1'}, {'excluded': [1]}, {'retired': 'gone'}, {'retired': {'why': 1, 'profile': None, 'at': 'x'}}):
+    doc = json.loads(json.dumps(base)); doc['daemon']['brain'].update(bad)
+    assert not fleet_report.valid_fleet(doc), bad
+old = json.loads(json.dumps(base)); del old['daemon']['brain']['excluded']; del old['daemon']['brain']['retired']
+assert fleet_report.valid_fleet(old), 'a 2.0.0 map without them is still read'
+PY
+assert_eq "a retirement's reason and an excluded profile are recorded; the map carries them" "0" "$?"
 # an answers line longer than a read never stalls the reader
 python3 - "$ROOT/skills/herdr-peers/scripts" <<'PY'
 import os, sys

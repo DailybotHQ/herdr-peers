@@ -9,6 +9,22 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Why a brain was retired is recorded**
+  ([#54](https://github.com/DailybotHQ/herdr-peers/issues/54)). The record
+  and the log line of a `brain_replaced` carry `why=` (`gone`,
+  `usage_limit`, `start_timeout`, `permission_mode`); a profile excluded for
+  starting in a mode that skips approvals is recorded as
+  `brain_profile_excluded why=@profile`. The map's brain block gains
+  `excluded` and `retired` (optional: a 2.0.0 map is still read), `fleet ui`
+  shows them, and `autopilot status` prints a brain line.
+- **The loop forgets queue state it no longer needs**
+  ([#51](https://github.com/DailybotHQ/herdr-peers/issues/51)): keys of
+  items or queues a machine's report no longer lists are dropped (only after
+  a report that answered), and a reason that clears and returns is reported
+  again.
+
 ## [2.0.0] - 2026-11-16
 
 The 2.0.0 release: lead appointment under protocol 2, the daemon's brain, and the plan queue.

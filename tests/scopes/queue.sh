@@ -307,6 +307,31 @@ io.report = {'plans': [], 'agents': [], 'queues': [{'repo_root': '/r', 'parallel
 ap.run_pass(); step(ap, 400); step(ap, 400)
 assert io.sent == [] and io.events == [('queue_blocked', 'PLAN_2_next')], (io.sent, io.events)
 assert any(o[1] == 'queue_blocked' for o in io.log)
+# queue state is forgotten for items no longer reported, kept when a machine cannot answer,
+# and a reason that clears and returns is reported again (#51)
+io, ap = fresh()
+io.rows = [row('w1:p2')]
+io.report = {'plans': [], 'agents': [], 'queues': [{'repo_root': '/r', 'parallel': True, 'items': [
+    qi('PLAN_2_next', ready=False, reason='not approved'), qi('PLAN_3_more', ready=False, reason='no lead named')]}]}
+ap.run_pass()
+assert len(ap.plans.queue_told) == 2
+io.report = {'plans': [], 'agents': [], 'queues': [{'repo_root': '/r', 'parallel': True, 'items': [
+    qi('PLAN_2_next', ready=False, reason='not approved')]}]}
+step(ap, 400)
+assert list(ap.plans.queue_told) == [('local', '/r', 'PLAN_2_next')], ap.plans.queue_told
+saved = io.plans
+io.plans = lambda m, panes, f: ('unknown', None)
+step(ap, 400)
+assert list(ap.plans.queue_told) == [('local', '/r', 'PLAN_2_next')], 'a machine that cannot answer keeps its state'
+io.plans = saved
+io.events = []
+io.report = {'plans': [], 'agents': [], 'queues': [{'repo_root': '/r', 'parallel': True, 'items': [
+    qi('PLAN_2_next', ready=False, reason='waiting for PLAN_1_now')]}]}
+step(ap, 400)
+io.report = {'plans': [], 'agents': [], 'queues': [{'repo_root': '/r', 'parallel': True, 'items': [
+    qi('PLAN_2_next', ready=False, reason='not approved')]}]}
+step(ap, 400)
+assert io.events == [('queue_blocked', 'PLAN_2_next')], 'a reason that clears and returns is reported again'
 # a daemon restart between two passes: the lead began the plan but the queue still
 # says queued; the new daemon does not prompt it again (prompted once in all)
 import hashlib, os, tempfile

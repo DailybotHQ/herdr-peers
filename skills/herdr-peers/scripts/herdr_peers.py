@@ -3809,7 +3809,11 @@ class AutopilotIO(object):
         note = ' '.join(filter(None, [
             'keys=%s' % ','.join(choice.keys) if choice.keys else None,
             'option=%d' % choice.option if choice.option is not None else None,
-            'action=%s' % choice.action, 'dry_run' if dry_run else None]))
+            'action=%s' % choice.action, 'dry_run' if dry_run else None,
+            # Why a brain was retired and which profile was excluded: fixed words or a
+            # checked profile name, never free text.
+            'why=%s' % choice.why if choice.cls in BRAIN_WHY_CLASSES and isinstance(choice.why, str)
+            and BRAIN_WHY_RE.fullmatch(choice.why) else None]))
         self.store.append(make_record(outcome, 'autopilot', new_ulid(), addr,
                                       'local:%s' % self.pane, kind=kind, reason=choice.cls,
                                       note=note, plan=plan))
@@ -3945,6 +3949,10 @@ def autopilot_options(store, pid):
     return data
 
 
+BRAIN_WHY_CLASSES = ('brain_replaced', 'brain_profile_excluded')
+BRAIN_WHY_RE = re.compile(r'[a-z_]{1,32}|@[A-Za-z0-9._-]{1,40}')
+
+
 def autopilot_status(store):
     pid = autopilot_pid(store)
     log_path, _ = autopilot_files(store)
@@ -3960,6 +3968,15 @@ def autopilot_status(store):
             print('  options: %s' % safe(' '.join(autopilot_option_argv(opts))))
             if info.get('mode') == 'background':
                 print('  log: %s' % log_path)
+            brain = ((load_fleet_report().read_fleet()[0] or {}).get('daemon') or {}).get('brain') \
+                if opts.get('brain') else None
+            if isinstance(brain, dict):
+                retired = brain.get('retired') if isinstance(brain.get('retired'), dict) else {}
+                print('  brain: %s %s %s; excluded profiles: %s; last retired: %s' % (
+                    safe(brain.get('state')), safe(brain.get('kind') or '-'), safe(brain.get('profile') or '-'),
+                    safe(', '.join(str(p) for p in brain.get('excluded') or []) or 'none'),
+                    safe('%s (%s, %s)' % (retired.get('why'), retired.get('profile') or '-', retired.get('at'))
+                         if retired else 'never')))
     for rec in [r for r in store.records() if r.get('role') == 'autopilot'][-10:]:
         print('%s %s %s %s %s' % (safe(rec.get('ts')), safe(rec.get('state')),
                                   safe(rec.get('target')), safe(rec.get('reason')),

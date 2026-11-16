@@ -836,9 +836,16 @@ class PlanLoop(object):
                     self.consider(machine, plan, by_pane, now, prompted)
                 except Exception as exc:  # one plan never stops the pass
                     self.io.warn('%s:%s' % (machine, plan.get('plan')), exc)
-            for queue in info['report'].get('queues') or []:
+            seen = set()
+            queues = info['report'].get('queues') or []
+            for queue in queues:
+                for item in queue.get('items') or []:
+                    seen.add((machine, queue.get('repo_root'), item.get('plan')))
+            if info.get('state') == 'ok':  # a machine that could not answer keeps its state
+                self.forget_queues(machine, seen)
+            for queue in queues:
                 try:
-                    self.consider_queue(machine, queue, by_pane, now, prompted)
+                    self.consider_queue(machine, queue, by_pane, now, prompted, seen)
                 except Exception as exc:  # one queue never stops the pass
                     self.io.warn('%s:queue' % machine, exc)
         self.publish(listed, now)
@@ -961,7 +968,7 @@ class PlanLoop(object):
         if not self.ap.dry_run:
             self.io.prompt(machine, pane, LOOP_TEXT % plan['plan'])
 
-    def consider_queue(self, machine, queue, by_pane, now, prompted):
+    def consider_queue(self, machine, queue, by_pane, now, prompted, seen=None):
         """Start the next ready item of a repository's queue: one fixed prompt to
         its named lead, once. The queue is the pack's; the daemon only reads it.
         In a sequential queue nothing after a queued item that cannot start
@@ -970,8 +977,10 @@ class PlanLoop(object):
         reported only once it has held for the appointment grace."""
         repo = queue.get('repo_root')
         sequential = not queue.get('parallel')
+        seen = set() if seen is None else seen
         for item in queue.get('items') or []:
             key = (machine, repo, item['plan'])
+            seen.add(key)
             if item.get('state') != 'queued':
                 self.queued.discard(key)
                 self.queue_told.pop(key, None)
@@ -981,6 +990,10 @@ class PlanLoop(object):
             pane = local_pane(item.get('lead'))
             if not reason and item.get('ready') and pane is None:
                 reason = 'lead on another machine'  # this daemon can prompt only its own panes
+            if not reason or reason.startswith('waiting for') or reason.startswith('another plan'):
+                # Its reason cleared: a reason that returns later is reported again.
+                self.queue_told.pop(key, None)
+                self.queue_since.pop(key, None)
             if reason:
                 if reason.startswith('waiting for'):
                     continue  # its `after` plan decides; the queue's order is the pack's
@@ -1007,6 +1020,14 @@ class PlanLoop(object):
                                'repo_root': repo, 'blocker_class': None}, self.ap.dry_run)
             if sequential:
                 return  # one at a time per repository
+
+    def forget_queues(self, machine, seen):
+        """Drop the queue state of this machine's items that its current report
+        no longer lists (an item removed, a queue deleted)."""
+        for store in (self.queue_told, self.queue_since):
+            for key in [k for k in store if k[0] == machine and k not in seen]:
+                del store[key]
+        self.queued -= set(k for k in self.queued if k[0] == machine and k not in seen)
 
     def tell_queue(self, machine, repo, item, key, reason, now):
         """Report a queued item that cannot start, once per reason; a passing
@@ -1273,6 +1294,7 @@ class BrainKeeper(object):
         self.b = brain_mod().Brain()
         self.excluded = set()   # profiles whose default mode skips approvals
         self.last = None   # the brain's last decision, for the map and the watcher
+        self.retired = None  # why the last brain was retired, for the map and status
 
     # -- lifecycle ---------------------------------------------------------
     def tick(self, listed, now):
@@ -1307,7 +1329,9 @@ class BrainKeeper(object):
                     # Its profile starts in a mode that skips approvals: the
                     # daemon's approval guard would never see them. Not this one.
                     addr = 'local:%s' % b.pane
-                    self.excluded.add(b.profile)
+                    if b.profile and B.PROFILE_RE.fullmatch(b.profile):
+                        self.excluded.add(b.profile)
+                        self.ap.record(addr, b.kind, Decision('leave', 'brain_profile_excluded', b.profile), 'left')
                     self.retire('permission_mode')
                     self.refused(addr)
                     return
@@ -1349,6 +1373,8 @@ class BrainKeeper(object):
     def retire(self, why):
         b = self.b
         self.ap.record('local:%s' % b.pane, b.kind, Decision('leave', 'brain_replaced', why), 'left')
+        self.retired = {'why': why, 'profile': b.profile,
+                        'at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(self.ap.clock()))}
         self.close()
         b.state = 'none'
 
@@ -1422,7 +1448,7 @@ class BrainKeeper(object):
                 'pane': ('local:%s' % b.pane) if b.pane else None,
                 'asked_last_hour': len([t for t in b.asked if now - t < 3600]),
                 'open_questions': sum(1 for q in b.questions.values() if not q['answered']),
-                'last': self.last}
+                'last': self.last, 'excluded': sorted(self.excluded), 'retired': self.retired}
 
     def act(self, q, action):
         """Run one allowed action through the daemon's own paths."""
