@@ -705,7 +705,7 @@ def valid_fleet(doc):
             if not isinstance(p, dict) or not isinstance(p.get('plan'), str):
                 return False
             if not all(_str(p.get(k)) for k in ('class', 'lead', 'repo_root', 'blocker_class',
-                                                 'situation')):
+                                                 'situation', 'state_updated_at')):
                 return False
             for k in ('tasks_done', 'tasks_total', 'epoch'):
                 v = p.get(k)

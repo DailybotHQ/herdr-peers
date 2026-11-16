@@ -69,18 +69,19 @@ assert answering == 2 and len(ix.machines) == 3
 assert [(r, a.pane) for r, a in ix.plan_by_key['local/PLAN_1_api'].members] == [('lead', 'w1:p1'), ('lane', 'w1:p2')]
 
 # --- grouping by plan: needing the developer first, then running; outside plans; doing nothing
-g = ui.build_view(ix, 'plan')
+g = ui.build_view(ix, 'plan', facet='all')
 names = [x.title for x in g]
 assert set(names[:2]) == {'PLAN_2_web', 'PLAN_9_box'} and names[2] == 'PLAN_1_api', names
-assert 'PLAN_3_old' not in names, 'a finished plan with nobody on it is not shown'
+assert 'PLAN_3_old' in names, 'All shows a finished plan'
+assert 'PLAN_3_old' not in [x.title for x in ui.build_view(ix, 'plan')], 'the default view never shows Done'
 busy = [x for x in g if x.kind == 'busy'][0]
 idle = [x for x in g if x.kind == 'idle'][0]
 assert [a.pane for _, a in busy.members] == ['w1:p5'], busy.members
 assert [a.pane for _, a in idle.members] == ['w1:p4'], 'the agents doing nothing have their own group'
 # by repository and by machine
-r = ui.build_view(ix, 'repo')
+r = ui.build_view(ix, 'repo', facet='all')
 assert [x.title for x in r] == ['app', 'app', 'web', '(no repository)'], [x.title for x in r]
-m = ui.build_view(ix, 'machine')
+m = ui.build_view(ix, 'machine', facet='all')
 assert [x.title for x in m] == ['Mac', 'API · WS brain', 'XWin'] and m[2].subtitle == 'unreachable'
 # filtering
 f = ui.build_view(ix, 'plan', 'codex')
@@ -116,7 +117,8 @@ path = os.path.join(tempfile.mkdtemp(), 'fleet.json')
 json.dump(FLEET, open(path, 'w'))
 os.utime(path, (NOW - 45, NOW - 45))
 snap = ui.snapshot(ui.FileSource(path), NOW, 100)
-assert 'updated 45 s ago' in snap and 'PLAN_2_web' in snap and 'Doing nothing' in snap, snap
+assert 'updated 45 s ago' in snap and 'PLAN_2_web' in snap and 'Doing nothing' not in snap, snap
+assert 'Doing nothing' in ui.snapshot(ui.FileSource(path), NOW, 100, 'plan', 'waiting')
 assert '2 need you' in snap and '1 / 4 tasks' in snap, snap
 os.utime(path, (NOW - 1000, NOW - 1000))
 assert 'STALE' in ui.snapshot(ui.FileSource(path), NOW, 100)
@@ -224,12 +226,14 @@ path = map_file(fleet())
 a, t = app(['q'], path); a.run()
 s = t.screen()
 for want in ('herdr-peers fleet', 'updated 20 s ago', '1 working', '1 idle', 'Plans', 'Repos', 'Machines',
-             'PLAN_1_api', '2/5', 'now: Write tests', 'Doing nothing', 'q quit'):
+             'PLAN_1_api', '2/5', 'now: Write tests', 'Attention 0', 'Active 1', 'q quit'):
     assert want in s, (want, s)
 assert 'API refactor' in s
 # switch grouping
 a, t = app(['r', 'q'], path); a.run()
-assert a.grouping == 'repo' and 'app' in t.screen() and 'web' in t.screen()
+assert a.grouping == 'repo' and 'app' in t.screen() and '▤ web' not in t.screen(), 'by default only who needs you or moves'
+a, t = app(['r', '5', 'q'], path); a.run()
+assert 'app' in t.screen() and '▤ web' in t.screen()
 a, t = app(['m', 'q'], path); a.run()
 assert a.grouping == 'machine' and '▣ Mac' in t.screen()
 a, t = app(['u', 'q'], path); a.run()
@@ -248,11 +252,11 @@ assert a.needle == ''
 a, t = app(['?', 'q'], path); a.run()
 assert a.mode == 'help' and 'group by plan' in t.screen()
 # a click selects; a click on the selected row opens it
-a, t = app(['q'], path); a.run()
+a, t = app(['5', 'q'], path); a.run()
 y = t.find('w1:p4')
-a, t = app([(5, y, 'click'), 'q'], path); a.run()
+a, t = app(['5', (5, y, 'click'), 'q'], path); a.run()
 assert a.sel_target == ('agent', 'local:w1:p4'), a.sel_target
-a, t = app([(5, y, 'click'), (5, y, 'click'), 'q'], path); a.run()
+a, t = app(['5', (5, y, 'click'), (5, y, 'click'), 'q'], path); a.run()
 assert a.mode == 'agent' and a.target == ('agent', 'local:w1:p4')
 # the agent view reads the live screen only while open, at most every 2 s, and focuses on f
 Link.calls = []
@@ -337,12 +341,19 @@ json.dump({'schema': 'herdr-peers/fleet-v1', 'generated_at': '2026-01-01T00:00:0
 PY
 run "$HELPER" fleet ui --width 90
 assert_rc "fleet ui without a terminal prints a snapshot" 0
-assert_contains "of the map" "$OUT" "Doing nothing"
-assert_eq "at the asked width" "90" "$(printf '%s\n' "$OUT" | sed -n 4p | python3 -c 'import sys,unicodedata; t=sys.stdin.read().rstrip("\n"); print(sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in t))' 2>/dev/null || echo "?")"
+assert_contains "of the map: the default view says why it is empty" "$OUT" "Nothing needs you and nothing is moving"
+assert_contains "and where the free agent is" "$OUT" "1 free agent under Waiting"
+assert_eq "at the asked width" "90" "$(printf '%s\n' "$OUT" | sed -n 5p | python3 -c 'import sys,unicodedata; t=sys.stdin.read().rstrip("\n"); print(sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in t))' 2>/dev/null || echo "?")"
 run "$HELPER" fleet ui --snapshot --width 10
 assert_rc "an absurd width is a usage error" 2
-run "$HELPER" fleet ui --snapshot --group machine
+run "$HELPER" fleet ui --snapshot --group machine --filter all
 assert_contains "--group machine groups by machine" "$OUT" "▣ Mac"
+run "$HELPER" fleet ui --snapshot --filter waiting
+assert_rc "--filter waiting" 0
+assert_contains "--filter waiting shows the free agents" "$OUT" "Doing nothing"
+assert_contains "and marks the view it shows" "$OUT" "Waiting 0"
+run "$HELPER" fleet ui --snapshot --filter nope
+assert_rc "an unknown --filter is a usage error" 2
 
 # --- a malformed or hostile map never takes the watcher down ------------------------------------
 run python3 - "$UI_SCRIPTS" <<'PY'
@@ -432,16 +443,238 @@ fleet = {'schema': 'herdr-peers/fleet-v1', 'daemon': {}, 'machines': [{
         {'plan': 'PLAN_3_later', 'state': 'queued', 'after': None, 'lead': None, 'ready': False, 'blocked_reason': 'no lead named'}]}]}]}
 assert fleet_report.valid_fleet(fleet)
 ix = ui.Index(fleet)
-view = ui.build_view(ix, 'queue')
+view = ui.build_view(ix, 'queue', facet='all')
 assert [g.title for g in view] == ['app'] and 'one at a time' in view[0].subtitle
 text = '\n'.join(l.text() for l in ui.render_list(view, time.time(), 120))
 for want in ('☰ app', '1. ✓ PLAN_1_now', 'ready — starts next', 'no lead named', 'lead local:w1:p2'):
     assert want in text, (want, text)
-plans = '\n'.join(l.text() for l in ui.render_list(ui.build_view(ix, 'plan'), time.time(), 140))
+plans = '\n'.join(l.text() for l in ui.render_list(ui.build_view(ix, 'plan', facet='all'), time.time(), 140))
 assert 'queue 2/3' in plans, plans
 bad = {'schema': 'herdr-peers/fleet-v1', 'daemon': {}, 'machines': [dict(fleet['machines'][0], queues=[{'repo_root': '/r', 'items': 5}])]}
 assert not fleet_report.valid_fleet(bad), 'a malformed queue on the map is refused'
 print('ok')
 PY
 assert_eq "the Queues view lists each repository's queue; plans show their place in it" "ok" "$OUT"
+# --- the facets: one model in every grouping (2.1.0) -------------------------------------------------
+run python3 - "$UI_SCRIPTS" <<'PY'
+import json, sys, time
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import fleet_ui as ui, fleet_report
+
+NOW = 2_000_000_000.0
+def ts(ago): return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(NOW - ago))
+def prow(pid, cls='open', situation=None, moved=60, lead='local:w1:p1'):
+    return {'plan': pid, 'class': cls, 'lead': lead, 'epoch': 1, 'succession': [], 'lanes': [],
+            'repo_root': '/src/app', 'blocker_class': None, 'situation': situation, 'tasks_done': 1,
+            'tasks_total': 3, 'current_task': None, 'detail': None, 'progress': None, 'updated_at': None,
+            'state_updated_at': ts(moved) if moved is not None else None}
+def arow(pane, state, plans=()):
+    return {'pane': pane, 'kind': 'claude', 'state': state, 'cwd': '/src/app', 'repo_root': '/src/app',
+            'branch': 'main', 'title': '', 'state_since': None, 'plans': [{'plan': p, 'role': r} for p, r in plans]}
+def qi(pid, state, reason=None, ready=False):
+    return {'plan': pid, 'state': state, 'after': None, 'lead': None, 'ready': ready, 'blocked_reason': reason}
+FLEET = {'schema': 'herdr-peers/fleet-v1', 'generated_at': ts(5), 'daemon': {}, 'machines': [
+    {'machine': 'local', 'label': 'Mac', 'agents_state': 'ok', 'plans_state': 'ok',
+     'agents': [arow('w1:p1', 'working', [('P_moving', 'lead')]), arow('w1:p2', 'blocked', [('P_blocked', 'lead')]),
+                arow('w1:p3', 'idle'), arow('w1:p4', 'done'), arow('w1:p5', 'working'), arow('w1:p6', 'weird')],
+     'plans': [prow('P_moving'), prow('P_blocked', 'blocked'), prow('P_stalled', situation='plan_stalled'),
+               prow('P_nolead', situation='plan_no_lead'), prow('P_still', moved=2 * 86400 + 4 * 3600),
+               prow('P_queued', moved=9 * 86400), prow('P_done', 'completed'), prow('P_unread', 'unreadable', moved=None),
+               prow('P_oldmap', moved=None)],
+     'queues': [{'repo_root': '/src/app', 'parallel': False, 'invalid': False, 'items': [
+         qi('P_finished', 'done'), qi('P_skipped', 'skipped'), qi('P_moving', 'started'),
+         qi('P_queued', 'queued', ready=True), qi('P_next', 'queued', 'waiting for P_queued'),
+         qi('P_stuck', 'queued', 'no lead named')]}]},
+    {'machine': 'm2', 'label': 'XWin', 'agents_state': 'unknown', 'plans_state': 'unknown',
+     'agents': [], 'plans': [], 'queues': [{'repo_root': '/r', 'parallel': False, 'invalid': True, 'items': []}]}]}
+assert fleet_report.valid_fleet(FLEET), 'state_updated_at is a valid map field'
+bad = json.loads(json.dumps(FLEET)); bad['machines'][0]['plans'][0]['state_updated_at'] = 5
+assert not fleet_report.valid_fleet(bad), 'a non-string state_updated_at is refused'
+old = json.loads(json.dumps(FLEET))
+for p in old['machines'][0]['plans']:
+    del p['state_updated_at']
+assert fleet_report.valid_fleet(old), 'a 2.0 map without state_updated_at is still read'
+ix = ui.Index(FLEET)
+P = ix.plan_by_key
+
+# plan_facet, case by case
+q = lambda pid: (ix.queue_pos.get('local/' + pid) or (0, 0, None))[2]
+want = {'P_moving': 'active', 'P_blocked': 'attention', 'P_stalled': 'attention', 'P_nolead': 'attention',
+        'P_still': 'attention', 'P_queued': 'waiting', 'P_done': 'done', 'P_unread': 'attention',
+        'P_oldmap': 'active'}
+got = dict((pid, ui.plan_facet(P['local/' + pid], NOW, q(pid))) for pid in want)
+assert got == want, got
+assert ui.stale_for(P['local/P_still'], NOW) == 2 * 86400 + 4 * 3600 and ui.span(ui.stale_for(P['local/P_still'], NOW)) == '2d 4h'
+assert ui.stale_for(P['local/P_moving'], NOW) is None and ui.stale_for(P['local/P_oldmap'], NOW) is None
+assert ui.plan_facet(P['local/P_still'], None) == 'active', 'no clock, no staleness'
+assert ui.plan_facet(P['local/P_still'], NOW, stale_after=3 * 86400) == 'active', 'the threshold is a parameter'
+assert ui.plan_facet(P['local/P_moving'], NOW, 'queued') == 'waiting'
+assert [ui.span(x) for x in (0, 59, 2400, 18720, 86400)] == ['0m', '0m', '40m', '5h 12m', '1d 0h']
+# agent_facet and queue_item_facet
+assert dict((a.pane, ui.agent_facet(a)) for a in ix.agents) == {
+    'w1:p1': 'active', 'w1:p2': 'attention', 'w1:p3': 'waiting', 'w1:p4': 'waiting', 'w1:p5': 'active',
+    'w1:p6': 'attention'}
+items = dict((it['plan'], it) for it in ix.machines[0]['queues'][0]['items'])
+assert dict((k, ui.queue_item_facet(v)) for k, v in items.items()) == {
+    'P_finished': 'done', 'P_skipped': 'done', 'P_moving': 'active', 'P_queued': 'waiting',
+    'P_next': 'waiting', 'P_stuck': 'attention'}
+assert ui.queue_item_facet({'state': 'queued', 'blocked': 'another plan of this repository runs'}) == 'waiting'
+assert ui.queue_item_facet({'state': 'odd'}) == 'attention'
+
+# counts, per grouping, and under a search
+c = ui.facet_counts(ix, 'plan', '', NOW)
+# plans: 9 rows + P_next and P_stuck (queued, no plan row); P_finished/P_skipped are not queued
+assert c == {'attention': 6, 'active': 2, 'waiting': 2, 'done': 1, 'all': 11}, c
+assert ui.facet_counts(ix, 'repo', '', NOW) == {'attention': 2, 'active': 2, 'waiting': 2, 'done': 0, 'all': 6}
+assert ui.facet_counts(ix, 'machine', '', NOW) == {'attention': 3, 'active': 2, 'waiting': 2, 'done': 0, 'all': 7}, \
+    'an unreachable machine counts as attention'
+assert ui.facet_counts(ix, 'queue', '', NOW) == {'attention': 2, 'active': 1, 'waiting': 2, 'done': 2, 'all': 7}, \
+    'an invalid queue file counts as attention'
+assert ui.facet_counts(ix, 'plan', 'p_st', NOW) == {'attention': 3, 'active': 0, 'waiting': 0, 'done': 0, 'all': 3}
+assert ui.facet_counts(None, 'plan') == {'attention': 0, 'active': 0, 'waiting': 0, 'done': 0, 'all': 0}
+
+# views: the default is attention + active, never done
+titles = lambda g, f, n='': [x.title for x in ui.build_view(ix, g, n, f, NOW)]
+focus = titles('plan', ui.FOCUS)
+assert focus[:6] and set(focus) >= {'P_blocked', 'P_stalled', 'P_nolead', 'P_still', 'P_unread', 'P_stuck',
+                                    'P_moving', 'P_oldmap'}, focus
+assert 'P_done' not in focus and 'P_queued' not in focus and 'Doing nothing — free to take work' not in focus
+assert titles('plan', 'done') == ['P_done']
+assert set(titles('plan', 'waiting')) == {'P_queued', 'P_next', 'Doing nothing — free to take work'}
+assert set(titles('plan', 'active')) == {'P_moving', 'P_oldmap', 'Working outside any plan'}
+assert len([t for t in titles('plan', 'all') if t.startswith('P_')]) == 11
+v = ui.build_view(ix, 'plan', '', 'attention', NOW)
+assert [g.facet for g in v if g.kind in ('plan', 'queued')] == ['attention'] * 6
+assert [g.stale for g in v if g.title == 'P_still'] == [2 * 86400 + 4 * 3600]
+text = '\n'.join(l.text() for l in ui.render_list(v, NOW, 120))
+assert 'no movement for 2d 4h' in text and 'QUEUED' in text and 'no lead named' in text, text
+assert [m.title for m in ui.build_view(ix, 'machine', '', 'attention', NOW)] == ['Mac', 'XWin']
+assert [m.title for m in ui.build_view(ix, 'machine', '', 'waiting', NOW)] == ['Mac']
+assert ui.build_view(ix, 'repo', '', 'done', NOW) == [], 'an agent is never done'
+qv = ui.build_view(ix, 'queue', '', 'waiting', NOW)
+assert [[it['plan'] for it in g.plan[1]] for g in qv] == [['P_queued', 'P_next']]
+qt = '\n'.join(l.text() for l in ui.render_list(qv, NOW, 120))
+assert ' 4. ' in qt and ' 5. ' in qt and ' 1. ' not in qt, 'a filtered queue keeps each item\'s real place'
+assert [g.subtitle.endswith('INVALID queue file') for g in ui.build_view(ix, 'queue', '', 'attention', NOW)] == [False, True]
+
+# the facet row: counts, the selected view, the alert tone, narrow fallback, mouse spans
+line, spans = ui.render_facets(ui.FOCUS, c, 130, 'plan')
+t = line.text()
+for want_text in ('1 Attention 6', '2 Active 2', '3 Waiting 2', '4 Done 1', '5 All 11', 'needs you + moving', '←→ 1-5'):
+    assert want_text in t, (want_text, t)
+styles = dict((text.strip(), style) for text, style in line.segs)
+assert styles['1 Attention 6'] == 'bad_badge' and styles['2 Active 2'] == 'tab_on' and styles['4 Done 1'] == 'tab'
+calm, _ = ui.render_facets('done', dict(c, attention=0), 130, 'plan')
+calm_styles = dict((text.strip(), style) for text, style in calm.segs)
+assert calm_styles['1 Attention 0'] == 'tab' and calm_styles['4 Done 1'] == 'tab_on', 'only Attention alerts, and only when it holds something'
+assert [f for _, _, f in spans] == list(ui.FACETS)
+for x0, x1, f in spans:
+    assert t[x0:x1].strip().split(' ')[1] == ui.FACET_LABEL[f], (t[x0:x1], f)
+narrow, nspans = ui.render_facets(ui.FOCUS, c, 50, 'plan')
+assert narrow.text().strip() == 'A6 Ac2 W2 D1 All11' and len(nspans) == 5, narrow.text()
+mid = ui.render_facets(ui.FOCUS, c, 90, 'plan')[0].text()
+assert '1 Attention 6' in mid and '←→' not in mid, 'a middle width drops the hints before the words'
+for width in (50, 60, 90, 130):
+    assert ui.width_of(ui.render_facets('all', c, width, 'machine')[0].text()) == width
+
+# empty states say why, and where the rest is
+assert ui.empty_note('plan', 'attention', {'active': 7}) == 'Nothing needs you · 7 plans moving'
+assert ui.empty_note('plan', ui.FOCUS, {'waiting': 3, 'done': 21}, '', 2) == \
+    'Nothing needs you and nothing is moving · 3 waiting · 21 done · 2 free agents under Waiting'
+assert ui.empty_note('repo', 'done', {}) == 'Agents are never done: the free ones are under Waiting'
+assert ui.empty_note('queue', 'attention', {'active': 1, 'waiting': 2}) == 'No queued plan is stuck · 1 started · 2 waiting'
+assert ui.empty_note('machine', 'active', {}, 'zzz') == 'nothing here matches "zzz" · 0 in All'
+print('ok')
+PY
+assert_eq "facets: each item classified, counted, filtered and drawn the same way in every grouping" "ok" "$OUT"
+
+# --- the facets in the live watcher ----------------------------------------------------------------
+run python3 - "$UI_SCRIPTS" <<'PY'
+import json, os, sys, tempfile, time
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import fleet_ui as ui
+clock = [2_000_000_000.0]
+class Term(object):
+    def __init__(self, keys, w=130, h=30):
+        self.keys, self.w, self.h, self.rows, self.mouse = list(keys), w, h, {}, None
+    def size(self): return self.w, self.h
+    def clear(self): self.rows = {}
+    def draw(self, y, line): self.rows[y] = line
+    def flush(self): pass
+    def read_key(self, timeout):
+        clock[0] += timeout
+        if not self.keys:
+            return 'q'
+        k = self.keys.pop(0)
+        if isinstance(k, tuple):
+            self.mouse = k
+            return 'mouse'
+        return k
+    def last_mouse(self): return self.mouse
+    def screen(self): return '\n'.join(self.rows[y].text() for y in sorted(self.rows))
+agents = [{'pane': 'w1:p1', 'kind': 'claude', 'state': 'working', 'cwd': '/a', 'repo_root': '/a', 'branch': 'm',
+           'title': '', 'state_since': None, 'plans': [{'plan': 'P_run', 'role': 'lead'}]},
+          {'pane': 'w1:p2', 'kind': 'codex', 'state': 'idle', 'cwd': '/b', 'repo_root': '/b', 'branch': 'm',
+           'title': '', 'state_since': None, 'plans': []}]
+def prow(pid, cls):
+    return {'plan': pid, 'class': cls, 'lead': 'local:w1:p1', 'epoch': 1, 'succession': [], 'lanes': [],
+            'repo_root': '/a', 'blocker_class': None, 'situation': None, 'tasks_done': 1, 'tasks_total': 2,
+            'current_task': None, 'detail': None}
+fleet = {'schema': 'herdr-peers/fleet-v1', 'generated_at': '2033-05-18T03:33:00Z', 'daemon': {},
+         'machines': [{'machine': 'local', 'label': 'Mac', 'agents_state': 'ok', 'plans_state': 'ok',
+                       'agents': agents, 'plans': [prow('P_run', 'open'), prow('P_old', 'completed')]}]}
+path = os.path.join(tempfile.mkdtemp(), 'fleet.json')
+json.dump(fleet, open(path, 'w'))
+def app(keys, **kw):
+    t = Term(keys, **kw)
+    a = ui.App(t, ui.FileSource(path), link_factory=lambda f: None, clock=lambda: clock[0], **kw.get('app', {}))
+    a.run()
+    return a, t
+a, t = app([])
+assert a.facet == ui.FOCUS and 'P_run' in t.screen() and 'P_old' not in t.screen(), t.screen()
+assert t.rows[ui.HEADER_ROWS - 1].text().startswith('  1 Attention 0') and '─' in t.rows[ui.HEADER_ROWS].text()
+a, t = app(['4'])
+assert a.facet == 'done' and 'P_old' in t.screen() and 'P_run' not in t.screen()
+a, t = app([']'])
+assert a.facet == 'attention' and 'Nothing needs you · 1 plan moving' in t.screen(), t.screen()
+a, t = app(['right', 'right'])
+assert a.facet == 'active'
+a, t = app(['['])
+assert a.facet == 'all', 'left from the default wraps to All'
+a, t = app(['left', 'left'])
+assert a.facet == 'done'
+# remembered per grouping for the session
+a, t = app(['3', 'r', 'p'])
+assert a.grouping == 'plan' and a.facet == 'waiting' and a.facets['repo'] == ui.FOCUS
+a, t = app(['3', 'r', '5', 'p', 'r'])
+assert a.facets == dict(a.facets, plan='waiting', repo='all') and a.facet == 'all'
+# digits typed into a search are text, not a view
+a, t = app(['/', '3', 'enter'])
+assert a.needle == '3' and a.facet == ui.FOCUS
+# a click on the facet row picks that view
+a, t = app([])
+row = t.rows[ui.HEADER_ROWS - 1].text()
+x = row.index('Done')
+a, t = app([(x, ui.HEADER_ROWS - 1, 'click')])
+assert a.facet == 'done', a.facet
+# the counts are computed when the view changes, not every tick
+calls = []
+real = ui.facet_counts
+ui.facet_counts = lambda *args, **kw: (calls.append(1), real(*args, **kw))[1]
+a, t = app([None, None, None, None])
+assert len(calls) == 1, calls
+ui.facet_counts = real
+# a narrow terminal keeps the short form
+a, t = app([], w=52, h=20)
+assert 'A0 Ac1 W0 D1 All2' in t.rows[ui.HEADER_ROWS - 1].text(), t.rows[ui.HEADER_ROWS - 1].text()
+# the starting view can be given
+t = Term([])
+a = ui.App(t, ui.FileSource(path), link_factory=lambda f: None, clock=lambda: clock[0], facet='done'); a.run()
+assert a.facet == 'done' and all(v == 'done' for v in a.facets.values())
+print('ok')
+PY
+assert_eq "facets in the watcher: keys, mouse, per-grouping memory, search, counts once per change" "ok" "$OUT"
+
 export XDG_STATE_HOME=$UI_XDG_STATE

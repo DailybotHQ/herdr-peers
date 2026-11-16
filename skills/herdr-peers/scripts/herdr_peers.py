@@ -3303,6 +3303,7 @@ def cmd_fleet_ui(args):
     fleet_ui = load_fleet_ui()
     path = os.path.join(load_fleet_report().state_root(), load_fleet_report().FLEET_FILE)
     grouping = args.group or 'plan'
+    facet = args.filter or fleet_ui.FOCUS
     if os.environ.get('HERDR_ENV') == '1':
         # Lets the watcher tell whether it runs on the daemon's own Herdr server.
         os.environ['HERDR_PEERS_UI_SERVER'] = state_key(Store().server_id)[:24]
@@ -3311,13 +3312,13 @@ def cmd_fleet_ui(args):
         width = args.width or shutil.get_terminal_size((100, 40)).columns
         if not 40 <= width <= 400:
             raise Stop(EXIT_USAGE, '--width must be between 40 and 400')
-        sys.stdout.write(fleet_ui.snapshot(fleet_ui.FileSource(path), time.time(), width, grouping))
+        sys.stdout.write(fleet_ui.snapshot(fleet_ui.FileSource(path), time.time(), width, grouping, facet))
         return EXIT_OK
     try:
-        return fleet_ui.run_curses(path, grouping)
+        return fleet_ui.run_curses(path, grouping, facet)
     except Exception as exc:  # no curses, a dumb terminal: say so and print the text view
         warn('fleet ui: cannot start the live view (%s); printing a snapshot' % safe(type(exc).__name__))
-        sys.stdout.write(fleet_ui.snapshot(fleet_ui.FileSource(path), time.time(), 100, grouping))
+        sys.stdout.write(fleet_ui.snapshot(fleet_ui.FileSource(path), time.time(), 100, grouping, facet))
         return EXIT_OK
 
 
@@ -4688,8 +4689,10 @@ def build_parser():
     fl.add_argument('--json', action='store_true', help='herdr-peers/fleet-v1 JSON')
     fl.add_argument('--snapshot', action='store_true',
                     help='with ui: draw the view once as text and exit')
-    fl.add_argument('--group', choices=['plan', 'repo', 'machine'],
+    fl.add_argument('--group', choices=['plan', 'repo', 'machine', 'queue'],
                     help='with ui: how agents are grouped first (default plan)')
+    fl.add_argument('--filter', choices=['attention', 'active', 'waiting', 'done', 'all'],
+                    help='with ui: the view to show (default: attention and active together)')
     fl.add_argument('--width', type=int, help='with ui --snapshot: columns (40-400)')
     pl = sub.add_parser('plans', help='the plans led on this machine, with each plan\'s state '
                         '(read-only; works outside a Herdr pane)')
