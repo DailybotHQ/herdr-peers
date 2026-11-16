@@ -18,6 +18,8 @@ import shlex
 import time
 
 PICK_SCHEMA = 'pick-v2'
+AK_MIN = (1, 3, 0)          # coding-agents-kit with `ak pick --kinds` (pick-v2)
+AK_INTERFACE = 1
 WORKSPACE_LABEL = 'autopilot brain'
 LEASE_TTL = '4h'
 LEASE_RENEW = 7200          # seconds between lease renewals

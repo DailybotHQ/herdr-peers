@@ -9,6 +9,23 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Added
+
+- **`autopilot --loop --brain`: the daemon keeps a brain it launches
+  itself.** A dedicated decision agent on the human's best account
+  (`--brain-kinds`, default claude, codex, grok; `--brain-model kind=model`),
+  launched in ask mode through coding-agents-kit 1.3.0+ (`ak pick --kinds`,
+  pick-v2, the account leased first) in a workspace of the daemon's own,
+  briefed once, replaced when gone or at its usage limit, released and
+  closed on stop. The daemon asks it only what its rules cannot decide — a
+  stalled plan, a blocked plan whose blocker is not the human's, an unknown
+  screen — and acts only on one action from that case's closed list,
+  answered with `herdr-peers autopilot answer <question> <action>` from the
+  brain's own pane. Anything else, or silence, gives the case's default.
+- The fleet map and `fleet ui` show the brain: state, account, questions in
+  the last hour, last decision.
+- `plan-event-v1` gains `needs_human` (the brain chose to tell the human).
+
 ## [1.3.0] - 2026-11-15
 
 ### Added

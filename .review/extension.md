@@ -16,6 +16,12 @@ is in `docs/SECURITY.md`; the rules for agents are in `AGENTS.md`.
   string that is executed, or the argv of anything except a literal
   `herdr` subcommand. `herdr()` / `herdr_json()` take argv lists; any
   `shell=True` or string-built command is a defect.
+- **Always `critical`:** with `--brain`, any brain text reaching a prompt,
+  a key, a command or an argv; an action outside a case's closed list being
+  run; an answer accepted from a pane or terminal other than the brain's, or
+  for a question the daemon did not ask; `ak` run through a shell; a launch
+  without `launch.permissions == ask`, with an autonomy or bypass flag, or
+  typed into a pane the daemon did not just create (T41–T42).
 - **Always `critical`:** in the plan loop (`autopilot --loop`), anything a
   machine reported, a lead record or a plan state reaching the `ssh` argv,
   a prompt's text beyond the validated plan id, or the notify argv; a

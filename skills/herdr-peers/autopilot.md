@@ -404,3 +404,70 @@ Use `--scope` to keep it to some machines.
 - `HERDR_PEERS_AUTOPILOT_GRACE` (seconds, default 300) and
   `HERDR_PEERS_AUTOPILOT_SSH_TIMEOUT` (seconds, default 25, 1–120) tune the
   grace period and the per-machine report timeout.
+
+## 10. The brain (`--brain`)
+
+```bash
+herdr-peers autopilot start --loop --brain                         # brain on claude, then codex, then grok
+herdr-peers autopilot start --loop --brain --brain-kinds codex,claude --brain-model claude=sonnet
+```
+
+The rules of §9 decide almost everything. For the few cases they cannot,
+the daemon keeps a **brain**: one dedicated agent it launches itself, asks,
+and obeys only within a closed list of actions. Nothing is asked of you to
+set it up beyond the flag; it needs coding-agents-kit 1.3.0 or later (`ak`).
+
+### 10.1 How it is launched
+
+1. `ak pick --kinds <your priority list> [--model-for kind=model] --owner
+   <daemon> --max-age 300 --json`, in ask mode (`AGENTKIT_PERMISSIONS=ask`):
+   the first kind of your list with an account that has quota wins.
+2. The answer (`pick-v2`) is checked whole: schema, interface, an account
+   that qualifies, `launch.permissions == ask`. The line to type is `ak`'s own
+   argv, every element matched against its pattern, the resolved path of the
+   `ak` the daemon ran first, and only `--ask` and `--trust-cwd` added — never
+   an autonomy or bypass flag.
+3. The account is leased (`ak lease … --purpose brain`, renewed every two
+   hours) so no lead or second daemon books it.
+4. The daemon creates a workspace of its own, `autopilot brain`, and types
+   the quoted line into its fresh shell — never into an agent's pane.
+5. When the agent is up it receives one brief: it decides nothing on its own,
+   changes nothing, and answers each question only with the command the
+   question shows.
+
+The brain is replaced when its pane is gone or it sits at its usage limit
+(at most three launches an hour), is never nudged in prose and never
+treated as a plan's lead. On `autopilot stop` its lease is released and its
+workspace closed. The fleet map and `fleet ui` show it: state, account,
+questions in the last hour and its last decision.
+
+### 10.2 What it is asked, and what it may answer
+
+| Case | Allowed actions | Default (no valid answer in 3 minutes) |
+| --- | --- | --- |
+| A plan is stalled (three prompts without progress) | `nudge_once_more` (one more prompt to its lead, once per plan), `notify_human`, `leave` | `leave` |
+| A plan is blocked and its blocker names no escalation class and no sensitive subject (credential, login, consent, payment, a push to main, a merge, a release, a deletion, a secret, production) | `ask_lead_to_resolve` (one fixed prompt asking the lead to resolve it within its recorded authority), `notify_human`, `leave` | `leave` |
+| An agent waits at a screen autopilot does not recognise | `leave`, `notify_human` | `leave` |
+
+The question is one fixed prompt: the case, the plan and machine, the
+allowed actions and the answer command — nothing else. The brain answers
+with `herdr-peers autopilot answer <question> <action>`, which appends one
+line to the daemon's state directory. The daemon accepts it only when the
+question is one it asked, still open and within its time, the action is in
+that case's list, and the answer came from the brain's own pane and
+terminal. Anything else is recorded as refused and the case keeps its
+default. `notify_human` runs your `--notify` command with a `needs_human`
+event; it never stops anything.
+
+No pass waits for the brain: questions are asked on one pass and answers
+read on later ones. At most twenty questions an hour; an idle brain costs
+nothing, each question costs a turn of its account (coding-agents-kit does
+not report tokens per account yet, so the cap counts questions).
+
+### 10.3 What it never does
+
+The brain cannot widen what the daemon does: its text is never typed,
+keyed, prompted to anyone or run; it cannot appoint a lead, launch an agent,
+merge, release, sign in or change a permission. Only the daemon acts, and
+only through the paths of §3 and §9.
+

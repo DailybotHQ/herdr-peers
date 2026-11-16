@@ -274,6 +274,12 @@ run "$HELPER" autopilot --loop --once --brain --brain-kinds 'claude;x'
 assert_rc "a malformed --brain-kinds is a usage error" 2
 run "$HELPER" autopilot --loop --once --brain --brain-model codex=sonnet --brain-kinds claude
 assert_rc "a model for a kind not in the list is a usage error" 2
+echo 1.2.0 >"$FAKE_AK_DIR/version"
+run "$HELPER" autopilot --loop --once --brain
+assert_rc "--brain refuses a coding-agents-kit older than 1.3.0" 2
+assert_contains "and names the version it needs" "$ERR" "coding-agents-kit 1.3.0 or later"
+rm -f "$FAKE_AK_DIR/version"
+: >"$FAKE_AK_DIR/argv.log"
 run "$HELPER" autopilot --loop --once --brain --brain-model claude=sonnet
 assert_rc "a loop pass with a brain exits 0" 0
 assert_contains "pick runs in ask mode" "$(cat "$FAKE_AK_DIR/env.log")" "AGENTKIT_PERMISSIONS=ask"

@@ -3792,6 +3792,13 @@ def cmd_autopilot(args):
             brain_models_raw.append(raw)
         if not shutil.which('ak'):
             raise Stop(EXIT_USAGE, '--brain needs coding-agents-kit (`ak`) on PATH')
+        rc, out = bounded_run([os.path.realpath(shutil.which('ak')), '--version'], b'', 4096, 10)
+        found = re.search(r'(\d+)\.(\d+)\.(\d+) \(interface (\d+)\)', (out or b'').decode('utf-8', 'replace'))
+        if rc != 0 or not found or tuple(int(x) for x in found.groups()[:3]) < brain_module.AK_MIN \
+                or int(found.group(4)) != brain_module.AK_INTERFACE:
+            raise Stop(EXIT_USAGE, '--brain needs coding-agents-kit %s or later (interface %d): '
+                       '`ak pick --kinds` (pick-v2)' % ('.'.join(map(str, brain_module.AK_MIN)),
+                                                       brain_module.AK_INTERFACE))
         brain_kinds = ','.join(kinds)
         brain_opts = {'kinds': kinds, 'models': models}
     keep = []
