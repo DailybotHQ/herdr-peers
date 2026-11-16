@@ -161,6 +161,14 @@
   ],
   "option": 1
  },
+ "claude__blocked__question_tabs_recommended_es": {
+  "action": "keys",
+  "class": "question",
+  "keys": [
+   "enter"
+  ],
+  "option": 1
+ },
  "claude__blocked__question_single": {
   "action": "keys",
   "class": "question",

@@ -43,9 +43,10 @@ prints the tail of the log and exits non-zero.
 
 The background autopilot does not depend on the pane that started it: close
 that pane, or the whole tab, and it keeps running. It asks Herdr which pane
-it is only at start; after that it skips the starting pane only while that
-pane id still belongs to the same terminal, so a new pane that reuses the id
-is watched like any other.
+it is only at start. It has no pane of its own, so the pane that ran
+`autopilot start` is watched like any other agent pane: an agent that
+started it is answered too. (A foreground autopilot never keys the pane it
+runs in, matched by pane id and terminal.)
 
 Its files, all in the server's state directory (`herdr-peers log --path`
 names the directory), private (`0600`) and never opened through a symlink:

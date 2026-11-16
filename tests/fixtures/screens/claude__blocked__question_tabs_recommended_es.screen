@@ -1,0 +1,19 @@
+  Three notes on the release order, then the question.
+
+  Ran 1 shell command
+────────────────────────────────────────────────────────────────
+←  ☐ Pull request  ☐ Updates  ✔ Submit  →
+
+│ The hardening pull request is yours and every check is green.
+│ Each merge publishes a version. Include it in this round?
+
+❯ 1. Yes, before the next one (Recomendado)
+     Merge it first: two versions in a row, each with a clear
+     content.
+  2. No, I review it myself
+     Leave it open; the next version ships without it.
+  3. Type something.
+────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
