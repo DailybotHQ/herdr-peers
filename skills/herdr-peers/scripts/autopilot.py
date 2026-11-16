@@ -79,6 +79,10 @@ APPOINT_GRANTS = ('lanes', 'lanes:any-kind')
 APPOINT_GRACE = 900        # seconds the evidence must hold, with the plan frozen, before an appointment
 MAX_APPOINTMENTS = 2       # appointments one daemon prompts per plan; then only the human is told
 
+# Reasons that are usually a passing state (the lead has not marked the queue yet,
+# it is finishing another plan, its directory is not listed this pass).
+QUEUE_TRANSIENT = ('started, queue not updated', 'lead busy with another plan', 'lead directory unknown')
+# The repository path is quoted as JSON data: it is never read as words of the prompt.
 QUEUE_TEXT = ("Plan %s is next in the queue of the repository at %s and approved. In that repository, "
               "run the plan tool's execute flow for it (its start gate checks the approval again) and "
               "execute it to its end, respecting its gates.")
@@ -748,6 +752,7 @@ class PlanLoop(object):
         self.resolve = {}           # (machine, plan) -> the blocker the brain allowed its lead to resolve
         self.queued = set()         # (machine, repo, plan) whose lead was prompted to start it
         self.queue_told = {}        # (machine, repo, plan) -> the blocked reason already reported
+        self.queue_since = {}       # (machine, repo, plan) -> (reason, first seen)
         self.fleet_text = None      # the daemon's own map
         self.remote_text = None     # the reduced copy left on other machines
         self.fleet_key = None
@@ -959,43 +964,66 @@ class PlanLoop(object):
     def consider_queue(self, machine, queue, by_pane, now, prompted):
         """Start the next ready item of a repository's queue: one fixed prompt to
         its named lead, once. The queue is the pack's; the daemon only reads it.
-        A queued item that cannot start for a reason the human must fix is
-        reported once per reason."""
+        In a sequential queue nothing after a queued item that cannot start
+        starts. An item that cannot start for a reason the human must fix is
+        reported once per reason; a reason that is usually a passing state is
+        reported only once it has held for the appointment grace."""
         repo = queue.get('repo_root')
+        sequential = not queue.get('parallel')
         for item in queue.get('items') or []:
             key = (machine, repo, item['plan'])
             if item.get('state') != 'queued':
                 self.queued.discard(key)
                 self.queue_told.pop(key, None)
+                self.queue_since.pop(key, None)
                 continue
             reason = item.get('blocked_reason')
-            if reason and not reason.startswith('waiting for') and not reason.startswith('another plan'):
-                if self.queue_told.get(key) != reason:
-                    self.queue_told[key] = reason
-                    self.ap.record('%s:-' % machine, None, Decision('leave', 'queue_blocked', reason),
-                                   'left', plan=item['plan'])
-                    self.io.event({'schema': EVENT_SCHEMA, 'event': 'queue_blocked',
-                                   'plan': item['plan'], 'machine': machine, 'lead': item.get('lead'),
-                                   'repo_root': repo, 'blocker_class': None}, self.ap.dry_run)
+            pane = local_pane(item.get('lead'))
+            if not reason and item.get('ready') and pane is None:
+                reason = 'lead on another machine'  # this daemon can prompt only its own panes
+            if reason:
+                if reason.startswith('waiting for'):
+                    continue  # its `after` plan decides; the queue's order is the pack's
+                if not reason.startswith('another plan'):
+                    self.tell_queue(machine, repo, item, key, reason, now)
+                if sequential:
+                    return  # nothing after a stuck item starts
                 continue
+            self.queue_since.pop(key, None)
             if not item.get('ready'):
+                if sequential:
+                    return
                 continue
             if key in self.queued:
-                if not queue.get('parallel'):
+                if sequential:
                     return  # its start is in flight: one at a time per repository
-                continue
-            pane = local_pane(item.get('lead'))
-            if pane is None:
                 continue
             addr = '%s:%s' % (machine, pane)
             if self.prompt_lead(machine, {'plan': item['plan']}, pane, addr, by_pane, now, prompted,
-                                QUEUE_TEXT % (item['plan'], repo), 'plan_queued_started'):
+                                QUEUE_TEXT % (item['plan'], json.dumps(repo)), 'plan_queued_started'):
                 self.queued.add(key)
                 self.io.event({'schema': EVENT_SCHEMA, 'event': 'plan_queued_started',
                                'plan': item['plan'], 'machine': machine, 'lead': item.get('lead'),
                                'repo_root': repo, 'blocker_class': None}, self.ap.dry_run)
-            if not queue.get('parallel'):
+            if sequential:
                 return  # one at a time per repository
+
+    def tell_queue(self, machine, repo, item, key, reason, now):
+        """Report a queued item that cannot start, once per reason; a passing
+        reason only after it held for the appointment grace."""
+        since = self.queue_since.get(key)
+        if since is None or since[0] != reason:
+            since = self.queue_since[key] = (reason, now)
+        if reason in QUEUE_TRANSIENT and now - since[1] < self.ap.appoint_grace:
+            return
+        if self.queue_told.get(key) == reason:
+            return
+        self.queue_told[key] = reason
+        self.ap.record('%s:-' % machine, None, Decision('leave', 'queue_blocked', reason),
+                       'left', plan=item['plan'])
+        self.io.event({'schema': EVENT_SCHEMA, 'event': 'queue_blocked',
+                       'plan': item['plan'], 'machine': machine, 'lead': item.get('lead'),
+                       'repo_root': repo, 'blocker_class': None}, self.ap.dry_run)
 
     def prompt_lead(self, machine, plan, pane, addr, by_pane, now, prompted, text, cls):
         """One fixed prompt to a plan's lead, under the same guards as the

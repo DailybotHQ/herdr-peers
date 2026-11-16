@@ -4338,7 +4338,8 @@ def cmd_autopilot(args):
                 'pid': os.getpid(), 'since': now_iso(),
                 'mode': 'background' if args.detached else 'foreground',
                 'pane': 'local:%s' % me['pane_id'], 'options': opts}, sort_keys=True) + '\n')
-            sweep_brain_leftovers(store)  # under the lock: what a killed daemon left
+            if not args.dry_run:
+                sweep_brain_leftovers(store)  # under the lock: what a killed daemon left
         except Stop:
             fcntl.flock(fd, fcntl.LOCK_UN)
             os.close(fd)

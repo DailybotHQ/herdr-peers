@@ -275,10 +275,11 @@ validated whole, inside each machine's report.
 
 With `--loop`, when a repository's current plan finishes, the next item
 starts without you: the daemon sends its named lead one fixed prompt,
-"Plan P is next in the queue of the repository at R and approved. In that
+"Plan P is next in the queue of the repository at "R" and approved. In that
 repository, run the plan tool's execute flow for it (its start gate checks
 the approval again) and execute it to its end, respecting its gates.", once,
-under the same guards as every loop prompt. An item is ready when it is
+under the same guards as every loop prompt; the repository's path is quoted
+as JSON data, never read as words of the prompt. An item is ready when it is
 `queued`, the plan it waits for (`after`) is completed, no other plan of that
 repository is running (unless the queue says `"parallel": true`), and it
 names a lead. Its approval must be the last approval-or-amendment event in
@@ -292,11 +293,17 @@ prompted again — also after a daemon restart — and the next one waits for
 it. Queue and plan files are read only when no symlink on the way leaves the
 repository, and a journal is read again only when it changed.
 
-An item that cannot start for a reason only you can fix — not approved, an
-amendment pending, no lead named, its lead working elsewhere, in a
-directory this machine cannot see, or busy with another plan, started
-while the queue still says queued, or `"start": "launch"` (launching an agent for a queue item is not available yet) — is
-reported once per reason (`queue_blocked`, through `--notify`).
+In a queue that is not parallel, nothing after a queued item that cannot
+start starts. An item that cannot start for a reason only you can fix — not
+approved, an amendment pending, no lead named, its lead working elsewhere or
+on another machine (the daemon prompts only panes of the machine that
+reports the queue), or `"start": "launch"` (launching an agent for a queue
+item is not available yet) — is reported once per reason (`queue_blocked`,
+through `--notify`). Reasons that are usually a passing state — the plan
+began but the queue does not say so yet, the lead is busy with another plan,
+its directory was not listed this pass — are reported only once they have
+held for the appointment grace (15 minutes,
+`HERDR_PEERS_AUTOPILOT_APPOINT_GRACE`).
 
 `fleet ui` shows every queue (key `u`): each plan's place, state, whether it
 starts next or why it cannot; a plan's own row shows its place (`queue 2/3`).
@@ -346,7 +353,8 @@ Start it without `--brain` to run without one.
    lease, the workspace and the directory are released before the failure
    is recorded. A daemon killed without its cleanup (SIGKILL, a crash)
    leaves its key file and brain directory behind; the next start removes
-   them, under the one-per-server lock and never through a symlink.
+   them, under the one-per-server lock and never through a symlink (a dry
+   run, which may run beside a live daemon, never removes anything).
 5. If the brain's screen shows a permission mode that skips approvals
    (auto mode, bypass permissions, accept edits — a profile's own default,
    which `ak`'s ask launch does not override), the daemon retires that brain
@@ -658,7 +666,7 @@ Use `--scope` to keep it to some machines.
 | A plan is reported `plan_stalled`, `plan_blocked` or `plan_no_lead` | three prompts without progress, a blocker in its state, or a gone lead with no successor to ask | look at the plan; `--brain` may decide stalls and some blockers; `--appoint` covers a lost lead if you granted it |
 | `start --brain` refuses to start | `ak` is missing or older than 1.3.0 (`--brain` is fail-closed) | install or upgrade coding-agents-kit, or start without `--brain` |
 | The brain is retired at once | its account's profile defaults to a mode that skips approvals (auto, bypass, accept edits), or its agent did not come up within two minutes | change that profile's default, or exclude it with `--brain-kinds`; read `autopilot logs` |
-| A queued plan does not start | it waits for its `after` plan or another plan of its repository; or `queue_blocked` named why: not approved (or edited or amended since), no lead, its lead works elsewhere, in a directory this machine cannot see, or on another plan, it already began, or it is a `launch` item | fix what the reason names; the daemon reads the queue again on the next report |
+| A queued plan does not start | it waits for its `after` plan or another plan of its repository; or `queue_blocked` named why: not approved (or edited or amended since), no lead, its lead works elsewhere, on another machine, in a directory this machine cannot see, or on another plan, it already began, or it is a `launch` item; in a sequential queue the items after it wait too | fix what the reason names; the daemon reads the queue again on the next report |
 | `lead verify` exits 5 | a machine of the plan could not be reached | wait until it answers, or pass `--allow-unreached` to accept the risk (recorded) |
 | `autopilot logs -f` shows nothing | only the background daemon writes `autopilot.out`; an idle daemon writes one pass line every tenth pass | `autopilot status` to see whether it runs, and how |
 | `--notify` never runs | it needs `--loop` and a program that exists; a dry run runs nothing | check `autopilot status` (its options) and the log |

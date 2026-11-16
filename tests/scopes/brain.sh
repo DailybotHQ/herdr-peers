@@ -519,6 +519,11 @@ SD=$(state_dir); mkdir -p "$SD/brain-Ab3_x9Zq" "$SD/brain-notahome-dir" "$WORLD/
 printf k >"$SD/brain-key-00112233aabbccdd"; printf x >"$WORLD/outside/keep"
 ln -s "$WORLD/outside" "$SD/brain-Lnk_0000"; printf '{}\n' >"$SD/brain-answers.ndjson"
 ln -s "$WORLD/outside/keep" "$SD/brain-key-ffffffffffffffff"
+run sh -c "'$HELPER' autopilot start --dry-run --interval 15"
+assert_rc "a continuous dry run starts" 0
+for _ in $(seq 1 20); do [ -s "$SD/autopilot.json" ] && break; sleep 0.25; done; sleep 1
+"$HELPER" autopilot stop >/dev/null 2>&1
+if [ -e "$SD/brain-key-00112233aabbccdd" ] && [ -d "$SD/brain-Ab3_x9Zq" ]; then t_ok "a dry run never sweeps (it may run beside a live daemon's brain)"; else t_fail "a dry run never sweeps (it may run beside a live daemon's brain)"; fi
 run "$HELPER" autopilot --once
 assert_rc "a pass after a killed daemon runs" 0
 if [ -e "$SD/brain-key-00112233aabbccdd" ] || [ -e "$SD/brain-Ab3_x9Zq" ]; then t_fail "a stale key file and brain home are swept"; else t_ok "a stale key file and brain home are swept"; fi
