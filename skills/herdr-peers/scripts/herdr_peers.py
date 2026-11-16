@@ -2492,6 +2492,21 @@ def lead_show(args):
     return EXIT_OK
 
 
+def verify_rank(mine, theirs, prev):
+    """For two leads at one epoch, from this pane's side: 'first' when this
+    pane's lead comes first in the one total order over the previous record,
+    'second' when the other does, 'unranked' when this pane's lead cannot be
+    placed (no previous record, or not in it): lead verify refuses all but
+    'first'."""
+    mine_key = order_key(mine, prev) if prev else None
+    their_key = order_key(theirs, prev) if prev else None
+    if mine_key is None:
+        return 'unranked'
+    if their_key is not None and their_key < mine_key:
+        return 'second'
+    return 'first'
+
+
 def lead_verify(args):
     """Before a merge, tag or release: is this pane still the lead of the
     plan, here and on every other machine of the plan that answers? Local
@@ -2535,9 +2550,7 @@ def lead_verify(args):
             elif p['epoch'] == rec['epoch'] and theirs and theirs not in mine_:
                 # Two leads at one epoch (a partition): the one total order of
                 # the fence decides; unordered or losing is a refusal.
-                mine_key = order_key(rec['lead'], prev) if prev else None
-                their_key = order_key(theirs, prev) if prev else None
-                if mine_key is None or (their_key is not None and their_key < mine_key):
+                if verify_rank(rec['lead'], theirs, prev) != 'first':
                     higher.append('%s (epoch %d too, lead %s, which comes first)'
                                   % (machine, p['epoch'], theirs))
                 else:
@@ -2628,13 +2641,12 @@ def widens_grant(prev, rec):
 
 
 def order_key(addr, prev):
-    """The one total order of the leads that may hold epoch prev+1: the lead
-    of `prev` (a handover), then its successors in order (a takeover), then
-    its lanes in order (an appointment). None for anyone else."""
+    """The one total order of the panes that may name themselves lead at
+    epoch prev+1: its successors in order (a takeover), then its lanes in
+    order (an appointment). The previous lead is not in it — a lead never
+    moves itself to the next epoch — and neither is anyone else (None)."""
     if addr is None:
         return None
-    if addr == prev.get('lead'):
-        return (0, 0)
     if addr in prev.get('succession', []):
         return (1, prev['succession'].index(addr))
     if addr in prev.get('lanes', []):
@@ -2651,6 +2663,11 @@ def transition(prev, rec, sender, gone_fn):
         return ('rejected', 'only epoch %d follows epoch %d' % (prev['epoch'] + 1, prev['epoch']),
                 None, None)
     if sender == prev['lead']:
+        if rec['lead'] == sender:
+            # A lead never hands over to itself: that would let a forged
+            # notice in the old lead's name outrank anyone at no cost.
+            return ('rejected', 'not fenced: the lead %s may hand over to another pane or release, '
+                    'never move itself to epoch %d' % (sender, prev['epoch'] + 1), None, None)
         if widens_grant(prev, rec):
             return 'rejected', 'a handover cannot widen the appointment grant', None, None
         via = 'release' if rec['lead'] is None else 'handover'
@@ -2688,7 +2705,7 @@ def same_epoch_fence(data, rec, sender, gone_fn):
             'appoint': prior.get('appoint')}
     mine, theirs = order_key(sender, prev), order_key(cur['lead'], prev)
     if mine is None or (theirs is not None and mine >= theirs):
-        return ('rejected', 'tie at epoch %d: %s does not precede %s (lead, then successors, '
+        return ('rejected', 'tie at epoch %d: %s does not precede %s (successors, '
                 'then lanes, in order)' % (cur['epoch'], sender, cur['lead']), None, None)
     status, reason, via, _ = transition(prev, rec, sender, gone_fn)
     if status != 'adopted':

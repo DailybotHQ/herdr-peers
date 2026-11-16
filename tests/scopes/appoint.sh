@@ -153,6 +153,16 @@ lead_notice2 "$LANE" "$(nid)" 2 "$LANE" "$GONE_SUCC" "" lanes appointment >"$WOR
 run on_box "$HELPER" check --json "$WORK/part.txt"
 assert_eq "a lead on an unreachable machine does not count as gone for an appointment" "rejected" "$(jget "$OUT" lead_status)"
 assert_contains "and says so" "$(jget "$OUT" lead_reason)" "cannot be reached (not proof)"
+# A forged self-move in the old lead's name never outranks an appointee (re-review).
+box_with lanes "$GONE_LEAD" "$GONE_SUCC" "$GONE_LANE,$LANE"
+on_box "$HELPER" check --json "$WORK/ap.txt" >/dev/null 2>&1
+lead_notice2 "$GONE_LEAD" "$(nid)" 2 "$GONE_LEAD" "$GONE_SUCC" "$GONE_LANE,$LANE" lanes null >"$WORK/self.txt"
+run on_box "$HELPER" check --json "$WORK/self.txt"
+assert_eq "a forged notice of the old lead naming itself at the appointment epoch is refused" "rejected" "$(jget "$OUT" lead_status)"
+assert_eq "the appointee stays lead" "$LANE" "$(jget "$(on_box "$HELPER" lead show --plan "$P" --json)" lead)"
+box_with lanes "$GONE_LEAD" "$GONE_SUCC" "$LANE"
+run on_box "$HELPER" check --json "$WORK/self.txt"
+assert_eq "a lead never moves itself to the next epoch" "rejected" "$(jget "$OUT" lead_status)"
 
 # --- the wire: protocol 1 stays byte-compatible; protocol 2 only for granted records ----------
 new_world appoint_wire
@@ -231,6 +241,15 @@ run "$HELPER" lead takeover --plan "$P" --as-lane
 assert_rc "past two appointments only the human restarts the plan (exit 4)" 4
 assert_contains "and says so" "$ERR" "2 appointments"
 
+# The appointee itself refuses when a member's machine cannot be reached (re-review).
+new_world appoint_unreached
+"$HELPER" lead claim --plan "$P" --lanes local:w1:p2 --allow-appointment >/dev/null 2>&1
+"$HELPER" lead handover --plan "$P" dd44:w1:p1 >/dev/null 2>&1 || true
+assert_eq "setup: the lead is on a machine that cannot be reached" "dd44:w1:p1" "$(jget "$("$HELPER" lead show --plan "$P" --json)" lead)"
+run as_pane w1:p2 "$HELPER" lead takeover --plan "$P" --as-lane
+assert_rc "the lane refuses to appoint itself over a lead it cannot reach (exit 4)" 4
+assert_contains "and says it is not proof" "$ERR" "cannot be reached (not proof)"
+
 # --- lead verify: local state and read-only reports -------------------------------------------
 mkrepo2() { mkdir -p "$1" && git -C "$1" init -q && git -C "$1" -c user.email=t@example.invalid \
   -c user.name=t commit -q --allow-empty -m init; }
@@ -285,10 +304,14 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, sys.argv[1])
 import herdr_peers as h
 prev = {'lead': 'L', 'succession': ['S1', 'S2'], 'lanes': ['A', 'B']}
-keys = [h.order_key(a, prev) for a in ('L', 'S1', 'S2', 'A', 'B')]
-print(keys == sorted(keys), h.order_key('X', prev), h.widens_grant({'appoint': 'lanes'}, {'appoint': 'lanes:any-kind'}),
-      h.widens_grant({'appoint': 'lanes'}, {'appoint': None}))
+keys = [h.order_key(a, prev) for a in ('S1', 'S2', 'A', 'B')]
+print(keys == sorted(keys), h.order_key('L', prev), h.order_key('X', prev),
+      h.widens_grant({'appoint': 'lanes'}, {'appoint': 'lanes:any-kind'}),
+      h.widens_grant({'appoint': 'lanes'}, {'appoint': None}),
+      h.verify_rank('S1', 'A', prev), h.verify_rank('A', 'S2', prev), h.verify_rank('X', 'A', prev),
+      h.verify_rank('S1', 'A', None))
 PY
 )
-assert_eq "lead, then successors, then lanes, in list order; strangers unordered; only removal of a grant is not widening" "True None True False" "$out"
+assert_eq "successors then lanes in list order; the old lead and strangers unordered; grant removal is not widening; verify wins, loses, cannot rank" \
+  "True None None True False first second unranked unranked" "$out"
 
