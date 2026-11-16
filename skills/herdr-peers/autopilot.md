@@ -449,7 +449,9 @@ Start it without `--brain` to run without one.
    screen and never on a command line. The answers file
    starts empty at each launch. If anything fails after the lease, the
    lease, the workspace and the directory are released before the failure
-   is recorded.
+   is recorded. A daemon killed without its cleanup (SIGKILL, a crash)
+   leaves its key file and brain directory behind; the next start removes
+   them, under the one-per-server lock and never through a symlink.
 5. If the brain's screen shows a permission mode that skips approvals
    (auto mode, bypass permissions, accept edits — a profile's own default,
    which `ak`'s ask launch does not override), the daemon retires that brain

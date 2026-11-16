@@ -513,6 +513,17 @@ for case in auto lease; do
   if [ -s "$FAKE_HERDR_DIR/local/runs.log" ]; then t_fail "a refused launch ($case) types nothing"; else t_ok "a refused launch ($case) types nothing"; fi
   assert_contains "and is recorded" "$("$HELPER" log --json 2>/dev/null)" "brain_launch_failed"
 done
+# what a killed daemon left is swept at the next start (under the lock), and nothing else
+new_world brain_sweep
+SD=$(state_dir); mkdir -p "$SD/brain-Ab3_x9Zq" "$SD/brain-notahome-dir" "$WORLD/outside"
+printf k >"$SD/brain-key-00112233aabbccdd"; printf x >"$WORLD/outside/keep"
+ln -s "$WORLD/outside" "$SD/brain-Lnk_0000"; printf '{}\n' >"$SD/brain-answers.ndjson"
+run "$HELPER" autopilot --once
+assert_rc "a pass after a killed daemon runs" 0
+if [ -e "$SD/brain-key-00112233aabbccdd" ] || [ -e "$SD/brain-Ab3_x9Zq" ]; then t_fail "a stale key file and brain home are swept"; else t_ok "a stale key file and brain home are swept"; fi
+if [ -L "$SD/brain-Lnk_0000" ] && [ -e "$WORLD/outside/keep" ] && [ -d "$SD/brain-notahome-dir" ] && [ -e "$SD/brain-answers.ndjson" ]; then
+  t_ok "a symlink, its target, other names and the answers file are kept"
+else t_fail "a symlink, its target, other names and the answers file are kept"; fi
 # the answer verb
 new_world brain_answer
 run "$HELPER" autopilot answer q-0123456789ab nudge_once_more
