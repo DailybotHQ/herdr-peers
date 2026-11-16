@@ -503,6 +503,40 @@ Nothing is ever written to git or to another machine. **Residual risk:**
 during a partition a returning lead and the appointee may both work until it
 heals; `lead verify` cannot see a machine it cannot reach.
 
+## 7b. Revive (`--revive`)
+
+With `--loop --revive` — your starting it so is the grant — the daemon carries
+on a plan **on its own machine** that has lost its lead and whom nobody in its
+record can take over, by launching **one** fresh agent:
+
+- **When.** The lead is gone (its pane vanished, or no agent) — or at a usage
+  limit whose own banner says it resets more than 30 minutes away (read by the
+  daemon and again by the helper; weak evidence, recorded) — and every
+  successor and lane is gone or at its limit, after the successor prompt and the
+  appointment (§7) found nobody. A member on another machine, or a plan with no
+  repository here, is left to today's notice (`plan_no_lead`).
+- **How.** An account with quota (`ak pick`, ask mode, the old lead's kind
+  first, else Claude), leased for six hours with `--purpose revive`; a
+  workspace of its own whose shell starts in the plan's checkout. Once the agent
+  is up the daemon writes a one-time ticket and sends one fixed prompt: run
+  `herdr-peers lead takeover --plan P --reason revive`, then `lead verify`, then
+  resume the plan from its state. The helper checks the ticket, the running
+  `--revive` daemon and its own two probes (protocol.md §12, *Revive*).
+- **A stalled plan whose lead is alive** is never taken from it: the fresh agent
+  is launched and the stalled lead is asked once to `lead handover` to it; when
+  it does, the new lead is told to resume.
+- **Caps.** One revive per plan per 6 hours, two per plan in all (then only you
+  are told), two an hour across the fleet; an agent that is not up in 3 minutes,
+  a takeover not done in 10, a handover not done in 15 is given up: its lease and
+  its workspace are released. The old lead's pane is never closed or keyed.
+- **Recorded.** `plan_revive_launched`, `plan_revive_briefed`,
+  `plan_handover_asked`, `plan_revived` and `revive_failed`, each with `why=`;
+  one `plan_revived` event reaches `--notify`; the map marks the revived lead
+  and `fleet ui` shows `↻ revived`.
+
+Login and consent screens stay yours: a revived agent that meets one is left
+there and you are told, like any pane.
+
 ## 8. Telling you (`--notify`)
 
 

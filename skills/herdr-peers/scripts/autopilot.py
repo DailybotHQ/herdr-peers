@@ -83,6 +83,31 @@ APPOINT_TEXT = (
     'they are really gone. If it accepts, continue executing the plan to its end, respecting '
     'its gates, and run `herdr-peers lead verify --plan %s` before any merge, tag or release. '
     'If it refuses, do nothing more.')
+REVIVE_TEXT = (
+    '[autopilot] Plan %s lost its lead (%s) and nobody in its succession or lanes can take over. '
+    'The developer started the autopilot with --revive, which allows one fresh agent to carry it '
+    'on: you. Run: herdr-peers lead takeover --plan %s --reason revive — the helper checks the '
+    'daemon\'s one-time grant and probes the old lead and every member twice. If it accepts, run '
+    '`herdr-peers lead verify --plan %s`, then resume the plan from its state (the plan tool\'s '
+    'resume flow) and execute it to its end, respecting its gates; run `lead verify` again before '
+    'any merge, tag or release. If it refuses, do nothing more.')
+HANDOVER_TEXT = (
+    '[autopilot] Plan %s has not advanced after %d prompts. The developer started the autopilot '
+    'with --revive: a fresh agent is ready in %s to carry it on. Run: herdr-peers lead handover '
+    '--plan %s --to %s — then stop working on this plan.')
+HANDED_TEXT = (
+    '[autopilot] You now lead plan %s: its stalled lead handed it to you. Run `herdr-peers lead '
+    'verify --plan %s`, then resume the plan from its state (the plan tool\'s resume flow) and '
+    'execute it to its end, respecting its gates; run `lead verify` again before any merge, tag '
+    'or release.')
+REVIVE_MIN_RESET = 1800    # a usage limit counts as gone for a revive only when its reset is further away
+REVIVE_EVERY = 6 * 3600    # at most one revive per plan in this window
+MAX_REVIVES = 2            # revives one daemon makes per plan; then only the human is told
+REVIVES_PER_HOUR = 2       # revives fleet-wide in an hour
+REVIVE_START = 180         # seconds a revived agent has to come up idle
+REVIVE_TICKET_TTL = 600    # seconds the one-time grant ticket lives
+REVIVE_HANDOVER = 900      # seconds a stalled lead has to hand over
+REVIVE_KINDS = ('claude',) # the kinds a revive picks after the old lead's own kind
 APPOINT_GRANTS = ('lanes', 'lanes:any-kind')
 APPOINT_GRACE = 900        # seconds the evidence must hold, with the plan frozen, before an appointment
 MAX_APPOINTMENTS = 2       # appointments one daemon prompts per plan; then only the human is told
@@ -373,6 +398,42 @@ def no_esc(kind):
     return kind == 'codex'
 
 
+RESET_IN = re.compile(
+    r'(?i)\b(?:try again|resets?|available again)\s+in\s+'
+    r'(?:(?P<d>\d{1,3})\s*(?:d|days?)\b[\s,]*)?(?:(?P<h>\d{1,3})\s*(?:h|hrs?|hours?)\b[\s,]*)?'
+    r'(?:(?P<m>\d{1,3})\s*(?:m|mins?|minutes?)\b)?')
+RESET_AT = re.compile(
+    r'(?i)\b(?:resets?|try again)(?:\s+at)?\s+(?P<h>\d{1,2})(?::(?P<m>\d{2}))?\s*(?P<ap>am|pm)?\b')
+
+
+def limit_reset_seconds(text, now, localtime=time.localtime):
+    """Seconds until the usage limit a screen shows resets, read from the CLI's own
+    banner ("resets 3pm", "resets at 15:30", "try again in 2 hours 13 minutes"), or
+    None when no reset can be read. Pure; local clock times roll to the next day."""
+    lines = [l for l in tail_lines(text or '')[-12:] if first_match(LIMIT, l) or RESET_IN.search(l)
+             or RESET_AT.search(l)]
+    if not lines or not first_match(LIMIT, '\n'.join(tail_lines(text or '')[-12:])):
+        return None
+    for line in lines:
+        found = RESET_IN.search(line)
+        if found and any(found.group(k) for k in ('d', 'h', 'm')):
+            return (int(found.group('d') or 0) * 86400 + int(found.group('h') or 0) * 3600
+                    + int(found.group('m') or 0) * 60)
+        found = RESET_AT.search(line)
+        if found:
+            hour, minute, ap = int(found.group('h')), int(found.group('m') or 0), (found.group('ap') or '').lower()
+            if ap and not 1 <= hour <= 12 or not ap and hour > 23 or minute > 59:
+                return None
+            if ap:
+                hour = hour % 12 + (12 if ap == 'pm' else 0)
+            t = localtime(now)
+            target = time.mktime((t.tm_year, t.tm_mon, t.tm_mday, hour, minute, 0, 0, 0, -1))
+            while target <= now:
+                target += 86400
+            return int(target - now)
+    return None
+
+
 def deny_decision(text, state, cls, why):
     """Keys that refuse what a pane waits for: its refusal row when the menu has
     one, else Esc. Never a Yes, a row that widens permissions, auto mode, or a row
@@ -559,7 +620,7 @@ class Autopilot(object):
 
     def __init__(self, io, dry_run=False, nudge=True, catch_up=False, exclude=(),
                  clock=time.time, sleep=time.sleep, confirm=CONFIRM_DELAY, loop=False,
-                 grace=LEAD_GRACE, appoint=False, appoint_grace=APPOINT_GRACE, brain=None):
+                 grace=LEAD_GRACE, appoint=False, appoint_grace=APPOINT_GRACE, brain=None, revive=False):
         self.io, self.dry_run, self.nudge, self.catch_up = io, dry_run, nudge, catch_up
         self.exclude = set(exclude)
         self.clock, self.sleep, self.confirm = clock, sleep, confirm
@@ -570,6 +631,7 @@ class Autopilot(object):
         self.passes = 0
         self.grace = grace
         self.appoint, self.appoint_grace = appoint, appoint_grace  # human flag --appoint
+        self.revive = bool(revive)   # human flag --revive: the standing grant for revives
         self.plans = PlanLoop(self) if loop else None
         self.quiet = set()     # panes never nudged in prose (the brain)
         self.brain = BrainKeeper(self, brain) if brain and self.plans else None
@@ -712,8 +774,12 @@ class Autopilot(object):
             if choice.action == 'leave':
                 memo.left = digest
                 self.record(addr, kind, choice, 'left')
-                if choice.cls == 'unknown' and self.brain is not None:
-                    self.brain.ask('screen_unknown', machine, None, {'addr': addr})
+                if choice.cls == 'unknown':
+                    save = getattr(self.io, 'save_unknown', None)
+                    if save is not None and not self.dry_run:
+                        save(kind, text)   # a sanitized copy for new fixtures; no key is sent
+                    if self.brain is not None:
+                        self.brain.ask('screen_unknown', machine, None, {'addr': addr})
             elif state in ('idle', 'done'):
                 if memo.denied and self.nudge and not has_draft(text, state) and not brain:
                     memo.denied = False
@@ -806,6 +872,9 @@ class PlanMemo(object):
         self.appointee = None  # (address, epoch) of the lane last asked to take the lead
         self.appointments = 0
         self.appointed_epoch = None
+        self.revive = None     # the revive under way: {pane, workspace, kind, profile, mode, why, ...}
+        self.revive_times = [] # when this daemon launched revives for this plan
+        self.limit_seen = None # (when, seconds to reset) of the lead's usage limit, read for a revive
 
 
 class PlanLoop(object):
@@ -822,6 +891,7 @@ class PlanLoop(object):
         self.ap, self.io = ap, ap.io
         self.machines = {}     # machine -> {'at', 'state', 'report'}
         self.memos = {}        # (machine, plan id) -> PlanMemo
+        self.revive_log = []   # when revives were launched, fleet-wide (an hour is kept)
         self.resolve = {}           # (machine, plan) -> the blocker the brain allowed its lead to resolve
         self.queued = set()         # (machine, repo, plan) whose lead was prompted to start it
         self.queue_told = {}        # (machine, repo, plan) -> the blocked reason already reported
@@ -939,6 +1009,8 @@ class PlanLoop(object):
             memo.progress, memo.prompts = plan['progress'], 0
             if memo.situation == 'plan_stalled':
                 memo.situation = None
+        if memo.revive is not None:
+            self.revive_tick(memo, machine, plan, by_pane, now, prompted)
         cls = plan['class']
         if cls == 'unreadable':
             return
@@ -990,6 +1062,13 @@ class PlanLoop(object):
             # Only for an appointment, and only once the screen pass gave up on
             # its limit (the developer's rule); the 15-minute grace follows.
             gone = 'usage_limit'
+        elif self.ap.revive and machine == 'local' and pmemo is not None and pmemo.limit_at:
+            # For a revive: the lead's own banner says its limit resets more than
+            # REVIVE_MIN_RESET away (read at most every five minutes).
+            if memo.limit_seen is None or now - memo.limit_seen[0] >= 300:
+                memo.limit_seen = (now, limit_reset_seconds(self.io.read(machine, pane) or '', now))
+            if memo.limit_seen[1] is not None and memo.limit_seen[1] > REVIVE_MIN_RESET:
+                gone = 'usage_limit'
         if gone:
             self.succeed(memo, machine, plan, by_pane, addr, gone, prompted)
             return
@@ -1007,7 +1086,10 @@ class PlanLoop(object):
         if row.get('state') not in ('idle', 'done'):
             memo.skip_seq = None
             return
-        if memo.situation == 'plan_stalled' or not self.ap.nudge or addr in prompted:
+        if memo.situation == 'plan_stalled':
+            self.revive_stalled(memo, machine, plan, by_pane, now)
+            return
+        if not self.ap.nudge or addr in prompted:
             return
         if pmemo.since is None or now - pmemo.since < self.ap.grace:
             return  # idle is not stopped: its own watcher may still wake it
@@ -1026,6 +1108,7 @@ class PlanLoop(object):
             return  # its screen ruled a prompt out and has not moved since
         if memo.prompts >= MAX_PLAN_PROMPTS + memo.extra:
             self.enter(memo, machine, plan, 'plan_stalled', addr, 'gave_up')
+            self.revive_stalled(memo, machine, plan, by_pane, now)
             return
         text = self.io.read(machine, pane)
         if text is None:
@@ -1160,6 +1243,8 @@ class PlanLoop(object):
         """The lead is gone: ask the first reachable successor to take over,
         once per epoch. The daemon writes no lead record; the helper's own
         takeover rules decide."""
+        if memo.revive is not None:
+            return  # a revive is under way: its own tick decides
         if memo.takeover or not self.ap.nudge:
             return
         for candidate in plan['succession']:
@@ -1188,7 +1273,124 @@ class PlanLoop(object):
             return
         if self.appoint(memo, machine, plan, by_pane, prompted):
             return
+        if self.revive_orphan(memo, machine, plan, by_pane, reason):
+            return
         self.enter(memo, machine, plan, 'plan_no_lead', addr, 'left')
+
+    # -- revive (--revive): a fresh agent carries an orphan or stalled plan ----------
+    def revive_allowed(self, memo, machine, plan, now):
+        """True, False, or 'wait' (only the fleet-wide hourly cap is in the way)."""
+        if not self.ap.revive or not self.ap.nudge or memo.revive is not None:
+            return False
+        if machine != 'local' or not plan.get('repo_root'):
+            return False   # D1: only plans on the daemon's own machine (2.3: remote)
+        if len(memo.revive_times) >= MAX_REVIVES:
+            return False
+        if memo.revive_times and now - memo.revive_times[-1] < REVIVE_EVERY:
+            return False
+        self.revive_log = [t for t in self.revive_log if now - t < 3600]
+        if len(self.revive_log) >= REVIVES_PER_HOUR:
+            return 'wait'
+        return True
+
+    def revive_orphan(self, memo, machine, plan, by_pane, reason):
+        """Lead gone, no successor asked, no appointment to make: when every member is
+        gone or at its limit, launch one fresh agent to take the plan. True while a
+        revive is launched or waits for the hourly cap."""
+        now = self.ap.clock()
+        allowed = self.revive_allowed(memo, machine, plan, now)
+        if allowed is not True:
+            return allowed == 'wait'
+        for member in list(plan['succession']) + list(plan['lanes']):
+            pane = local_pane(member)
+            if pane is None:
+                return False   # a member on another machine: not this daemon's to bypass
+            pmemo = self.ap.panes.get('%s:%s' % (machine, pane))
+            if pane in by_pane and not (pmemo and pmemo.limit_at):
+                return False   # a member is here and free of a limit: the other paths decide
+        return self.revive_launch(memo, machine, plan, 'takeover', reason, now)
+
+    def revive_stalled(self, memo, machine, plan, by_pane, now):
+        """A stalled plan whose lead is alive: launch a fresh agent and ask the lead,
+        once, to hand the plan to it (D2). Never a takeover from a live lead."""
+        if self.revive_allowed(memo, machine, plan, now) is not True:
+            return
+        pane = local_pane(plan['lead'])
+        if pane is None or pane not in by_pane:
+            return
+        self.revive_launch(memo, machine, plan, 'handover', 'stalled', now)
+
+    def revive_launch(self, memo, machine, plan, mode, why, now):
+        kinds = [memo.lead_kind] if memo.lead_kind else []
+        kinds += [k for k in REVIVE_KINDS if k not in kinds]
+        addr = '%s:-' % machine
+        if self.ap.dry_run:
+            self.ap.record(addr, None, Decision('leave', 'plan_revive', why), 'left', plan=plan['plan'])
+            return True
+        try:
+            info = self.io.revive_launch(plan['plan'], plan['repo_root'], kinds)
+        except Exception:  # a refusal or a tool failure: recorded; the notice follows
+            self.ap.record(addr, None, Decision('leave', 'revive_failed', 'launch'), 'left', plan=plan['plan'])
+            memo.revive_times.append(now)
+            return False
+        memo.revive = dict(info, mode=mode, why=why, epoch=plan['epoch'], lead=plan['lead'],
+                           state='starting', at=now)
+        memo.revive_times.append(now)
+        self.revive_log.append(now)
+        self.ap.record('local:%s' % info['pane'], info.get('kind'),
+                       Decision('prompt', 'plan_revive_launched', why), 'nudged', plan=plan['plan'])
+        return True
+
+    def revive_tick(self, memo, machine, plan, by_pane, now, prompted):
+        """Drive a revive: brief the new agent once it is up (with the one-time
+        ticket), or ask the stalled lead to hand over; done when the new pane leads
+        at a higher epoch; given up, releasing what it launched, past its deadline.
+        The old lead's pane is never touched."""
+        r = memo.revive
+        pane, new_addr = r['pane'], 'local:%s' % r['pane']
+        if local_pane(plan.get('lead')) == pane and plan['epoch'] > r['epoch']:
+            prompted.add('%s:%s' % (machine, pane))   # told once this pass: no loop prompt on top
+            if r['mode'] == 'handover' and not self.ap.dry_run:
+                self.io.prompt(machine, pane, HANDED_TEXT % (plan['plan'], plan['plan']))
+            memo.revive, memo.situation = None, None
+            self.ap.record(new_addr, r.get('kind'), Decision('leave', 'plan_revived', r['why']), 'left',
+                           plan=plan['plan'])
+            self.io.event({'schema': EVENT_SCHEMA, 'event': 'plan_revived', 'plan': plan['plan'],
+                           'machine': machine, 'lead': plan['lead'], 'repo_root': plan['repo_root'],
+                           'blocker_class': None}, self.ap.dry_run)
+            return
+        row = by_pane.get(pane)
+        if r['state'] == 'starting':
+            if row is not None and row.get('state') in ('idle', 'done'):
+                if r['mode'] == 'takeover':
+                    self.io.revive_ticket(plan['plan'], pane, r['epoch'], REVIVE_TICKET_TTL)
+                    self.io.prompt(machine, pane, REVIVE_TEXT % (plan['plan'], r['why'], plan['plan'],
+                                                                 plan['plan']))
+                    self.ap.record(new_addr, row.get('agent'), Decision('prompt', 'plan_revive_briefed',
+                                                                        r['why']), 'nudged', plan=plan['plan'])
+                    r['state'] = 'briefed'
+                else:
+                    old = local_pane(r['lead'])
+                    self.io.prompt(machine, old, HANDOVER_TEXT % (plan['plan'], MAX_PLAN_PROMPTS, new_addr,
+                                                                  plan['plan'], new_addr))
+                    self.ap.record('%s:%s' % (machine, old), None, Decision(
+                        'prompt', 'plan_handover_asked', 'stalled'), 'nudged', plan=plan['plan'])
+                    r['state'] = 'asked'
+                r['at'] = now
+            elif now - r['at'] > REVIVE_START:
+                self.revive_abort(memo, machine, plan, 'start_timeout')
+        elif r['state'] == 'briefed' and now - r['at'] > REVIVE_TICKET_TTL:
+            self.revive_abort(memo, machine, plan, 'takeover_timeout')
+        elif r['state'] == 'asked' and now - r['at'] > REVIVE_HANDOVER:
+            self.revive_abort(memo, machine, plan, 'handover_timeout')
+
+    def revive_abort(self, memo, machine, plan, why):
+        r, memo.revive = memo.revive, None
+        self.io.revive_release(r.get('kind'), r.get('profile'), r.get('workspace'))
+        self.ap.record('local:%s' % r['pane'], r.get('kind'), Decision('leave', 'revive_failed', why), 'left',
+                       plan=plan['plan'])
+        if r['mode'] == 'takeover':
+            self.enter(memo, machine, plan, 'plan_no_lead', '%s:-' % machine, 'left')
 
     def appoint(self, memo, machine, plan, by_pane, prompted):
         """Lead and every successor gone, the plan granted and `--appoint` on:
@@ -1316,6 +1518,7 @@ class PlanLoop(object):
                               'progress': plan.get('progress'), 'updated_at': plan.get('updated_at'),
                               'state_updated_at': plan.get('state_updated_at'),
                               'unreadable_reason': plan.get('unreadable_reason'),
+                              'revived': bool(plan.get('revived')),
                               'tasks_done': plan.get('tasks_done'),
                               'tasks_total': plan.get('tasks_total'),
                               'current_task': plan.get('current_task'),
@@ -1360,7 +1563,7 @@ class PlanLoop(object):
 
 MAP_MAX_BYTES = 2 * 1024 * 1024 - 4096   # under the store's 2 MB cap, with room to spare
 REMOTE_PLAN_KEYS = ('plan', 'class', 'blocker_class', 'progress', 'lead', 'lanes', 'succession',
-                    'epoch', 'updated_at', 'state_updated_at', 'unreadable_reason', 'repo_root', 'situation',
+                    'epoch', 'updated_at', 'state_updated_at', 'unreadable_reason', 'revived', 'repo_root', 'situation',
                     'tasks_done', 'tasks_total', 'current_task')
 
 

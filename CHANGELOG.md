@@ -9,6 +9,32 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Added
+
+- **Revive (`autopilot --loop --revive`).** Your starting the daemon with it is
+  the grant. A plan on this machine whose lead is gone — or at a usage limit
+  whose own banner resets more than 30 minutes away (weak evidence, recorded) —
+  and whom nobody in its succession or lanes can take over gets **one** fresh
+  agent: an account with quota (`ak pick`, ask mode), leased for revive, in a
+  workspace that starts in the plan's checkout. Once it is up the daemon writes a
+  one-time ticket (`0600`, exclusive, plan + pane + stored epoch, 10 minutes)
+  and briefs it to run `lead takeover --plan P --reason revive`, which the helper
+  accepts only with that ticket, a running autopilot started with `--revive`
+  whose pid issued it, and its own two probes finding every member gone; then
+  `lead verify` and resume. A stalled plan's live lead is asked once to `lead
+  handover` to the fresh agent, never taken over. Caps: one per plan per 6 h,
+  two per plan, two an hour fleet-wide; an agent not up in 3 minutes, a takeover
+  not done in 10, a handover not done in 15 is released. The old pane is never
+  touched. Recorded with `why=`; one `plan_revived` plan-event-v1 reaches
+  `--notify`; the map marks a revived lead (`revived`, optional) and `fleet ui`
+  shows `↻ revived`. Protocol stays 2: the `via: revive` record is adopted only
+  on the daemon's own machine (fence rule F11), and a 2.0/2.1 receiver refuses
+  it (fail closed) — see MIGRATING.
+- **Unknown screens are kept for new fixtures:** a sanitized copy (control and
+  format characters removed, secret-shaped lines redacted, capped, `0600`) of a
+  screen left as `unknown`, under the state dir; `autopilot status` shows how
+  many.
+
 ## [2.1.0] - 2026-11-16
 
 fleet ui's views (one facet model in every grouping), nothing left blocked — not
