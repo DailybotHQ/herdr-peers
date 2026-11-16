@@ -345,6 +345,9 @@ def plan_detail(state, plan_dir):
             'summary': summary, 'summary_at': written}
 
 
+UNREADABLE_REASONS = ('missing', 'parse', 'shape')   # no state.json; it does not parse; an unknown shape
+
+
 def classify(state):
     """(class, blocker class, progress digest) of a parsed state.json.
 
@@ -579,9 +582,11 @@ def describe_plan(root, server, rec, panes, git, now=None, logs=None):
             lead_in_repo = lead_top == found_at or lead_top == rec.get('repo_root')
     cls, block_class, progress, updated = 'unreadable', None, None, None
     done = total = current = detail = None
+    why = 'missing'  # why a plan is unreadable: no state.json, it does not parse, or an unknown shape
     if path:
         state = load_json(path, MAX_STATE_BYTES)
         cls, block_class, progress = classify(state)
+        why = 'parse' if state is None else 'shape'
         if cls != 'unreadable':
             done, total, current = task_progress(state)
         if cls in ('open', 'blocked'):  # a finished plan needs no detail on the map
@@ -594,6 +599,7 @@ def describe_plan(root, server, rec, panes, git, now=None, logs=None):
         'succession': rec['succession'], 'lanes': rec['lanes'], 'repo_root': rec.get('repo_root'),
         'plan_dir': os.path.dirname(path) if path else None, 'class': cls,
         'blocker_class': block_class, 'progress': progress, 'state_updated_at': updated,
+        'unreadable_reason': why if cls == 'unreadable' else None,
         'updated_at': rec['updated_at'], 'lead_in_repo': lead_in_repo,
         'tasks_done': done, 'tasks_total': total, 'current_task': current, 'detail': detail,
         'appoint': rec.get('appoint'), 'appointed': bool(rec.get('appointed')),
@@ -707,6 +713,8 @@ def valid_fleet(doc):
             if not all(_str(p.get(k)) for k in ('class', 'lead', 'repo_root', 'blocker_class',
                                                  'situation', 'state_updated_at')):
                 return False
+            if p.get('unreadable_reason') not in UNREADABLE_REASONS + (None,):
+                return False
             for k in ('tasks_done', 'tasks_total', 'epoch'):
                 v = p.get(k)
                 if v is not None and (not isinstance(v, int) or isinstance(v, bool)):
@@ -786,6 +794,8 @@ def valid_report(doc):
         if not isinstance(epoch, int) or isinstance(epoch, bool) or not 1 <= epoch <= MAX_EPOCH:
             return False
         if not valid_addresses(plan.get('succession')) or not valid_addresses(plan.get('lanes')):
+            return False
+        if plan.get('unreadable_reason') not in UNREADABLE_REASONS + (None,):
             return False
         if plan.get('class') not in ('open', 'blocked', 'completed', 'unreadable'):
             return False
