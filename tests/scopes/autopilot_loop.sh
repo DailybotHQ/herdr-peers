@@ -307,6 +307,7 @@ assert_contains "an agent carries its session title" "$F" '"title": "box worker"
 assert_contains "a hostile session title is neutralised on the map" "$F" '"title": "evil ]0;x title"'
 assert_contains "and when its state last changed" "$F" '"state_since": "20'
 assert_contains "a plan carries its progress" "$F" '"tasks_total": 2'
+assert_contains "and when its state last moved (2.1.0, for fleet ui's stale plans)" "$F" '"state_updated_at": '
 assert_contains "an agent's repository comes from its machine's report" "$F" "\"repo_root\": \"$(cd "$REPO" && pwd -P)\""
 run "$HELPER" fleet
 assert_contains "the human view names machines, plans and agents" "$OUT" "plan  PLAN_931_there"
@@ -330,6 +331,7 @@ assert_eq "the other machine stores the map it is handed, once, and refuses what
 run env HOME="$(box_home)" XDG_STATE_HOME="$(box_home)/.local/state" HERDR_ENV= "$HELPER" fleet --json
 assert_rc "fleet on the other machine prints its copy" 0
 assert_contains "with the same plans" "$OUT" "PLAN_930_here"
+assert_contains "and when each plan's state last moved" "$OUT" '"state_updated_at": '
 assert_eq "its copy is private" "600" "$(python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$(box_home)/.local/state/herdr-peers/fleet.json")"
 python3 - "$(fleet_file)" <<'PY'
 import json, sys

@@ -9,6 +9,36 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Added
+
+- **`fleet ui` views: one facet model in every grouping.** A second row
+  under the grouping tabs filters what each grouping shows, with the same
+  five views everywhere — **Attention** (needs you), **Active** (moving),
+  **Waiting** (queued or free), **Done**, **All** — each with a live count
+  (`Attention 2 · Active 7 · Waiting 3 · Done 21`; `A2 Ac7 W3 D21` when
+  narrow). Plans: Attention is blocked, stalled, no lead, a moved lead,
+  unreadable, or open with no movement for 24 h (`◷ no movement for 2d
+  4h`); a queued plan with no lead record yet shows as `QUEUED` under
+  Waiting. Agents: Attention is waiting at a question or unreachable;
+  Active is working; Waiting is free. Queue items: Attention is a reason
+  that blocks; Active is started; Waiting is queued; Done is done or
+  skipped. The default view is Attention plus Active and never Done.
+  `←→`/`[ ]` cycle, `1`–`5` jump, a click on the row picks; the view
+  combines with the search and is kept per grouping for the session; an
+  empty view says why (`Nothing needs you · 7 plans moving`). `fleet ui
+  --snapshot --filter attention|active|waiting|done|all` prints one view,
+  and `--group` now takes `queue`. Classification (`plan_facet`,
+  `agent_facet`, `queue_item_facet`) and counts are pure functions, built
+  once per change, never per frame.
+- **The map carries `state_updated_at`** for each plan (when its
+  `state.json` last changed), an optional fleet-v1 field: a 2.0 map without
+  it is still read, and its open plans are never called stale.
+
+### Changed
+
+- A filtered queue keeps each item's real place in it (`4.`, `5.`), not a
+  renumbered one.
+
 ## [2.0.2] - 2026-11-16
 
 A patch on 2.0.1: the brain launches with coding-agents-kit 1.5.0, and a

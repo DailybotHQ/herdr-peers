@@ -547,32 +547,68 @@ written. Above 2 MB the map drops plan details first and records
 ```
  ◉ herdr-peers fleet   updated 40 s ago                     54 agents · 14 machines (13 answering)
  ● 8 working   ◆ 1 waiting   ○ 45 idle   ? 0 unknown   │ plans: 1 need you · 5 running · 14 done
-  p Plans   r Repos   m Machines
+  p Plans   r Repos   m Machines   u Queues
+  1 Attention 2  ·  2 Active 5  ·  3 Waiting 3  ·  4 Done 14  ·  5 All 24    needs you + moving   ←→ 1-5
 ──────────────────────────────────────────────────────────────────────────────────────────────────
 ▌ STALLED  PLAN_009_billing  Billing v2                         ████░░░░░░░░ 12/37  32%  API · WS brain
     ▶ now: Webhook retries
   ★ ○ claude idle 12m    w2:p1    app @feature/billing   API · WS brain   Billing lead
+▌ OPEN  PLAN_014_search  Search index                           ██████░░░░░░ 9/18  50%   Mac
+    ◷ no movement for 2d 4h
 ▌ OPEN  PLAN_001_prototypes  Rebuild all of v4                  ███████░░░░░ 56/97  57%  Mac
   ★ ● claude working 3m  wG:p16   protoyard @dev          Mac              Protoyard lead
   · ○ codex  done        wG:p20   protoyard @dev          Mac              Judge the prototypes
-▌ ○ Doing nothing — free to take work (31)
-    ○ codex  idle        w4:p1    open-source             Mac Air
 ```
+
+### The views: one facet model in every grouping
+
+Under the grouping tabs, a second row filters what each grouping shows. The
+same five views exist everywhere, so there is one thing to learn: does it
+need me, is it moving, is it waiting, is it done.
+
+| View | Plans | Agents (by repository or machine) | Queue items |
+| --- | --- | --- | --- |
+| **Attention** | blocked; situation `plan_stalled`, `plan_no_lead`, `plan_blocked` or a moved lead; unreadable; or open with **no movement for 24 h** (its `state.json` unchanged, shown as `◷ no movement for 2d 4h`) | waiting at a question or approval, a state the map could not read, and (by machine) a machine that did not answer | queued with a reason that blocks it (`no lead named`, `not approved`, …) |
+| **Active** | open and moving | working | started |
+| **Waiting** | queued, not started (also a queued plan with no lead record yet, as `QUEUED`) | free (idle or done) | queued: ready, or waiting its turn (`waiting for …`, `another plan …`) |
+| **Done** | completed | — an agent is never done (always empty) | done or skipped |
+| **All** | everything | everything | everything |
+
+- **The default is Attention and Active together** — what needs you and
+  what is moving. It never opens on Done.
+- Every view shows a live count: `Attention 2 · Active 5 · Waiting 3 · Done
+  14`. Plans count plans (and queued plans not yet on the map); repositories
+  and machines count agents (by machine, an unreachable machine counts once,
+  as Attention); queues count items (an invalid queue file counts once, as
+  Attention). Only Attention takes the alert colour, and only when it holds
+  something. A narrow terminal shows `A2 Ac5 W3 D14 All24`.
+- `←` `→` or `[` `]` cycle the views (the default, then each one); `1`–`5`
+  jump to one; a click on the row picks it. The view combines with the
+  search (`/`), and each grouping keeps its own view for the session.
+- An empty view says why and where the rest is: `Nothing needs you · 7
+  plans moving`.
+- In the Plans grouping, the agents outside any plan follow their own
+  facet: the working ones under Active, the free ones under Waiting.
+- `fleet ui --snapshot --filter attention|active|waiting|done|all` prints
+  one view as text; `--filter` also picks the view the live watcher opens
+  on, and `--group plan|repo|machine|queue` the grouping.
+
+The stale threshold reads `state_updated_at`, which the map carries since
+2.1.0 (an optional field: a map written by an older daemon has none, and
+its open plans are never called stale). Each classification is a pure
+function (`plan_facet`, `agent_facet`, `queue_item_facet`), the counts are
+built when the map, the grouping, the view or the search changes — never
+per frame — and nothing new is read from disk or from Herdr.
 
 It redraws by itself when the map changes, keeps your selection, and ticks
 the age every second (amber after 3 minutes, STALE after 15). Keys: `p`, `r`,
-`m` group by plan, repository or machine; `/` filters; `↑↓` and the mouse
-move; Enter or a click opens a plan or an agent; `f` focuses the agent's
-pane; `?` help; `q` quit. It only reads: the map, and an open agent's screen
-(at most every 2 s, on the machine where that pane lives, when this
-machine's Herdr can reach it). `--snapshot` prints the view once as text.
-
-`herdr-peers fleet ui` draws the same map live in your terminal (groups by
-plan, repository or machine; plans that need you first; open a plan or an
-agent with Enter or a click; `f` focuses an agent in Herdr). It is
-read-only: it writes nothing and prompts nobody, and every string it draws
-is cleaned first. Without a terminal it prints one text snapshot
-(`--snapshot`).
+`m`, `u` group by plan, repository, machine or queue; `←→ [ ] 1-5` pick the
+view; `/` filters; `↑↓` and the mouse move; Enter or a click opens a plan or
+an agent; `f` focuses the agent's pane; `?` help; `q` quit. It only reads:
+the map, and an open agent's screen (at most every 2 s, on the machine where
+that pane lives, when this machine's Herdr can reach it). It writes nothing
+and prompts nobody, and every string it draws is cleaned first. `--snapshot`,
+or no terminal, prints the view once as text.
 
 ## 10. The record
 
