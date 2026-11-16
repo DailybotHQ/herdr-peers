@@ -1020,7 +1020,9 @@ class PlanLoop(object):
                              'agents_state': 'unknown' if rows is None else 'ok',
                              'plans_state': info.get('state') or 'unknown',
                              'agents': agents, 'plans': plans})
-        body = {'schema': FLEET_SCHEMA, 'daemon': self.io.identity(), 'machines': machines}
+        daemon = dict(self.io.identity())
+        daemon['brain'] = self.ap.brain.status(now) if self.ap.brain is not None else None
+        body = {'schema': FLEET_SCHEMA, 'daemon': daemon, 'machines': machines}
         key = hashlib.sha256(json.dumps(body, sort_keys=True).encode('utf-8')).hexdigest()
         if key != self.fleet_key:
             self.fleet_key = key
@@ -1063,6 +1065,7 @@ class BrainKeeper(object):
     def __init__(self, ap, opts):
         self.ap, self.io, self.opts = ap, ap.io, opts
         self.b = brain_mod().Brain()
+        self.last = None   # the brain's last decision, for the map and the watcher
 
     # -- lifecycle ---------------------------------------------------------
     def tick(self, listed, now):
@@ -1070,6 +1073,8 @@ class BrainKeeper(object):
         rows = dict((r['pane'], r) for r in (listed.get('local') or []))
         self.read_answers(now)
         for q in b.expired(now):
+            self.last = {'case': q['case'], 'action': 'default', 'plan': q['plan'],
+                         'at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now))}
             self.ap.record(q['addr'] or 'local:-', None, Decision('leave', 'brain_default',
                                                                    'no valid answer in time'),
                            'left', plan=q['plan'])
@@ -1171,8 +1176,19 @@ class BrainKeeper(object):
                            'nudged' if action != 'leave' else 'left', plan=q['plan'])
             self.act(q, action)
 
+    def status(self, now):
+        """What the map shows about the brain: no prompt text, no answer text."""
+        b = self.b
+        return {'state': b.state, 'kind': b.kind, 'profile': b.profile,
+                'pane': ('local:%s' % b.pane) if b.pane else None,
+                'asked_last_hour': len([t for t in b.asked if now - t < 3600]),
+                'open_questions': sum(1 for q in b.questions.values() if not q['answered']),
+                'last': self.last}
+
     def act(self, q, action):
         """Run one allowed action through the daemon's own paths."""
+        self.last = {'case': q['case'], 'action': action, 'plan': q['plan'],
+                     'at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(self.ap.clock()))}
         loop = self.ap.plans
         if action == 'notify_human':
             self.io.event({'schema': EVENT_SCHEMA, 'event': 'needs_human', 'plan': q['plan'],

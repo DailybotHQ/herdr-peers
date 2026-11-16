@@ -284,6 +284,9 @@ RUNLINE=$(cat "$FAKE_HERDR_DIR/local/runs.log")
 assert_contains "the brain starts in that workspace's fresh pane" "$RUNLINE" '"pane": "w9:p1"'
 assert_contains "with ask mode and folder trust added" "$RUNLINE" "claude @work1 --ask --trust-cwd --model sonnet"
 assert_contains "and the resolved ak path first" "$RUNLINE" "$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$BIN/ak")"
+assert_contains "the map shows the brain" "$(cat "$XDG_STATE_HOME/herdr-peers/fleet.json")" '"profile": "@work1"'
+run "$HELPER" fleet ui --snapshot --width 160
+assert_contains "and the watcher's header shows it" "$OUT" "brain ◎ claude @work1 starting"
 assert_contains "on stop the lease is released" "$(cat "$FAKE_AK_DIR/argv.log")" "lease release claude @work1 --owner local:w1:p1"
 assert_contains "and its own workspace closed" "$(cat "$FAKE_HERDR_DIR/local/workspaces.log")" '"verb": "close", "args": ["w9"]'
 # an autonomous pick, a lease held by another owner: nothing typed

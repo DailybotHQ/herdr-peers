@@ -982,6 +982,7 @@ class IO(object):
 class AP(object):
     dry_run = False
     panes = {}
+    brain = None
     def __init__(self, io): self.io = io
     def record(self, addr, kind, choice, outcome, plan=None): self.io.records.append(choice.cls)
 io = IO(); ap = AP(io)
