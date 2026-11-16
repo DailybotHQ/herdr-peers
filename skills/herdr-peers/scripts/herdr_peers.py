@@ -33,7 +33,9 @@ import sys
 import time
 
 VERSION = '1.3.1'
-PROTOCOL = 1
+PROTOCOL = 2          # the highest protocol this helper speaks (metadata.protocol)
+BASE_PROTOCOL = 1     # what every message is stamped with, except a granted lead notice
+SUPPORTED_PROTOCOLS = ('1', '2')
 MARKER = '[herdr-peers]'
 DEFAULT_MAX_BYTES = 16384
 DEFAULT_FANOUT = 4
@@ -247,21 +249,23 @@ def build_ask(body, from_addr, ask_id):
     sender = fmt_address(from_addr)
     return no_option('%s\n\n%s protocol=%d from=%s reply=yes depth=0 id=%s\n%s\n'
             '  herdr-peers reply %s %s "<answer>"' % (
-                body.rstrip('\n'), MARKER, PROTOCOL, sender, ask_id, GRANT_LINE,
+                body.rstrip('\n'), MARKER, BASE_PROTOCOL, sender, ask_id, GRANT_LINE,
                 sender, ask_id))
 
 
-def build_notice(body, from_addr, notice_id):
+def build_notice(body, from_addr, notice_id, protocol=BASE_PROTOCOL):
     """A one-way notice: the ask stamp with reply=no, and a clause saying
     so. A 0.2.x receiver decides it never (rule 9); a 0.3 receiver records it
-    as a notice (rule 14). Nobody answers it."""
+    as a notice (rule 14). Nobody answers it. Only a lead notice whose record
+    carries an appointment grant is stamped protocol=2, which a 1.x receiver
+    decides never (rule 5): it fails closed instead of half-adopting it."""
     return no_option('%s\n\n%s protocol=%d from=%s reply=no depth=0 id=%s\n%s' % (
-        body.rstrip('\n'), MARKER, PROTOCOL, fmt_address(from_addr), notice_id, NOTICE_CLAUSE))
+        body.rstrip('\n'), MARKER, protocol, fmt_address(from_addr), notice_id, NOTICE_CLAUSE))
 
 
 def build_reply(answer, ask_id, from_addr):
     return no_option('%s\n\n%s protocol=%d reply-to=%s from=%s depth=1\n%s' % (
-        answer.rstrip('\n'), MARKER, PROTOCOL, ask_id, fmt_address(from_addr), REPLY_CLAUSE))
+        answer.rstrip('\n'), MARKER, BASE_PROTOCOL, ask_id, fmt_address(from_addr), REPLY_CLAUSE))
 
 
 CAPACITY_RE = re.compile(r'(?m)^[ \t]*capacity=(ok|low|critical|unknown)'
@@ -319,8 +323,11 @@ def parse_stamp(text):
         fields[key] = value
     if 'protocol' not in fields:
         return decision('never', 6, 'invalid: missing protocol')
-    if fields['protocol'] != str(PROTOCOL):
+    if fields['protocol'] not in SUPPORTED_PROTOCOLS:
         return decision('never', 5, 'unsupported protocol %s' % fields['protocol'][:16])
+    if fields['protocol'] != str(BASE_PROTOCOL) and fields.get('reply') != 'no':
+        # Protocol 2 only carries lead notices; an ask or reply never uses it.
+        return decision('never', 5, 'protocol %s is only used by notices' % fields['protocol'])
     body = '\n'.join(lines[:index]).rstrip('\n')
     return fields, body
 
@@ -1020,7 +1027,7 @@ def project_root():
 
 def make_record(state, role, ask_id, target, self_addr, **extra):
     rec = {
-        'protocol': PROTOCOL, 'id': ask_id, 'ts': now_iso(), 'role': role,
+        'protocol': BASE_PROTOCOL, 'id': ask_id, 'ts': now_iso(), 'role': role,
         'self': self_addr, 'task': extra.pop('task', None) or os.environ.get('DWP_TASK') or None,
         'transport': 'interactive', 'via': 'herdr', 'kind': extra.pop('kind', None),
         'profile': extra.pop('profile', None), 'target': target,
@@ -1222,7 +1229,8 @@ def resolve_target(args, store, pane):
     return target
 
 
-def send_notice(args, store, pane, target, body, extra=None, from_addr=None, wait_blocked=0):
+def send_notice(args, store, pane, target, body, extra=None, from_addr=None, wait_blocked=0,
+                protocol=BASE_PROTOCOL):
     """Build, record and deliver one notice; returns its id. Recorded as
     `notifier sent` before delivery and `notifier failed` after a failure
     (raises then). A blocked peer is retried for up to WAIT_BLOCKED seconds."""
@@ -1231,7 +1239,7 @@ def send_notice(args, store, pane, target, body, extra=None, from_addr=None, wai
     if target == from_addr:
         raise Stop(EXIT_POLICY, 'refusing to message yourself (%s)' % fmt_address(target))
     notice_id = new_ulid()
-    message = build_notice(body, from_addr, notice_id)
+    message = build_notice(body, from_addr, notice_id, protocol)
     check_size(message)
     deadline, delay = time.monotonic() + wait_blocked, BLOCKED_BACKOFF_FIRST
     info = agent_info(target)
@@ -1561,9 +1569,9 @@ def cmd_wait(args):
         return EXIT_OK
     baseline = read_pane(args.pane if args.pane else pane, args.lines + 50)
     new_stamp = '%s protocol=%d reply-to=%s from=%s depth=1' % (
-        MARKER, PROTOCOL, args.id, asked.get('target'))
+        MARKER, BASE_PROTOCOL, args.id, asked.get('target'))
     legacy_stamp = '%s protocol=%d reply-to=%s depth=1' % (
-        MARKER, PROTOCOL, args.id)
+        MARKER, BASE_PROTOCOL, args.id)
     # An agent's TUI echoes a delivered prompt indented (Claude Code, Codex), so
     # the stamp may follow leading blanks; extract_reply still demands it exactly.
     needle = '(?m)^[ \\t]*(?:%s|%s)(?:\\s.*)?$' % (re.escape(new_stamp), re.escape(legacy_stamp))
@@ -1665,9 +1673,9 @@ def extract_reply(text, ask_id, expected_froms, max_lines):
         expected_froms = [expected_froms]
     lines = text.split('\n')
     new_wants = ['%s protocol=%d reply-to=%s from=%s depth=1' % (
-        MARKER, PROTOCOL, ask_id, f) for f in expected_froms]
+        MARKER, BASE_PROTOCOL, ask_id, f) for f in expected_froms]
     legacy_want = '%s protocol=%d reply-to=%s depth=1' % (
-        MARKER, PROTOCOL, ask_id)
+        MARKER, BASE_PROTOCOL, ask_id)
     stamp = None
     want = None
     legacy = False
@@ -1870,6 +1878,14 @@ def cmd_log(args):
 
 LEAD_SCHEMA = 'herdr-peers/lead-v1'
 LEAD_KEYS = frozenset(['schema', 'plan', 'lead', 'epoch', 'succession', 'lanes', 'updated_at'])
+LEAD_SCHEMA_V2 = 'herdr-peers/lead-v2'
+# lead-v2 adds two optional keys (protocol.md §12, PLAN_009): the human's
+# standing appointment grant, and the mark of the epoch an appointment made.
+APPOINT_GRANTS = ('lanes', 'lanes:any-kind')
+APPOINT_VIA = 'appointment'
+OPTIONAL_LEAD_KEYS = frozenset(['repo_root', 'appoint', 'via'])
+MAX_APPOINTMENTS = 2          # appointments per plan; past it only the human is told
+APPOINT_PROBE_GAP = 60        # seconds between the appointee's two probes
 PLAN_RE = re.compile(r'(?=.{1,128}$)[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*')
 TS_RE = re.compile(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z')
 MAX_EPOCH = 1000000
@@ -1942,15 +1958,20 @@ def addr_list(raw, what):
 def lead_record_error(rec):
     """Why a lead-v1 record is malformed, or None. Strict: received records
     come from other panes and are data until proven well-formed."""
-    if not isinstance(rec, dict) or not LEAD_KEYS <= set(rec) or set(rec) - LEAD_KEYS - {'repo_root'}:
-        return 'keys must be %s with optional repo_root' % ', '.join(sorted(LEAD_KEYS))
+    if not isinstance(rec, dict) or not LEAD_KEYS <= set(rec) or set(rec) - LEAD_KEYS - OPTIONAL_LEAD_KEYS:
+        return 'keys must be %s with optional repo_root, appoint, via' % ', '.join(sorted(LEAD_KEYS))
+    if rec.get('appoint') is not None and rec['appoint'] not in APPOINT_GRANTS:
+        return 'appoint must be one of %s or null' % ', '.join(APPOINT_GRANTS)
+    if rec.get('via') is not None and rec['via'] != APPOINT_VIA:
+        return 'via must be %s or null' % APPOINT_VIA
+    v2 = rec.get('appoint') is not None or rec.get('via') is not None
     root = rec.get('repo_root')
     if root is not None and (not isinstance(root, str) or not os.path.isabs(root)
                              or len(root) > 4096 or has_bad_control(root)
                              or secret_finding(root)):
         return 'malformed repo_root'
-    if rec['schema'] != LEAD_SCHEMA:
-        return 'schema must be %s' % LEAD_SCHEMA
+    if rec['schema'] != (LEAD_SCHEMA_V2 if v2 else LEAD_SCHEMA):
+        return 'schema must be %s' % (LEAD_SCHEMA_V2 if v2 else LEAD_SCHEMA)
     if not isinstance(rec['plan'], str) or not PLAN_RE.fullmatch(rec['plan']):
         return 'malformed plan id'
     if rec['lead'] is not None and (not isinstance(rec['lead'], str)
@@ -1999,6 +2020,12 @@ def read_lead_file(path):
     # read the unchanged seven-key record in the shared state envelope.
     if isinstance(data, dict) and isinstance(data.get('record'), dict) and 'repo_root' in data:
         data['record'] = dict(data['record'], repo_root=data['repo_root'])
+    # lead-v2 keys live in the envelope too: the record a 1.x helper on this
+    # server reads stays the seven-key lead-v1 it knows.
+    if isinstance(data, dict) and isinstance(data.get('record'), dict) and \
+            (data.get('appoint') is not None or data.get('record_via') is not None):
+        data['record'] = dict(data['record'], schema=LEAD_SCHEMA_V2,
+                              appoint=data.get('appoint'), via=data.get('record_via'))
     if not isinstance(data, dict) or lead_record_error(data.get('record')):
         raise Stop(EXIT_POLICY, 'the lead record %s is corrupt; inspect it before acting' % path)
     return data
@@ -2030,7 +2057,7 @@ def all_leads(store):
     return out
 
 
-def save_lead(store, record, prior, via):
+def save_lead(store, record, prior, via, appointments=None):
     """Replace a plan's lead record atomically (0600, never via a symlink)."""
     store.ensure()
     if not os.path.isdir(lead_dir(store)):
@@ -2046,20 +2073,36 @@ def save_lead(store, record, prior, via):
     storage = {'record': stored_record, 'prior': prior, 'via': via}
     if 'repo_root' in stored_record:
         storage['repo_root'] = stored_record.pop('repo_root')
+    grant, mark = stored_record.pop('appoint', None), stored_record.pop('via', None)
+    stored_record['schema'] = LEAD_SCHEMA
+    if grant is not None or mark is not None:
+        storage['appoint'], storage['record_via'] = grant, mark
+    if appointments:
+        storage['appointments'] = appointments
     write_private(tmp, json.dumps(storage, sort_keys=True) + '\n')
     os.replace(tmp, path)
 
 
-def new_lead_record(plan, lead, epoch, succession, lanes, repo_root=None):
-    return {'schema': LEAD_SCHEMA, 'plan': plan, 'lead': lead, 'epoch': epoch,
-            'repo_root': repo_root,
-            'succession': [a for a in succession if a != lead],
-            'lanes': [a for a in lanes if a != lead], 'updated_at': now_iso()}
+def new_lead_record(plan, lead, epoch, succession, lanes, repo_root=None, appoint=None, via=None):
+    rec = {'schema': LEAD_SCHEMA, 'plan': plan, 'lead': lead, 'epoch': epoch,
+           'repo_root': repo_root,
+           'succession': [a for a in succession if a != lead],
+           'lanes': [a for a in lanes if a != lead], 'updated_at': now_iso()}
+    if appoint is not None or via is not None:
+        rec.update(schema=LEAD_SCHEMA_V2, appoint=appoint, via=via)
+    return rec
+
+
+def wire_protocol(record):
+    """The protocol a lead notice for `record` is stamped with: 2 only when
+    it carries lead-v2 keys, so an ungranted plan stays byte-compatible."""
+    return PROTOCOL if record.get('appoint') is not None or record.get('via') is not None \
+        else BASE_PROTOCOL
 
 
 def prior_of(record, via):
     return {'lead': record['lead'], 'epoch': record['epoch'],
-            'succession': list(record['succession']), 'via': via}
+            'succession': list(record['succession']), 'lanes': list(record['lanes']), 'via': via}
 
 
 def self_strings(pane, store):
@@ -2124,7 +2167,8 @@ def broadcast(args, store, pane, record, best_effort=(), required=()):
             from_addr = resolve_from(args, target, pane, store)
             body = lead_body(record_for(record, target, from_addr))
             send_notice(args, store, pane, target, body, from_addr=from_addr,
-                        extra={'plan': record['plan'], 'epoch': record['epoch']})
+                        extra={'plan': record['plan'], 'epoch': record['epoch']},
+                        protocol=wire_protocol(record))
             sent += 1
         except Stop as exc:
             failed_targets.add(addr)
@@ -2244,10 +2288,26 @@ def lead_claim(args):
             succession = rec['succession'] if rec and rec['lead'] else []
         if lanes is None:
             lanes = rec['lanes'] if rec and rec['lead'] else ([] if rec else asked_peers(store, pane))
-        record = new_lead_record(plan, lead, epoch, succession, lanes, root)
-        save_lead(store, record, prior, via)
-        log_lead(store, state, me, record)
+        # The appointment grant is the human's standing consent (protocol.md
+        # §12): set only on the human's word, kept on refresh, never revived
+        # from a released record.
+        grant = rec.get('appoint') if rec and rec['lead'] else None
+        if getattr(args, 'allow_appointment', False):
+            grant = 'lanes:any-kind' if getattr(args, 'any_kind', False) else 'lanes'
+        if getattr(args, 'no_appointment', False):
+            grant = None
+        record = new_lead_record(plan, lead, epoch, succession, lanes, root, appoint=grant)
+        save_lead(store, record, prior, via, appointments=data.get('appointments') if data and rec['lead'] else None)
+        log_lead(store, state, me, record, note=('appointment granted: %s' % grant) if grant else None)
+    if grant and not (rec and rec.get('appoint') == grant):
+        warn('appointment granted (%s): every lane and successor must run herdr-peers 2.0 or '
+             'later; a 1.x peer ignores this plan\'s lead notices until it is upgraded' % grant)
     return finish_lead(args, store, pane, record, state)
+
+
+def data_appointments(store, plan):
+    data = load_lead(store, plan)
+    return data.get('appointments') if data else None
 
 
 def require_lead(store, plan, pane, verb):
@@ -2275,8 +2335,10 @@ def lead_handover(args):
             raise Stop(EXIT_POLICY, 'refusing to hand over to yourself (%s)' % new)
         record = new_lead_record(plan, new, rec['epoch'] + 1,
                                  rec['succession'] if succession is None else succession,
-                                 rec['lanes'] if lanes is None else lanes, rec.get('repo_root'))
-        save_lead(store, record, prior_of(rec, 'handover'), 'handover')
+                                 rec['lanes'] if lanes is None else lanes, rec.get('repo_root'),
+                                 appoint=rec.get('appoint'))
+        save_lead(store, record, prior_of(rec, 'handover'), 'handover',
+                  appointments=data_appointments(store, plan))
         log_lead(store, 'handed_over', me, record)
     return finish_lead(args, store, pane, record, 'handed over',
                        required=(new,))
@@ -2288,9 +2350,69 @@ def lead_release(args):
         rec = require_lead(store, plan, pane, 'release it')
         record = new_lead_record(plan, None, rec['epoch'] + 1, rec['succession'], rec['lanes'],
                                  rec.get('repo_root'))
-        save_lead(store, record, prior_of(rec, 'release'), 'release')
+        save_lead(store, record, prior_of(rec, 'release'), 'release')  # a release ends the grant
         log_lead(store, 'released', me, record, target=me)
     return finish_lead(args, store, pane, record, 'released')
+
+
+def appoint_probe_gap():
+    try:
+        value = float(os.environ.get('HERDR_PEERS_APPOINT_PROBE_GAP') or APPOINT_PROBE_GAP)
+    except ValueError:
+        return APPOINT_PROBE_GAP
+    return value if 0 <= value <= 600 else APPOINT_PROBE_GAP
+
+
+def lead_appoint_self(args, plan, store, pane, me, data):
+    """`lead takeover --as-lane`: a lane of a plan whose record carries the
+    human's grant takes the lead when the lead, every successor and every
+    earlier lane are gone (protocol.md §12, F10). The issuer checks twice, a
+    probe gap apart; any sign of life aborts. Writes local state only."""
+    rec = data['record']
+    mine_ = self_strings(pane, store)
+    if rec.get('appoint') not in APPOINT_GRANTS:
+        raise Stop(EXIT_POLICY, 'plan %s has no appointment grant; only a listed successor may '
+                   'take over' % plan)
+    if args.reason:
+        raise Stop(EXIT_USAGE, '--as-lane takes no --reason: only strong evidence counts')
+    position = [i for i, a in enumerate(rec['lanes']) if a in mine_]
+    if not position:
+        raise Stop(EXIT_POLICY, 'this pane is not a lane of %s (%s)'
+                   % (plan, ', '.join(rec['lanes']) or 'no lanes'))
+    position = position[0]
+    if (data.get('appointments') or 0) >= MAX_APPOINTMENTS:
+        raise Stop(EXIT_POLICY, 'plan %s already had %d appointments; only the human can restart it'
+                   % (plan, MAX_APPOINTMENTS))
+    root = git_root(common=True)
+    if rec.get('repo_root') and root != rec['repo_root']:
+        raise Stop(EXIT_POLICY, 'this pane works in another repository than plan %s; an appointee '
+                   'works in the plan\'s repository (a linked worktree counts)' % plan)
+    members = [rec['lead']] + list(rec['succession']) + list(rec['lanes'][:position])
+    for probe in (1, 2):
+        for addr in members:
+            is_gone, state, weak = gone(addr)
+            if not is_gone or weak:
+                raise Stop(EXIT_POLICY, 'appointment refused: %s is %s (probe %d); a plan is '
+                           'appointed only when its lead, every successor and every earlier lane '
+                           'are gone' % (addr, 'reachable (%s)' % state if not is_gone else
+                                         'idle with a usage-limit line on screen (not proof)', probe))
+        if probe == 1:
+            time.sleep(appoint_probe_gap())
+    with store.lock():
+        again = load_lead(store, plan)
+        if not again or again['record']['epoch'] != rec['epoch']:
+            raise Stop(EXIT_POLICY, 'the lead record of %s changed meanwhile; run `lead show`'
+                       % plan)
+        record = new_lead_record(plan, me, rec['epoch'] + 1, rec['succession'],
+                                 [a for a in rec['lanes'] if a not in mine_], rec.get('repo_root'),
+                                 appoint=rec['appoint'], via=APPOINT_VIA)
+        save_lead(store, record, prior_of(rec, APPOINT_VIA), APPOINT_VIA,
+                  appointments=(again.get('appointments') or 0) + 1)
+        log_lead(store, 'appointed', me, record,
+                 note='the lead %s, %d successor(s) and %d earlier lane(s) were gone at two probes'
+                 % (rec['lead'], len(rec['succession']), position))
+    return finish_lead(args, store, pane, record, 'appointed',
+                       best_effort=(rec['lead'],) + tuple(rec['succession']))
 
 
 def lead_takeover(args):
@@ -2302,6 +2424,8 @@ def lead_takeover(args):
     mine_ = self_strings(pane, store)
     if rec['lead'] in mine_:
         raise Stop(EXIT_POLICY, 'you already lead %s' % plan)
+    if getattr(args, 'as_lane', False):
+        return lead_appoint_self(args, plan, store, pane, me, data)
     position = [i for i, a in enumerate(rec['succession']) if a in mine_]
     if not position:
         raise Stop(EXIT_POLICY, 'this pane is not in the succession of %s (%s)'
@@ -2327,8 +2451,10 @@ def lead_takeover(args):
             raise Stop(EXIT_POLICY, 'the lead record of %s changed meanwhile; run `lead show`'
                        % plan)
         record = new_lead_record(plan, me, rec['epoch'] + 1, rec['succession'][position + 1:],
-                                 [a for a in rec['lanes'] if a not in mine_], rec.get('repo_root'))
-        save_lead(store, record, prior_of(rec, 'takeover'), 'takeover')
+                                 [a for a in rec['lanes'] if a not in mine_], rec.get('repo_root'),
+                                 appoint=rec.get('appoint'))
+        save_lead(store, record, prior_of(rec, 'takeover'), 'takeover',
+                  appointments=data.get('appointments'))
         log_lead(store, 'taken_over', me, record,
                  note=('reason: %s' % args.reason) if args.reason else 'the lead was %s' % state)
     return finish_lead(args, store, pane, record, 'took over', best_effort=(rec['lead'],))
@@ -2357,14 +2483,69 @@ def lead_show(args):
                                                             data.get('via'), rec['updated_at']))
         print('  succession: %s' % (', '.join(rec['succession']) or '-'))
         print('  lanes: %s' % (', '.join(rec['lanes']) or '-'))
+        if rec.get('appoint'):
+            print('  appointment: granted (%s); %d of %d used' % (
+                rec['appoint'], data.get('appointments') or 0, MAX_APPOINTMENTS))
+    return EXIT_OK
+
+
+def lead_verify(args):
+    """Before a merge, tag or release: is this pane still the lead of the
+    plan, here and on every other machine of the plan that answers? Local
+    state and read-only reports only; nothing is written anywhere else.
+    Refuses (exit 4) when this pane is not the lead here or any machine
+    shows the plan at a higher epoch; a machine that does not answer is
+    named and recorded (a partition is the residual risk, protocol §12)."""
+    plan, store, pane, me = lead_context(args)
+    data = load_lead(store, plan)
+    rec = data['record'] if data else None
+    mine_ = self_strings(pane, store)
+    if not rec or not rec['lead'] or rec['lead'] not in mine_:
+        holder = ('%s at epoch %d' % (rec['lead'] or 'nobody', rec['epoch'])) if rec else 'nobody'
+        log_lead(store, 'rejected', me, rec or {'plan': plan, 'epoch': 0},
+                 note='verify: not the lead here (the lead is %s)' % holder)
+        raise Stop(EXIT_POLICY, 'not the lead of %s here: the lead is %s; do not merge, tag or '
+                   'release' % (plan, holder))
+    machines = []
+    for addr in [rec['lead']] + list(rec['succession']) + list(rec['lanes']):
+        parsed = parse_address(addr)
+        machine = resolve_machine(parsed)[0] if parsed else None
+        if machine and machine != 'local' and machine not in machines:
+            machines.append(machine)
+    io = AutopilotIO(store, pane, None, None, quiet=True)
+    io.sources()
+    higher, silent = [], []
+    for machine in machines:
+        state, report = io.plans(machine, {}, None)
+        if state != 'ok':
+            silent.append(machine)
+            continue
+        for p in report.get('plans', []):
+            if p.get('plan') == plan and isinstance(p.get('epoch'), int) and p['epoch'] > rec['epoch']:
+                higher.append('%s (epoch %d, lead %s)' % (machine, p['epoch'], p.get('lead')))
+    if higher:
+        log_lead(store, 'rejected', me, rec, note='verify: a higher epoch on %s' % ', '.join(higher))
+        raise Stop(EXIT_POLICY, 'plan %s has a newer lead elsewhere: %s; step down, do not '
+                   'merge, tag or release' % (plan, ', '.join(higher)))
+    log_lead(store, 'verified', me, rec,
+             note='verify: lead at epoch %d; %d machine(s) agree%s' % (
+                 rec['epoch'], len(machines) - len(silent),
+                 '; not reached: %s' % ', '.join(silent) if silent else ''))
+    print('verified: %s leads %s at epoch %d here%s' % (me, plan, rec['epoch'],
+          '' if not machines else ' and on %d of %d other machine(s)' % (
+              len(machines) - len(silent), len(machines))))
+    if silent:
+        warn('not reached: %s; a machine that cannot be reached cannot be checked (protocol §12, '
+             'residual risk)' % ', '.join(silent))
     return EXIT_OK
 
 
 def cmd_lead(args):
     verbs = {'claim': lead_claim, 'show': lead_show, 'handover': lead_handover,
-             'takeover': lead_takeover, 'release': lead_release}
+             'takeover': lead_takeover, 'release': lead_release, 'verify': lead_verify}
     if not args.lead_verb:
-        raise Stop(EXIT_USAGE, 'lead needs a verb: claim, show, handover, takeover, release')
+        raise Stop(EXIT_USAGE, 'lead needs a verb: claim, show, handover, takeover, release, '
+                   'verify')
     return verbs[args.lead_verb](args)
 
 
@@ -2416,6 +2597,8 @@ def fence(stored, rec, sender, trusted, gone_fn):
                 return ('rejected', 'takeover by %s while an earlier successor %s is reachable '
                         '(%s)' % (sender, earlier, state), None, None)
         return 'adopted', 'takeover by %s' % sender, 'takeover', prior_of(cur, 'takeover')
+    if rec.get('via') == APPOINT_VIA:
+        return appointment_fence(cur, rec, sender, gone_fn, data)
     prior = data.get('prior') or {}
     if data.get('via') == 'takeover' and rec['epoch'] == cur['epoch'] \
             and rec['lead'] == sender and sender in prior.get('succession', []) \
@@ -2425,6 +2608,40 @@ def fence(stored, rec, sender, trusted, gone_fn):
                 % (rec['epoch'], sender, cur['lead']), 'takeover', prior)
     return ('rejected', 'not fenced: %s is neither the lead nor the first reachable successor '
             'at epoch %d' % (sender, cur['epoch'] + 1), None, None)
+
+
+def appointment_fence(cur, rec, sender, gone_fn, data):
+    """F10 (and its tie, F8 by lane order): an appointment is adopted only
+    when the stored record carries the human's grant, the sender is a lane
+    of it naming itself at epoch + 1 without widening the record, and this
+    receiver's own probes find the lead, every successor and every earlier
+    lane strongly gone. A 1.x receiver never gets here: the notice is
+    protocol 2."""
+    prior = data.get('prior') or {}
+    if data.get('via') == APPOINT_VIA and rec['epoch'] == cur['epoch'] and rec['lead'] == sender \
+            and sender in prior.get('lanes', []) and cur['lead'] in prior.get('lanes', []) \
+            and prior['lanes'].index(sender) < prior['lanes'].index(cur['lead']):
+        return ('adopted', 'appointment tie at epoch %d: lane %s precedes %s'
+                % (rec['epoch'], sender, cur['lead']), APPOINT_VIA, prior)
+    if cur.get('appoint') not in APPOINT_GRANTS:
+        return 'rejected', 'appointment refused: the stored record carries no grant', None, None
+    if rec['lead'] != sender or rec['epoch'] != cur['epoch'] + 1:
+        return ('rejected', 'appointment refused: %s may only appoint itself at epoch %d'
+                % (sender, cur['epoch'] + 1), None, None)
+    if sender not in cur['lanes']:
+        return 'rejected', 'appointment refused: %s is not a lane of the plan' % sender, None, None
+    if rec['succession'] != cur['succession'] or rec.get('appoint') != cur.get('appoint') \
+            or rec['lanes'] != [a for a in cur['lanes'] if a != sender]:
+        return ('rejected', 'appointment refused: the record is widened (succession, lanes or '
+                'grant changed)', None, None)
+    position = cur['lanes'].index(sender)
+    for addr in [cur['lead']] + list(cur['succession']) + list(cur['lanes'][:position]):
+        is_gone, state, weak = gone_fn(addr)
+        if not is_gone or weak:
+            return ('rejected', 'appointment refused: %s is %s' % (
+                addr, 'reachable (%s)' % state if not is_gone else
+                'idle with a usage-limit line on screen (not proof)'), None, None)
+    return 'adopted', 'appointment of lane %s' % sender, APPOINT_VIA, prior_of(cur, APPOINT_VIA)
 
 
 def handle_lead_notice(store, verdict, body, pane):
@@ -2465,6 +2682,12 @@ def handle_lead_notice(store, verdict, body, pane):
             seen[addr] = gone(addr)
         return seen[addr]
     fence(load_lead(store, rec['plan']), rec, sender, trusted, probe)
+    current = load_lead(store, rec['plan'])
+    if current and rec.get('via') == APPOINT_VIA:
+        cur = current['record']
+        for addr in [cur['lead']] + list(cur['succession']) + list(cur['lanes']):
+            if addr and addr != sender:
+                probe(addr)
     with store.lock():
         data = load_lead(store, rec['plan'])
         mine_ = self_strings(pane, store)
@@ -2479,7 +2702,8 @@ def handle_lead_notice(store, verdict, body, pane):
             # Panes on one server share the record: a successor that took
             # over has already rewritten it, so the former lead learns it here.
             former = ((data.get('prior') or {}).get('lead') in mine_ and
-                      data.get('via') in ('takeover', 'handover') and rec['lead'] not in mine_)
+                      data.get('via') in ('takeover', 'handover', APPOINT_VIA) and
+                      rec['lead'] not in mine_)
             if former:
                 verdict['lead_status'] = 'stepped_down'
                 verdict['lead_reason'] = 'this pane led %s until epoch %d' % (
@@ -2489,7 +2713,11 @@ def handle_lead_notice(store, verdict, body, pane):
             return
         stored = dict(rec)
         stored['updated_at'] = now_iso()
-        save_lead(store, stored, prior, via)
+        used = (data.get('appointments') or 0) if data else 0
+        if via == APPOINT_VIA and not (data and data.get('via') == APPOINT_VIA
+                                       and data['record']['epoch'] == rec['epoch']):
+            used += 1  # the cap travels with the record, on every server that adopts it
+        save_lead(store, stored, prior, via, appointments=used or None)
         stepped = was_lead and rec['lead'] not in mine_
         if stepped:
             verdict['lead_status'] = 'stepped_down'
@@ -2744,7 +2972,7 @@ def cmd_lanes(args):
         })
     rec = lead['record'] if lead else None
     if args.json:
-        print(json.dumps({'schema': 'herdr-peers/lanes-v1', 'protocol': PROTOCOL,
+        print(json.dumps({'schema': 'herdr-peers/lanes-v1', 'protocol': BASE_PROTOCOL,
                           'self': 'local:%s' % pane, 'generated_at': now_iso(),
                           'plan': rec['plan'] if rec else None,
                           'lead': rec['lead'] if rec else None,
@@ -3421,6 +3649,8 @@ def autopilot_option_argv(opts):
         argv += ['--scope', opts['scope']]
     if opts.get('loop'):
         argv.append('--loop')
+    if opts.get('appoint'):
+        argv.append('--appoint')
     if opts.get('notify'):
         argv += ['--notify', opts['notify']]
     for name in opts.get('notify_env') or []:
@@ -3641,6 +3871,16 @@ def cmd_autopilot(args):
         raise Stop(EXIT_USAGE, 'HERDR_PEERS_AUTOPILOT_GRACE must be a number of seconds')
     if not 0 <= grace <= 86400:
         raise Stop(EXIT_USAGE, 'HERDR_PEERS_AUTOPILOT_GRACE must be between 0 and 86400 seconds')
+    try:
+        appoint_grace = float(os.environ.get('HERDR_PEERS_AUTOPILOT_APPOINT_GRACE')
+                              or autopilot.APPOINT_GRACE)
+    except ValueError:
+        raise Stop(EXIT_USAGE, 'HERDR_PEERS_AUTOPILOT_APPOINT_GRACE must be a number of seconds')
+    if not 0 <= appoint_grace <= 86400:
+        raise Stop(EXIT_USAGE, 'HERDR_PEERS_AUTOPILOT_APPOINT_GRACE must be between 0 and 86400 '
+                   'seconds')
+    if args.appoint and not args.loop:
+        raise Stop(EXIT_USAGE, '--appoint needs --loop: it acts on the plans the loop watches')
     if interval < autopilot.MIN_INTERVAL and passes is None:
         raise Stop(EXIT_USAGE, '--interval is at least %d seconds' % autopilot.MIN_INTERVAL)
     exclude = set()
@@ -3675,7 +3915,8 @@ def cmd_autopilot(args):
     opts = {'interval': interval, 'dry_run': bool(args.dry_run),
             'no_nudge': bool(args.no_nudge), 'catch_up': bool(args.catch_up),
             'exclude': sorted(exclude), 'scope': args.scope or None,
-            'loop': bool(args.loop), 'notify': args.notify, 'notify_env': keep}
+            'loop': bool(args.loop), 'notify': args.notify, 'notify_env': keep,
+            'appoint': bool(args.appoint)}
     if verb == 'start':
         return autopilot_start(args, store, opts)
     io = AutopilotIO(store, me.get('pane_id'), me.get('terminal_id'), scope_from(args),
@@ -3721,7 +3962,8 @@ def cmd_autopilot(args):
 
     loop = autopilot.Autopilot(io, dry_run=args.dry_run, nudge=not args.no_nudge,
                                catch_up=args.catch_up, exclude=exclude, confirm=confirm,
-                               loop=args.loop, grace=grace)
+                               loop=args.loop, grace=grace, appoint=args.appoint,
+                               appoint_grace=appoint_grace)
     previous = signal.signal(signal.SIGTERM, halt)
     try:
         if passes is None:
@@ -3855,7 +4097,7 @@ def build_parser():
     ln.add_argument('--pane', help="this session's pane id (w1:p2); wins over HERDR_PANE_ID")
 
     ld = sub.add_parser('lead', help="a plan's lead record: claim, show, handover, takeover, "
-                        'release (herdr-peers/lead-v1)')
+                        'release, verify (herdr-peers/lead-v1, lead-v2)')
     lsub = ld.add_subparsers(dest='lead_verb')
     pane_help = "this session's pane id (w1:p2); wins over HERDR_PANE_ID"
     lc = lsub.add_parser('claim', help='become the lead of a plan (epoch 1), or refresh your record')
@@ -3864,15 +4106,29 @@ def build_parser():
     lt = lsub.add_parser('takeover', help='as the first reachable successor, take the lead '
                          '(epoch+1)')
     lt.add_argument('--reason', help='why, when the lead still looks reachable (recorded)')
+    lt.add_argument('--as-lane', action='store_true',
+                    help='as a lane of a plan whose record carries the appointment grant, take the '
+                    'lead when the lead, every successor and every earlier lane are gone '
+                    '(probed twice; protocol 2)')
     lr = lsub.add_parser('release', help='leave the plan without a lead (epoch+1)')
+    lv = lsub.add_parser('verify', help='before a merge, tag or release: is this pane still the '
+                         'lead, here and on the plan\'s other machines (read-only)?')
     ls_ = lsub.add_parser('show', help='print the lead record (no plan: every record)')
     ls_.add_argument('--pane', help=pane_help)
     ls_.add_argument('--json', action='store_true', help='herdr-peers/lead-v1 JSON')
-    for q in (lc, lh, lt, lr, ls_):
+    for q in (lc, lh, lt, lr, ls_, lv):
         q.add_argument('--plan', help='plan id or repo/id (default: $DWP_PLAN id or directory basename)')
+    lv.add_argument('--pane', help=pane_help)
     for q in (lc, lh, lt, lr):
         q.add_argument('--pane', help=pane_help)
         q.add_argument('--scope', help='allow-list for the lead notices')
+    grant = lc.add_mutually_exclusive_group()
+    grant.add_argument('--allow-appointment', action='store_true',
+                       help='record the human\'s standing grant: when the lead and every successor '
+                       'are gone, a lane may be appointed (protocol 2; only on the human\'s word)')
+    grant.add_argument('--no-appointment', action='store_true', help='withdraw the grant')
+    lc.add_argument('--any-kind', action='store_true',
+                    help='with --allow-appointment: a lane of any agent kind may be appointed')
     for q in (lc, lh):
         q.add_argument('--succession', help='successors in order, comma-separated addresses')
         q.add_argument('--lanes', help='replace lanes to notify, comma-separated addresses; empty clears, omitted preserves on refresh')
@@ -3972,6 +4228,10 @@ def build_parser():
                     'started')
     ap.add_argument('--scope', help='allow-list: *, <machine>, <machine>:<workspace>, '
                     'comma-separated (default: every enabled machine)')
+    ap.add_argument('--appoint', action='store_true',
+                    help='with --loop: when a plan whose lead record carries the developer\'s grant '
+                    'has lost its lead and every successor, ask its first live lane to take the '
+                    'lead (lead takeover --as-lane); only on the human\'s word')
     ap.add_argument('--loop', action='store_true',
                     help='also keep every open plan running: ask the idle lead of a plan that '
                     'is not finished to continue it, on every enabled machine')

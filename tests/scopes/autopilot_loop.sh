@@ -743,7 +743,7 @@ good = {'schema': 'herdr-peers/plans-v1', 'state': 'ok', 'agents': [
     'plan': 'P1', 'lead': None, 'epoch': 1, 'succession': [], 'lanes': [], 'class': 'open',
     'progress': None, 'blocker_class': None, 'open_asks': None, 'repo_root': None, 'plan_dir': None,
     'state_updated_at': None, 'server': 'a' * 64, 'updated_at': '2026-01-01T00:00:00Z', 'lead_in_repo': None,
-    'tasks_done': None, 'tasks_total': None, 'current_task': None, 'detail': None}]}
+    'tasks_done': None, 'tasks_total': None, 'current_task': None, 'detail': None, 'appoint': None, 'appointed': False, 'appointed': False}]}
 assert fleet_report.valid_report(good)
 for key in sorted(fleet_report.PLAN_KEYS):
     broken = json.loads(json.dumps(good)); del broken['plans'][0][key]
@@ -887,7 +887,7 @@ report = {'schema': 'herdr-peers/plans-v1', 'state': 'ok', 'agents': [], 'plans'
     'plan': 'P1', 'lead': None, 'epoch': 1, 'succession': [], 'lanes': [], 'class': 'open',
     'progress': None, 'blocker_class': None, 'open_asks': None, 'repo_root': None, 'plan_dir': None,
     'state_updated_at': None, 'tasks_done': 1, 'tasks_total': 2, 'server': 'a' * 64,
-    'updated_at': '2026-01-01T00:00:00Z', 'lead_in_repo': None, 'detail': None,
+    'updated_at': '2026-01-01T00:00:00Z', 'lead_in_repo': None, 'detail': None, 'appoint': None, 'appointed': False,
     'current_task': {'id': 'T-1', 'title': 'bad\x1b[0m'}}]}
 assert not fleet_report.valid_report(report), 'a raw control character in a task title is refused'
 report['plans'][0]['current_task']['title'] = 'fine'
@@ -1000,5 +1000,84 @@ assert '"detail": null' in io.saved[-1] and io.records.count('fleet_too_large') 
 print('ok')
 PY
 assert_eq "free text is cleaned and redacted; a map over the cap drops plan details, recorded once" "ok" "$OUT"
+
+# --- the appointment drill (PLAN_009): the lead dies mid-plan, a lane takes it, the lead comes back ---
+drop_agent() { python3 -c 'import json,sys; p, pane = sys.argv[1:3]; a=[x for x in json.load(open(p)) if x["pane_id"]!=pane]; json.dump(a, open(p,"w"))' "$FAKE_HERDR_DIR/local/agents.json" "$1"; }
+cat >"$WORK/tell" <<'SH'
+#!/bin/sh
+cat >>"$0.events"
+SH
+chmod +x "$WORK/tell"
+appoint_world() {
+  loop_world "$1"; cp "$WORK/../tell" "$WORK/tell" 2>/dev/null || true
+  mkstate "$REPO" PLAN_970_appoint "$V5_OPEN"
+  pane_claim w2:p1 "$REPO" PLAN_970_appoint --succession local:w9:p8 --lanes local:w9:p7,local:w1:p2 "$2" --any-kind
+}
+TELL="$WORK/tell"
+appoint_world appointdrill --allow-appointment
+drop_agent w2:p1
+export HERDR_PEERS_AUTOPILOT_APPOINT_GRACE=0 HERDR_PEERS_APPOINT_PROBE_GAP=0
+run "$HELPER" autopilot --loop --passes 3 --interval 0 --notify "$TELL"
+assert_contains "without --appoint the daemon only reports the plan without a lead" "$(ap_records)" "plan_no_lead"
+assert_eq "and asks no lane" "" "$(last_prompt local w1:p2 | grep -o 'as-lane')"
+: >"$FAKE_HERDR_DIR/argv.log"
+run "$HELPER" autopilot --loop --appoint --passes 3 --interval 0 --notify "$TELL"
+assert_rc "--appoint runs" 0
+assert_contains "the first live lane is asked to take the lead (the gone lane before it is skipped)" \
+  "$(last_prompt local w1:p2)" "herdr-peers lead takeover --plan PLAN_970_appoint --as-lane"
+assert_contains "the prompt says to verify before a merge, tag or release" "$(last_prompt local w1:p2)" "lead verify"
+assert_contains "the appointment prompt is recorded" "$(ap_records)" "plan_appointment_prompted"
+assert_contains "and reported" "$(cat "$TELL.events")" '"event": "plan_appointment_prompted"'
+run sh -c "cd '$REPO' && HERDR_PANE_ID=w1:p2 '$HELPER' lead takeover --plan PLAN_970_appoint --as-lane"
+assert_rc "the lane's helper checks twice and takes the lead" 0
+run "$HELPER" autopilot --loop --appoint --passes 2 --interval 0 --notify "$TELL"
+assert_contains "the daemon reports the appointment once it sees it" "$(cat "$TELL.events")" '"event": "plan_appointed"'
+assert_eq "the appointee leads at epoch 2" "local:w1:p2 2" \
+  "$(cd "$REPO" && "$HELPER" lead show --plan PLAN_970_appoint --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["lead"], d["epoch"])')"
+# The lead comes back: it is refused as lead and cannot pass verify.
+python3 - "$FAKE_HERDR_DIR/local/agents.json" <<'PY'
+import json, sys
+p = sys.argv[1]; a = json.load(open(p))
+a.append({"agent": "claude", "agent_status": "idle", "pane_id": "w2:p1", "workspace_id": "w2", "tab_id": "w2:t1", "terminal_id": "term_local_w2p1", "terminal_title_stripped": "back", "cwd": "/work", "focused": False})
+json.dump(a, open(p, "w"))
+PY
+run sh -c "cd '$REPO' && HERDR_PANE_ID=w2:p1 HERDR_WORKSPACE_ID=w2 '$HELPER' lead verify --plan PLAN_970_appoint"
+assert_rc "the returning lead fails lead verify (exit 4)" 4
+run sh -c "cd '$REPO' && HERDR_PANE_ID=w2:p1 HERDR_WORKSPACE_ID=w2 '$HELPER' lead release --plan PLAN_970_appoint"
+assert_rc "and cannot act as lead (exit 4)" 4
+run sh -c "cd '$REPO' && HERDR_PANE_ID=w1:p2 '$HELPER' lead verify --plan PLAN_970_appoint"
+assert_rc "the appointee passes lead verify" 0
+if grep -q '"push"\|"update-ref"\|"notes"' "$FAKE_HERDR_DIR/argv.log" "$FAKE_HERDR_DIR/ssh.log" 2>/dev/null; then
+  t_fail "the drill writes nothing to git or a remote"; else t_ok "the drill writes nothing to git or a remote"; fi
+
+# No grant: --appoint changes nothing.
+appoint_world appointnogrant --no-appointment
+drop_agent w2:p1
+run "$HELPER" autopilot --loop --appoint --passes 3 --interval 0
+assert_contains "without the grant the plan is only reported" "$(ap_records)" "plan_no_lead"
+assert_eq "and no lane is asked" "" "$(last_prompt local w1:p2 | grep -o 'as-lane')"
+# The grace: evidence younger than the grace never appoints.
+appoint_world appointgrace --allow-appointment
+drop_agent w2:p1
+run env HERDR_PEERS_AUTOPILOT_APPOINT_GRACE=3600 "$HELPER" autopilot --loop --appoint --passes 4 --interval 0
+assert_eq "within the grace no lane is asked" "" "$(last_prompt local w1:p2 | grep -o 'as-lane')"
+# A successor that is alive is asked instead; the lane is never asked over it.
+loop_world appointsucc; mkstate "$REPO" PLAN_971_succ "$V5_OPEN"
+pane_claim w2:p1 "$REPO" PLAN_971_succ --succession local:w1:p2 --lanes local:w9:p7 --allow-appointment --any-kind
+drop_agent w2:p1
+run "$HELPER" autopilot --loop --appoint --passes 3 --interval 0
+assert_contains "a live successor gets the takeover prompt, not an appointment" "$(last_prompt local w1:p2)" \
+  "lead takeover --plan PLAN_971_succ —"
+# A successor that is alive but cannot be prompted (here the daemon's own
+# pane) still blocks an appointment: a lane is never asked over a live successor.
+loop_world appointbusy; mkstate "$REPO" PLAN_972_busy "$V5_OPEN"
+pane_claim w2:p1 "$REPO" PLAN_972_busy --succession local:w1:p1 --lanes local:w1:p2 --allow-appointment --any-kind
+drop_agent w2:p1
+run "$HELPER" autopilot --loop --appoint --passes 4 --interval 0
+assert_eq "a live successor, even one that cannot be prompted, blocks an appointment" "" \
+  "$(last_prompt local w1:p2 | grep -o 'as-lane')"
+run "$HELPER" autopilot --appoint --once
+assert_rc "--appoint needs --loop (exit 2)" 2
+unset HERDR_PEERS_AUTOPILOT_APPOINT_GRACE HERDR_PEERS_APPOINT_PROBE_GAP
 unset TELL_OUT HERDR_PEERS_AUTOPILOT_GRACE
 export XDG_STATE_HOME=$LOOP_XDG_STATE

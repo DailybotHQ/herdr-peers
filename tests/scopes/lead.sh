@@ -453,4 +453,7 @@ assert_contains "drill: failed new-lead delivery remains in the notifier log" \
   "$(grep '"notifier"' "$(state_log)" | grep 'local:w2:p1')" '"failed"'
 
 # shellcheck source=/dev/null
+. "$ROOT/tests/scopes/appoint.sh"
+
+# shellcheck source=/dev/null
 . "$ROOT/tests/scopes/round_two.sh"

@@ -291,6 +291,16 @@ Notices (§3.3) and leadership (§12), added in 0.3.0, are additive: they use
 the existing stamp keys, and a 0.2.x receiver decides every notice **never**.
 Autopilot (§13), added in 1.2.0, sends no protocol message at all.
 
+`protocol=2` (herdr-peers 2.0.0) adds lead appointment (§12). It is used by
+one message only: the lead notice of a plan whose record carries the
+appointment grant (`lead-v2`). Every other message — asks, replies, notices,
+and lead notices of plans without the grant — is still stamped `protocol=1`
+and stays byte-compatible with 1.x. A 2.x receiver accepts both numbers; a
+`protocol=2` stamp that is not a notice (`reply=no`) is decided **never**
+(rule 5). A 1.x receiver decides every `protocol=2` message **never** (rule
+5), so it never adopts an appointment it cannot verify: it fails closed, keeps
+its old record, and stays inert for that plan until it is upgraded.
+
 ## 11. Fixtures
 
 Every rule above has a message fixture in `tests/fixtures/messages/`; the
@@ -331,6 +341,7 @@ state, so panes on one Herdr server share it. Only the holder of the
 | handover | the current lead, naming its successor | current + 1 |
 | takeover | an entry of `succession[]`, when every earlier entry and (unless a recorded reason says asks to it timed out twice) the lead are gone | current + 1 |
 | release | the current lead | current + 1, `lead: null` |
+| appointment | a lane of a record that carries the grant, when the lead, every successor and every earlier lane are gone (§12, *Appointment*) | current + 1, `via: appointment` |
 
 *Gone* means Herdr cannot reach the pane, it runs no agent, or it waits
 (blocked) at its CLI's usage-limit screen. A limit banner in the last lines of
@@ -399,6 +410,7 @@ first matching rule decides:
 | F6 | The sender is the stored lead, epoch = stored + 1. | adopted (handover, or release when `lead` is `null`) |
 | F7 | The sender is in the stored `succession[]`, epoch = stored + 1, the record names the sender as lead, and every earlier successor is gone (the receiver checks). | adopted (takeover) |
 | F8 | The stored record came by takeover at the same epoch, and the sender sits earlier in the previous `succession[]` than the stored lead and names itself. | adopted (tie to the earlier position) |
+| F10 | The record says `via: appointment`; the stored record carries the grant (`appoint`); the sender is in the stored `lanes[]` and names itself at epoch = stored + 1; `succession`, `appoint` and `lanes` (less the sender) equal the stored ones; and the receiver's own probes find the stored lead, **every** successor and every lane before the sender gone — strongly: an idle pane with a limit banner is not proof. A tie at the appointment epoch goes to the earlier lane of the previous `lanes[]` (as F8). | adopted (appointment) |
 | F9 | Anything else. | rejected |
 
 A notice whose record equals the stored record reports `current` and `check`
@@ -419,6 +431,44 @@ plan's own authorization.
 The address `lead` in `ask` and `notify` names the current lead of `--plan`
 or `$DWP_PLAN`; when that plan (from `$DWP_PLAN`) has no record, it names the
 lead of the one stored record that lists this peer as a lane or successor.
+
+### Appointment (protocol 2)
+
+When a plan's lead and every successor are gone, a plan may keep going with a
+lead appointed from its own lanes. Nothing about it is automatic without the
+human:
+
+- **Consent.** The grant is a standing decision of the human, recorded in the
+  lead record as `appoint: "lanes"` (or `"lanes:any-kind"`, any agent kind)
+  by `lead claim --allow-appointment`, which a lead runs only on its human's
+  word; `--no-appointment` withdraws it. A refresh, handover or takeover keeps
+  it; a release ends it. A record that carries it (`lead-v2`) is announced as
+  `protocol=2` (§10).
+- **Who.** Only a lane already in the stored record, and only the first lane
+  that is not gone: every earlier lane must be gone too. A pane outside the
+  record is never appointed (there is no appointer to authenticate: `from=` is
+  a claim).
+- **The appointee acts itself**: `lead takeover --as-lane` checks the grant,
+  that it is a lane, that it works in the plan's repository (a linked
+  worktree counts), and probes the lead, every successor and every earlier
+  lane twice, a minute apart; any sign of life refuses. It writes the new
+  record (epoch + 1, `via: appointment`) locally and announces it. `--reason`
+  is not accepted: only strong evidence counts. At most two appointments per
+  plan; then only the human can restart it.
+- **Receivers** decide by F10 with their own probes; the evidence a notice
+  might carry is never trusted.
+- **Coming back.** A lead that only slept or hit its usage limit finds a
+  higher epoch: its lead verbs are refused and the next lead notice makes it
+  step down. It leads again only by a handover from the appointee.
+- **Before a merge, tag or release** the lead runs `lead verify`: it re-reads
+  its record on its own machine and asks every other machine of the plan for
+  its read-only report; it refuses when it is not the lead here or any
+  machine shows the plan at a higher epoch, and names every machine it could
+  not reach. Nothing is ever written to git or to another machine for this.
+- **Residual risk.** When two machines cannot see each other, a returning
+  lead on one and the appointee on the other may both execute tasks until the
+  partition heals (duplicate or conflicting local work). `lead verify` cannot
+  see a machine it cannot reach. This is the price of writing nothing remotely.
 
 ### Plan mirror resolution
 
