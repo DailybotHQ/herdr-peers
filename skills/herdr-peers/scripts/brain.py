@@ -59,9 +59,14 @@ SENSITIVE = re.compile(
     r'despleg\w*|desplieg\w*|borra\w*|elimina\w*|fusiona\w*|produccion|producción|'
     r'lanzamiento\w*|versi\wn)\b')
 
-# The one command the brain may run without the human: its own answer.
-ANSWER_CMD_RE = re.compile(r'(?:\S*/)?herdr-peers autopilot answer q-[0-9a-f]{12} [a-z_]{1,32}')
-SHELL_META = re.compile(r'[;&|`$<>(){}\\]')
+# The one command the brain may run without the human: its own answer, by
+# name (the launch puts the helper on the brain's PATH), with nothing else.
+ANSWER_CMD_RE = re.compile(r'herdr-peers autopilot answer q-[0-9a-f]{12} [a-z_]{1,32}')
+# A permission mode in the brain's footer that would skip the approval
+# screens the daemon relies on: such a brain is retired at once.
+AUTO_MODE = re.compile(r'(?im)^\s*\S*\s*(auto mode on|bypass permissions on|accept edits on|'
+                       r'auto-accept edits on)\b')
+
 
 BRIEF = (
     '[autopilot] You are the brain of the herdr-peers autopilot on this machine. You decide '
@@ -155,25 +160,35 @@ def blocker_is_askable(plan):
     return not SENSITIVE.search(text)
 
 
-MENU_ROW = re.compile(r'^\s*(?:[❯›>→▶]\s*)?1[.)]\s+\S')
-RULE_ONLY = set('─━═╌▔▀▄_-╭╮╰╯ ')
+RULE_LINE = re.compile(r'^\s*[╌─━═]{8,}\s*$')
+PROCEED = re.compile(r'^\s*Do you want to proceed\?\s*$')
+FIRST_OPTION = re.compile(r'^\s*[❯›>]\s*1\.\s+Yes\s*$')
 
 
-def approval_is_answer(text):
-    """True when an approval screen in the brain's pane asks to run exactly
-    one `herdr-peers autopilot answer q-… <action>` and nothing that looks
-    like any other command: the only approval the daemon gives the brain.
-    Only the approval itself is read — the ten lines above its first option."""
+def approval_is_answer(kind, text):
+    """True only for Claude's Bash permission dialog whose command block — the
+    lines between the two rules right above "Do you want to proceed?" — is
+    exactly one line, `herdr-peers autopilot answer q-<12 hex> <word>`, and
+    whose first option, right below the question, is "Yes". Every other
+    layout, kind or extra line refuses (fail closed)."""
+    if kind != 'claude':
+        return False
     lines = (text or '').splitlines()[-40:]
-    first = [i for i, l in enumerate(lines) if MENU_ROW.match(l)]
-    if not first:
+    asks = [i for i, l in enumerate(lines) if PROCEED.match(l)]
+    if len(asks) != 1:
         return False
-    region = [l.strip(' \t│┃') for l in lines[max(0, first[-1] - 10):first[-1]]]
-    region = [l[2:] if l.startswith('$ ') else l for l in region if l and not set(l) <= RULE_ONLY]
-    answers = [l for l in region if ANSWER_CMD_RE.fullmatch(l.strip())]
-    if len(answers) != 1:
+    q = asks[0]
+    if q + 1 >= len(lines) or not FIRST_OPTION.match(lines[q + 1]):
         return False
-    return not any(SHELL_META.search(l) for l in region)
+    if q < 3 or not RULE_LINE.match(lines[q - 1]):
+        return False
+    rules = [i for i in range(q - 2, -1, -1) if RULE_LINE.match(lines[i])]
+    if not rules:
+        return False
+    block = [l.strip() for l in lines[rules[0] + 1:q - 1]]
+    if len(block) != 1 or not block[0]:
+        return False
+    return ANSWER_CMD_RE.fullmatch(block[0]) is not None
 
 
 def question_text(qid, case, plan_id, machine):

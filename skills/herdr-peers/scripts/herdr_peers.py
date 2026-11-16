@@ -3259,7 +3259,7 @@ class AutopilotIO(object):
     def brain_owner(self):
         return 'local:%s' % self.pane
 
-    def brain_launch(self, kinds, models):
+    def brain_launch(self, kinds, models, exclude=()):
         """Pick an account (ask mode), lease it, create a workspace of the
         daemon's own and start the brain in its fresh shell. Returns
         {pane, terminal, workspace, kind, profile}; raises on any refusal."""
@@ -3272,6 +3272,9 @@ class AutopilotIO(object):
         for kind in kinds:
             if models.get(kind):
                 argv += ['--model-for', '%s=%s' % (kind, models[kind])]
+        for profile in exclude:
+            if brain.PROFILE_RE.fullmatch(profile):
+                argv += ['--exclude', profile]
         argv += ['--owner', self.brain_owner(), '--max-age', '300', '--json']
         env = dict(os.environ, AGENTKIT_PERMISSIONS='ask')
         rc, out = bounded_run(argv, b'', 256 * 1024, 30, env=env)
@@ -3290,8 +3293,12 @@ class AutopilotIO(object):
         import tempfile
         home = tempfile.mkdtemp(prefix='brain-', dir=self.store.dir)
         self.brain_home = home
+        # The brain answers with `herdr-peers` by name: put this very helper first on its PATH.
+        helper_dir = os.path.dirname(os.path.abspath(__file__))
         made = herdr_json(['workspace', 'create', '--label', brain.WORKSPACE_LABEL, '--no-focus',
-                           '--cwd', home], timeout=15)
+                           '--cwd', home, '--env',
+                           'PATH=%s:%s' % (helper_dir, os.environ.get('PATH', '/usr/bin:/bin'))],
+                          timeout=15)
         result = made.get('result') or {}
         pane = (result.get('root_pane') or {})
         workspace = (result.get('workspace') or {}).get('workspace_id')

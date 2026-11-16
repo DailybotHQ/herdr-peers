@@ -597,7 +597,7 @@ class Autopilot(object):
             choice = decide(kind, 'blocked' if step and engaged(text) else state, text)
             if choice.action == 'keys' and self.brain is not None and self.brain.is_brain(addr) \
                     and choice.cls not in ('folder_trust', 'update_prompt') \
-                    and not (choice.cls == 'permission' and brain_mod().approval_is_answer(text)):
+                    and not (choice.cls == 'permission' and brain_mod().approval_is_answer(kind, text)):
                 # The brain reads text other agents wrote: the daemon approves
                 # nothing in its pane but its own answer command.
                 memo.left = digest
@@ -1075,6 +1075,7 @@ class BrainKeeper(object):
     def __init__(self, ap, opts):
         self.ap, self.io, self.opts = ap, ap.io, opts
         self.b = brain_mod().Brain()
+        self.excluded = set()   # profiles whose default mode skips approvals
         self.last = None   # the brain's last decision, for the map and the watcher
 
     # -- lifecycle ---------------------------------------------------------
@@ -1096,6 +1097,15 @@ class BrainKeeper(object):
             if gone or limited:
                 self.retire('gone' if gone else 'usage_limit')
             elif b.state == 'starting' and row is not None and row.get('state') in ('idle', 'done'):
+                screen = self.io.read('local', b.pane) or ''
+                if B.AUTO_MODE.search('\n'.join(screen.splitlines()[-6:])):
+                    # Its profile starts in a mode that skips approvals: the
+                    # daemon's approval guard would never see them. Not this one.
+                    addr = 'local:%s' % b.pane
+                    self.excluded.add(b.profile)
+                    self.retire('permission_mode')
+                    self.refused(addr)
+                    return
                 if not self.ap.dry_run:
                     self.io.prompt('local', b.pane, B.BRIEF)
                 b.state, b.briefed = 'ready', True
@@ -1117,7 +1127,7 @@ class BrainKeeper(object):
             return
         try:
             info = self.io.brain_launch(self.opts.get('kinds') or ('claude', 'codex', 'grok'),
-                                        self.opts.get('models') or {})
+                                        self.opts.get('models') or {}, sorted(self.excluded))
         except Exception as exc:  # a refusal or a tool failure: recorded, retried within the cap
             b.state = 'failed'
             self.ap.record('local:-', None, Decision('leave', 'brain_launch_failed',

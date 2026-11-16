@@ -433,7 +433,13 @@ set it up beyond the flag; it needs coding-agents-kit 1.3.0 or later (`ak`).
    shell starts in a fresh, empty, private directory (never the daemon's
    state directory, so `--trust-cwd` trusts nothing the daemon relies on),
    and types the quoted line into that fresh shell — never into an agent's
-   pane. The directory is removed when the brain is closed.
+   pane. The directory is removed when the brain is closed. Its PATH starts
+   with this very helper's directory, so it answers with `herdr-peers` by
+   name.
+6. If the brain's screen shows a permission mode that skips approvals
+   (auto mode, bypass permissions, accept edits — a profile's own default,
+   which `ak`'s ask launch does not override), the daemon retires that brain
+   at once, tells you, and excludes that profile from the next pick.
 5. When the agent is up it receives one brief: it decides nothing on its own,
    changes nothing, and answers each question only with the command the
    question shows.
@@ -468,10 +474,15 @@ a notification, or nothing).
 
 The brain reads text other agents wrote, so it is treated as a
 prompt-injection target. The screen pass approves **nothing** in the
-brain's pane except an approval whose command is exactly `herdr-peers
-autopilot answer q-<12 hex> <word>` with no other command around it;
-any other permission or question there is refused, recorded
-(`brain_permission_refused`) and you are told once. An injected brain can
+brain's pane except Claude's Bash permission dialog whose command block —
+the lines between the two rules right above "Do you want to proceed?" — is
+exactly one line, `herdr-peers autopilot answer q-<12 hex> <word>`, by name
+and nothing else, with "Yes" as its first option. Any other layout, any
+other kind of agent (until it has its own verified fixture), any extra or
+wrapped line, any path, refuses: the approval is left, recorded
+(`brain_permission_refused`) and you are told once. For now that makes
+Claude the only kind whose brain can answer; others are launched but their
+answers are never approved. An injected brain can
 still choose any allowed action for an open question — that is the
 residual risk, bounded by the lists above. `notify_human` runs your `--notify` command with a `needs_human`
 event; it never stops anything.
