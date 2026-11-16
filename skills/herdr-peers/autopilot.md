@@ -156,6 +156,8 @@ one of those, it moves to the first row that is not.
 | A usage limit (the CLI's own banner; a `429` in a command's output is not one) | Leaves it; every 30 minutes accepts the option shown (if any) and asks the agent to continue its pending plan — for at most a day, never over a draft on the input line, and not with `--no-nudge`. |
 | A login, a sign-in, an API-key or device-code prompt | **Never touched.** A human signs in. |
 | Claude's bypass-permissions acknowledgement | **Never touched.** The developer accepts it once per profile. |
+| A permission or plan approval where every row refuses or widens permissions | **Denied, never left blocked** (a change in 2.1.0: it used to wait for a human): its first refusal row (`No`, `Deny`, `Cancel` — never a row naming exit or quit), else `esc` — except on Codex, where `esc` aborts the whole turn, so the dialog is left. Recorded `denied`. Once the agent is idle again it is told once, with a fixed prompt, to continue another way within its plan's gates or record a blocker. |
+| An agent's own question whose rows all refuse or open free text | Left: it is a decision about the work, never answered "No" for the human (the prose nudge still applies when its turn ends asking). |
 | A blocked pane with no menu it recognises | Left, and recorded as `unknown`. |
 
 Verified on real panes of Claude Code, Codex, Cursor, Grok, Pi and
@@ -181,7 +183,9 @@ selected; otherwise it is left alone.
 - Touch its own pane, an excluded pane, or a machine outside the scope.
 - Read, store or print screen text. The record holds the screen class, the
   option number and the keys.
-- Send `esc`: on a working agent it interrupts the turn.
+- Send `esc` to a working agent: it would interrupt the turn. `esc` goes only
+  to a blocked dialog being denied, when it has no refusal row or the
+  refusal row did not take.
 
 ## 5. The plan loop (`--loop`)
 
@@ -393,7 +397,7 @@ profiles are excluded. Each retirement is recorded with `why=`, and
 | Case | Allowed actions | Default (no valid answer in 3 minutes) |
 | --- | --- | --- |
 | A plan is stalled (three prompts without progress) | `nudge_once_more` (one more prompt to its lead, once per plan), `notify_human`, `leave` | `leave` |
-| A plan is blocked, its state records the blocker as one its lead may resolve (`"resolver": "lead"` in the blocker record — a field the plan writes, not prose), and the blocker names no escalation class and no sensitive subject (credential, login, consent, payment, a push to main, a merge, a release, a deletion, a secret, production — in English and Spanish) | `ask_lead_to_resolve` (one fixed prompt asking the lead to resolve it within its recorded authority), `notify_human`, `leave` | `leave` |
+| A plan is blocked, its state records the blocker as one its lead may resolve (`"resolver": "lead"` in the blocker record — a field the plan writes, not prose), its class is none or one a lead may handle (C3, C4, C7 — never C1 approval, C2 consent or login, C5 damage, C6 terms, nor a class outside C1–C7; an explicit `class` in the blocker record, as pack 8.0.0's plan-snapshot/v8 always writes, wins over a class named in its prose), and it names no sensitive subject (credential, login, consent, payment, a push to main, a merge, a release, a deletion, a secret, production — in English and Spanish) | `ask_lead_to_resolve` (one fixed prompt asking the lead to resolve it within its recorded authority), `notify_human`, `leave` | `leave` |
 | An agent waits at a screen autopilot does not recognise | `leave`, `notify_human` | `leave` |
 
 The question is one fixed prompt: the case, the plan and machine, the
@@ -423,8 +427,14 @@ the lines between the two rules right above "Do you want to proceed?" — is
 exactly one line, `herdr-peers autopilot answer q-<12 hex> <word>`, by name
 and nothing else, with "Yes" as its first option. Any other layout, any
 other kind of agent (until it has its own verified fixture), any extra or
-wrapped line, any path, refuses: the approval is left, recorded
-(`brain_permission_refused`) and you are told once. For now that makes
+wrapped line, any path, is **denied, never left waiting**: the
+dialog's refusal row (else `esc`; never Yes, a widening row or auto mode),
+recorded `brain_permission_denied`. Once idle, the brain is reminded once,
+with a fixed prompt, that the only command it may run is `herdr-peers
+autopilot answer <qid> <action>` and that the question carries all it
+needs. Three denials in an hour retire it as misbehaving (`brain_replaced
+why=misbehaving`), and a replacement is launched within the hourly cap. Its
+brief says so up front: one command, nothing else approved. For now that makes
 Claude the only kind whose brain can answer; others are launched but their
 answers are never approved. An injected brain can
 still choose any allowed action for an open question — that is the

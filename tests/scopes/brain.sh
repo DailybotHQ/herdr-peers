@@ -64,7 +64,16 @@ for text in ('needs the staging API key', 'waiting for login', 'push to main', '
              'authorize the app', 'falta la contraseña', 'credenciales vencidas', 'hay que publicar',
              'desplegar a producción', 'borrar la tabla', 'fusionar la rama', 'iniciar sesión otra vez'):
     assert not B.blocker_is_askable(plan(text)), text
-assert not B.blocker_is_askable(plan('a flaky test', cls='C4'))
+# the class rule (pack 8.0.0's plan-snapshot/v8 always records a class): C3, C4, C7 may go to the
+# lead; C1 approval, C2 consent/login, C5 damage, C6 terms never; an unknown class never
+for klass in ('C3', 'C4', 'C7'):
+    assert B.blocker_is_askable(plan('a flaky test', cls=klass)), klass
+for klass in ('C1', 'C2', 'C5', 'C6', 'C9', 'X', ''):
+    assert not B.blocker_is_askable(plan('a flaky test', cls=klass)) or klass == '', klass
+assert not B.blocker_is_askable(plan('a flaky test', cls='C3', resolver='human'))
+assert not B.blocker_is_askable(plan('a flaky test', cls='C3', resolver=None))
+assert B.blocker_is_askable(plan('a flaky test', cls=None)), 'no class and resolver lead: as before'
+assert not B.blocker_is_askable(plan('needs the staging API key', cls='C3')), 'the sensitive guard still holds'
 # the only approval the daemon gives the brain: exactly its answer command
 screen = open(sys.argv[2]).read()
 i = screen.rindex(' touch created.txt')
@@ -421,14 +430,48 @@ screen = open(sys.argv[2]).read()
 io, ap = fresh()
 io.rows['local'] = [row('w9:p1', 'idle', 2)]
 ap.run_pass(); step(ap)
-keyed = []
-io.keys = lambda m, p, k: keyed.append(p) or True
+keyed, pressed = [], []
+io.keys = lambda m, p, k: keyed.append(p) or pressed.append(list(k)) or True
 io.rows['local'] = [row('w9:p1', 'blocked', 3)]
 io.screens['w9:p1'] = screen
 step(ap)
-assert keyed == [], 'a permission prompt in the brain pane is never keyed'
-assert any(o[2] == 'brain_permission_refused' for o in io.log)
-assert io.events.count('needs_human') == 1, 'the human is told once'
+# A refused request in the brain's pane is DENIED, never left: its refusal row ("No, ..."),
+# then Esc if the row did not take; never Yes, never a widening row.
+# the fixture's rows: 1. Yes  2. Yes, and always allow…  3. Yes, and switch to auto mode  4. No
+assert pressed and pressed[0] == ['down', 'down', 'down', 'enter'], pressed
+assert all('enter' not in k or k == ['down', 'down', 'down', 'enter'] for k in pressed), 'only row 4, No'
+assert ['esc'] in pressed, 'the fake screen does not move: Esc follows the refusal row'
+assert any(o[2] == 'brain_permission_denied' for o in io.log), io.log[-3:]
+assert not any(o[2] == 'brain_permission_refused' for o in io.log)
+assert io.events.count('needs_human') == 0, 'a denial needs nobody'
+# Once idle again, the brain is reminded of the one allowed command, once.
+io.screens['w9:p1'] = 'Claude Code\n\n❯ \n'
+io.rows['local'] = [row('w9:p1', 'idle', 4)]
+before = len(io.sent)
+step(ap); step(ap)
+reminders = [t for p, t in io.sent[before:] if p == 'w9:p1']
+assert reminders == [B.REMINDER], reminders
+assert 'herdr-peers autopilot answer <qid> <action>' in B.REMINDER and 'do not run other commands' in B.REMINDER
+assert any(o[2] == 'brain_reminded' for o in io.log)
+# Three denials in an hour retire it as misbehaving; a replacement launches within the cap.
+launched = len(io.launched)
+for n in (5, 7):
+    io.screens['w9:p1'] = screen.replace('touch created.txt', 'touch other-%s.txt' % 'xyz'[n % 3])   # another request (the digest blanks digits)
+    io.rows['local'] = [row('w9:p1', 'blocked', n)]
+    step(ap)
+    io.screens['w9:p1'] = 'Claude Code\n\n❯ \n'
+    io.rows['local'] = [row('w9:p1', 'idle', n + 1)]
+    step(ap)
+assert any(o[2] == 'brain_replaced' and o[4] == 'misbehaving' for o in io.log), io.log[-5:]
+assert ap.brain.retired['why'] == 'misbehaving'
+step(ap)
+assert len(io.launched) == launched + 1, 'a replacement is launched'
+# The answer command itself is still approved.
+io, ap = fresh()
+io.rows['local'] = [row('w9:p1', 'idle', 2)]
+ap.run_pass(); step(ap)
+keyed = []
+io.keys = lambda m, p, k: keyed.append(p) or True
 i = screen.rindex(' touch created.txt')
 io.screens['w9:p1'] = screen[:i] + ' herdr-peers autopilot answer q-0123456789ab leave' + screen[i + len(' touch created.txt'):]
 io.rows['local'] = [row('w9:p1', 'blocked', 4)]

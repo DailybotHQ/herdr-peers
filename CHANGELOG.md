@@ -9,6 +9,46 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Nothing is left blocked, not even the brain.** A request in the brain's
+  pane that the daemon will not approve (anything but its own answer
+  command) was left at "Do you want to proceed?", so the brain sat there
+  and every later question fell to its default. It is now **denied**: the
+  dialog's refusal row, else `esc` — never Yes, a widening row or auto mode
+  (`brain_permission_denied`). Once idle, the brain is reminded once of the
+  one allowed command; three denials in an hour retire it
+  (`brain_replaced why=misbehaving`) and a replacement launches within the
+  cap. The brief now names the single allowed command and says nothing
+  else is approved and the question carries all the context.
+- **Behaviour change outside the brain:** a permission or plan approval the
+  daemon cannot accept (every row refuses or widens permissions) is now
+  **denied** (`denied`: its refusal row, never a row naming exit or quit,
+  else `esc` — except on Codex, where `esc` would abort the turn and the
+  dialog is left), where it used to wait for a human; the agent is told
+  once, when idle, to continue another way or record a blocker. An agent's
+  own question is never denied: it is a decision about the work and stays
+  the human's. Login, the bypass-permissions consent and folder trust stay
+  the human's too.
+- **The brain may be asked about a classed blocker.** `ask_lead_to_resolve`
+  refused every blocker that named a class, and pack 8.0.0's
+  plan-snapshot/v8 always records one, so the brain would never have been
+  asked about a v8 blocker. Now a blocker with `resolver: lead` may go to
+  the lead when its class is none, C3, C4 or C7; C1 (approval), C2
+  (consent or login), C5 (damage) and C6 (terms) stay the human's — the
+  classes the pack refuses `resolver: lead` for — and a class outside C1–C7
+  is refused. The sensitive-subject guard still applies. The machine report
+  takes an explicit blocker `class` over a class named in its prose, and an
+  invalid explicit class drops the resolver (fail closed).
+- **A queued plan that already began is in flight.** Outside Herdr the pack
+  leaves a running plan `queued` in `.dwp/queue.json`; the report's
+  `started, queue not updated` is no longer reported as `queue_blocked`
+  after the grace, and `fleet ui` shows it under Active, not Attention.
+- **Pack 8.0.0 records read correctly** (verified with fixtures):
+  journal-event/v8's blocker events (`raised`, `resolved`) are never taken
+  for a task start, and plan-snapshot/v8's `blocker` object keeps the
+  blocked class, the reason/needs/resolver projection and the stale rule.
+
 ### Added
 
 - **`fleet ui` views: one facet model in every grouping.** A second row

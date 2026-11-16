@@ -56,6 +56,7 @@ TS_RE = re.compile(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z')
 SERVER_DIR_RE = re.compile(r'[0-9a-f]{64}')
 BRANCH_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._/@+-]{0,199}')
 BLOCK_CLASS_RE = re.compile(r'\bC[1-7]\b')
+CLASS_RE = re.compile(r'C[1-7]')
 APPOINT_GRANTS = ('lanes', 'lanes:any-kind')
 TASK_STATUSES = ('pending', 'in_progress', 'completed', 'blocked', 'skipped')
 TITLE_MAX = 120
@@ -338,7 +339,10 @@ def plan_detail(state, plan_dir):
                  'needs': clean_text(blocker.get('needs') if isinstance(blocker.get('needs'), str)
                                      else None, SUMMARY_LINE_MAX),
                  # Who the plan says may resolve it: a field the plan writes, never prose.
+                 # A blocker whose explicit class is not one of C1-C7 backs no resolver.
                  'resolver': blocker.get('resolver') if blocker.get('resolver') in ('lead', 'human')
+                 and (blocker.get('class') is None
+                      or (isinstance(blocker.get('class'), str) and CLASS_RE.fullmatch(blocker['class'])))
                  else None}
     summary, written = plan_summary(plan_dir)
     return {'title': plan_title(plan_dir), 'tasks': tasks, 'tasks_from': start, 'blocker': block,
@@ -386,9 +390,13 @@ def classify(state):
         cls = 'open'
     block_class = None
     if cls == 'blocked' and blocker:
-        text = ' '.join(str(blocker.get(k) or '') for k in ('class', 'needs', 'reason'))[:2000]
-        found = BLOCK_CLASS_RE.search(text)
-        block_class = found.group(0) if found else None
+        named = blocker.get('class')
+        if isinstance(named, str) and CLASS_RE.fullmatch(named):
+            block_class = named   # an explicit class (plan-snapshot/v8 always records one) wins over prose
+        elif named is None:
+            text = ' '.join(str(blocker.get(k) or '') for k in ('needs', 'reason'))[:2000]
+            found = BLOCK_CLASS_RE.search(text)
+            block_class = found.group(0) if found else None
     progress = hashlib.sha256(json.dumps(
         [top, statuses, satisfied, state.get('checkpoint'), blocker, state.get('completed_count')],
         sort_keys=True, default=str).encode('utf-8')).hexdigest()[:16]

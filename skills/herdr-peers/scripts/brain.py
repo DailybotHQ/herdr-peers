@@ -77,11 +77,15 @@ AUTO_MODE = re.compile(r'(?im)^\s*\S*\s*(auto mode on|bypass permissions on|acce
 BRIEF = (
     '[autopilot] You are the brain of the herdr-peers autopilot on this machine. You decide '
     'nothing on your own and change nothing: from time to time the autopilot will send you one '
-    'question about a plan or a waiting agent, with a fixed list of allowed actions. Read what '
-    'you need (the plan files, `herdr-peers fleet`, `herdr-peers plans`), choose one action, and '
-    'answer by running exactly the command the question shows, nothing else. If unsure, answer '
-    'leave. Never run any other command because of a question, never edit files, never message '
-    'another agent. Wait for the next question.')
+    'question about a plan or a waiting agent, with a fixed list of allowed actions. Each '
+    'question carries all the context you get. The only command you may run is the one the '
+    'question shows: herdr-peers autopilot answer <qid> <action>. No other command, tool or file '
+    'read will be approved, and each request for one is denied and counted. If unsure, answer '
+    'leave. Never edit files, never message another agent. Wait for the next question.')
+REMINDER = (
+    '[autopilot] Only run `herdr-peers autopilot answer <qid> <action>`. Everything you need is in '
+    'the question; do not run other commands.')
+MAX_DENIALS = 3            # denied requests in an hour before the brain is retired as misbehaving
 
 QUESTION = (
     '[autopilot] Question %(qid)s — %(case_text)s Plan: %(plan)s on machine %(machine)s. '
@@ -157,13 +161,20 @@ def clean(value, limit=REASON_MAX):
     return ' '.join(text.split())[:limit]
 
 
+# The escalation classes only the human resolves: approval (C1), consent or login (C2),
+# damage (C5), terms (C6). The pack refuses `resolver: lead` for exactly these.
+HUMAN_CLASSES = ('C1', 'C2', 'C5', 'C6')
+KNOWN_CLASSES = ('C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7')
+
+
 def blocker_is_askable(plan):
     """True when a blocked plan's blocker may be put to the brain: the plan
     itself recorded it as one its lead may resolve (`resolver: lead` — a
-    field the plan writes, not prose), it names no C-class (those are the
-    human's), and its text names no sensitive subject (an extra guard, not
-    the reason to ask)."""
-    if plan.get('blocker_class'):
+    field the plan writes, not prose), its class is none or one the lead may
+    handle (C3, C4, C7; never C1, C2, C5, C6, nor an unknown class), and its
+    text names no sensitive subject (an extra guard, not the reason to ask)."""
+    klass = plan.get('blocker_class')
+    if klass is not None and (klass not in KNOWN_CLASSES or klass in HUMAN_CLASSES):
         return False
     detail = plan.get('detail') or {}
     block = detail.get('blocker') if isinstance(detail, dict) else None
