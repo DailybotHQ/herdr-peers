@@ -388,7 +388,8 @@ the brain is never nudged in prose and never
 treated as a plan's lead. On `autopilot stop` its lease is released and its
 workspace closed. The fleet map and `fleet ui` show it: state, account,
 questions in the last hour and its last decision; when a brain was retired,
-why (`gone`, `usage_limit`, `start_timeout`, `permission_mode`) and which
+why (`gone`, `usage_limit`, `start_timeout`, `permission_mode`, or
+`misbehaving` after three denied requests in an hour) and which
 profiles are excluded. Each retirement is recorded with `why=`, and
 `autopilot status` prints the brain's line.
 
@@ -527,7 +528,9 @@ record can take over, by launching **one** fresh agent:
   is launched and the stalled lead is asked once to `lead handover` to it; when
   it does, the new lead is told to resume.
 - **Caps.** One revive per plan per 6 hours, two per plan in all (then only you
-  are told), two an hour across the fleet; an agent that is not up in 3 minutes,
+  are told), two an hour across the fleet. Every launch counts — takeover or
+  handover, taken, failed or timed out — in a private launch log under the
+  state dir, so a restart resets no cap; an agent that is not up in 3 minutes,
   a takeover not done in 10, a handover not done in 15 is given up: its lease and
   its workspace are released. The old lead's pane is never closed and never
   sent keys; in handover mode it receives one typed prompt (the handover

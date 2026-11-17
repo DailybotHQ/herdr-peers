@@ -149,6 +149,7 @@ io.plans_report['plans'] = [plan()]
 for _ in range(3):
     step(ap)
 io.rows = [row('w9:p1', 'idle')]
+io.screens['w9:p1'] = 'Claude Code\n\n❯ \n'
 step(ap)
 assert io.tickets
 step(ap, A.REVIVE_TICKET_TTL + 1)
@@ -288,12 +289,48 @@ for _ in range(3):
     step(ap)
 assert io.launched == [], 'revived an hour ago: not again within 6 h'
 io, ap = fresh()
-io.revive_history = lambda: [now[0] - 60, now[0] - 120]
-io.revive_note = lambda t: None
+io.revive_history = lambda plan=None: [now[0] - 60, now[0] - 120] if plan is None else []
+io.revive_note = lambda t, plan=None: None
 io.plans_report['plans'] = [plan()]
 for _ in range(3):
     step(ap)
 assert io.launched == [], 'two launches this hour on record: the fleet-wide cap holds after a restart'
+# the launch log counts handover and failed launches of a plan, which the lead record never sees
+io, ap = fresh()
+io.revive_history = lambda plan=None: [now[0] - 8 * 3600, now[0] - 7 * 3600] if plan == 'P1' else []
+io.revive_note = lambda t, plan=None: None
+io.plans_report['plans'] = [plan()]
+for _ in range(3):
+    step(ap)
+assert io.launched == [], 'two launches of P1 in the log: the per-plan cap holds after a restart'
+io, ap = fresh()
+io.revive_history = lambda plan=None: [now[0] - 3600] if plan == 'P1' else []
+io.revive_note = lambda t, plan=None: None
+io.plans_report['plans'] = [plan()]
+for _ in range(3):
+    step(ap)
+assert io.launched == [], 'a launch of P1 an hour ago in the log: not again within 6 h'
+io, ap = fresh()
+notes = []
+io.revive_history = lambda plan=None: []
+io.revive_note = lambda t, plan=None: notes.append(plan)
+io.fail_launch = True
+io.plans_report['plans'] = [plan()]
+for _ in range(3):
+    step(ap)
+assert notes == ['P1'], ('a failed launch is written to the log', notes)
+# a pane Herdr labels idle but showing an unknown prompt never gets the brief typed in
+io, ap = fresh()
+io.plans_report['plans'] = [plan()]
+for _ in range(3):
+    step(ap)
+assert io.launched
+io.rows = [row('w9:p1', 'idle')]
+io.screens['w9:p1'] = 'Overwrite config? (y/N)\n'
+step(ap)
+assert io.tickets == [] and prompts_to(io, 'w9:p1') == [], 'no known input line: nothing typed'
+assert A.shows_input_row('claude', 'Claude Code\n\n❯ \n') and A.shows_input_row('codex', 'x\n› Ask Codex\n')
+assert not A.shows_input_row('claude', 'Overwrite config? (y/N)\n') and not A.shows_input_row('gemini', '❯ \n')
 
 # 10. A dry run launches nothing and says so.
 io, ap = fresh(dry_run=True)
@@ -389,6 +426,13 @@ def attempt():
     except H.Stop as exc:
         return exc.message
 assert 'no revive ticket' in attempt(), 'no ticket, no revive'
+for bad in ({'revives': 'x'}, {'revives': True}, {'revives': -1}, {'revived_at': 7}, {'revived_at': '2026-13-45T99:99:99Z'}):
+    d = dict(H.load_lead(store, 'P1')); d.update(bad)
+    try:
+        H.lead_revive(args, 'P1', store, 'w9:p1', 'local:w9:p1', d)
+        raise AssertionError('revived with %r' % bad)
+    except H.Stop as exc:
+        assert 'unreadable revive' in exc.message, (bad, exc.message)
 other_ws = H.write_revive_ticket(store, 'P1', 'w9:p1', 3, 600, pid=4242, workspace='w5')
 assert 'not in the workspace the autopilot created' in attempt(), 'M5: a ticket for another workspace'
 os.unlink(other_ws)
@@ -471,8 +515,15 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, sys.argv[1])
 import herdr_peers as H
 io = H.AutopilotIO(H.Store(), 'w1:p1', None, None, quiet=True)
-info = io.revive_launch('PLAN_990_revive', sys.argv[2], ['claude'])
+info = io.revive_launch('PLAN_990_revive', sys.argv[2], ['claude,codex', 'cl aude', '', 7, 'claude'])
 assert info['pane'] == 'w9:p1' and info['kind'] == 'claude' and info['profile'] == '@work1', info
+assert H.pane_workspace(info['pane']) == info['workspace'], (H.pane_workspace(info['pane']), info)
+assert H.pane_workspace('w1:p404') is None, 'a pane Herdr does not know has no workspace'
+try:
+    io.revive_launch('P', sys.argv[2], ['claude,codex', 'x y'])
+    raise AssertionError('launched with no valid kind')
+except H.Stop as exc:
+    assert 'no agent kind' in exc.message
 io.revive_release(info['kind'], info['profile'], info['workspace'])
 for bad in ('/no/such/dir', 'relative/path', sys.argv[2] + '/../' + sys.argv[2].rsplit('/', 1)[-1]):
     try:
@@ -484,6 +535,7 @@ print('ok')
 PY
 assert_eq "a revive launch picks with ask mode, leases for revive and starts in the plan's checkout" "ok" "$OUT"
 assert_contains "the lease names its purpose" "$(cat "$FAKE_AK_DIR/argv.log")" "--purpose revive"
+assert_contains "L6: only kinds that pass KIND_RE reach ak pick" "$(cat "$FAKE_AK_DIR/argv.log")" "pick --kinds claude --owner"
 assert_contains "and is released when the revive does not take" "$(cat "$FAKE_AK_DIR/argv.log")" "lease release claude @work1"
 assert_contains "the workspace starts in the plan's checkout" "$(cat "$FAKE_HERDR_DIR/local/workspaces.log")" "$(cd "$RREPO" && pwd -P)"
 assert_contains "and is closed with it" "$(cat "$FAKE_HERDR_DIR/local/workspaces.log")" '"verb": "close"'
@@ -522,6 +574,31 @@ assert 'github_pat_' not in body and 'C' * 30 not in body and 'x1' in body and '
 unclosed = '-----BEGIN ' + 'RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\n'
 path = io.save_unknown('claude', 'top\n' + unclosed)
 assert 'MIIEpAIBAAKCAQEA' not in open(path).read()
+# H3: a key whose BEGIN scrolled off (only the body and END are shown)
+body20 = ['K%02dx' % i + 'Q' * 60 for i in range(20)]
+path = io.save_unknown('claude', '\n'.join(body20) + '\n-----END ' + 'RSA PRIVATE KEY-----\nafter the key\n')
+saved = open(path).read()
+assert not any(l in saved for l in body20) and 'after the key' in saved, saved
+# H3: a BEGIN more than 60 lines above the end of the screen
+body70 = ['L%02dy' % i + 'R' * 60 for i in range(70)]
+path = io.save_unknown('claude', 'head\n-----BEGIN ' + 'OPENSSH PRIVATE KEY-----\n' + '\n'.join(body70) + '\n-----END ' + 'OPENSSH PRIVATE KEY-----\ntail line\n')
+saved = open(path).read()
+assert not any(l in saved for l in body70) and 'tail line' in saved, saved
+# H3: the same, with the END not shown yet: only a check before the cut sees the BEGIN
+open_key = io.save_unknown('claude', 'head2\n-----BEGIN ' + 'OPENSSH PRIVATE KEY-----\n' + '\n'.join(body70) + '\n')
+assert open_key is None or not any(l in open(open_key).read() for l in body70)
+# M4: the real launch log — per plan and hourly, private, junk tolerated
+import time as _t
+t = _t.time()
+io.revive_note(t - 7200, 'P1'); io.revive_note(t - 30, 'P1'); io.revive_note(t - 10, 'P2')
+assert sorted(io.revive_history('P1')) == [t - 7200, t - 30] and io.revive_history('P2') == [t - 10]
+assert sorted(io.revive_history()) == [t - 30, t - 10], 'the hourly view keeps the last hour'
+log = os.path.join(io.store.dir, H.REVIVE_LOG)
+assert oct(os.stat(log).st_mode & 0o777) == '0o600'
+H.write_private(log, '{"launches": [[1, "P1"], ["x", "P1"], [true, "P1"], [2, "../evil"], "junk"]}')
+assert io.revive_history('P1') == [1.0], io.revive_history('P1')
+H.write_private(log, 'not json')
+assert io.revive_history('P1') == [] and io.revive_history() == []
 # L8: a corpus directory with loose permissions is closed again
 folder = os.path.dirname(path)
 os.chmod(folder, 0o755)

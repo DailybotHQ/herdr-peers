@@ -117,7 +117,7 @@
                 "object",
                 "null"
               ],
-              "description": "Why the last brain was retired (gone, usage_limit, start_timeout, permission_mode), its profile and when (2.0.1).",
+              "description": "Why the last brain was retired (gone, usage_limit, start_timeout, permission_mode; misbehaving since 2.1.0: three denied requests in an hour), its profile and when (2.0.1).",
               "additionalProperties": false,
               "required": [
                 "why",

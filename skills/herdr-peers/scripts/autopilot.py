@@ -609,6 +609,24 @@ def has_draft(text, state=None):
     return not PLACEHOLDERS.match(input_text(lines))
 
 
+# The input line each CLI draws: a revive types only into a pane that shows its own.
+PROMPT_CURSORS = {'claude': '❯>', 'codex': '›'}
+
+
+def shows_input_row(kind, text, state=None):
+    """True when the pane shows its CLI's own input line (outside a live dialog):
+    an unknown prompt Herdr labels idle ("Overwrite config? (y/N)") is not one."""
+    cursors = PROMPT_CURSORS.get(kind)
+    if not cursors:
+        return False
+    lines = tail_lines(text)
+    menu = parse_menu(text)
+    if menu and live(menu, state, lines):
+        return False
+    row = re.compile(r'^\s*[%s](?:\s|$)' % re.escape(cursors))
+    return any(row.match(line) for line in lines[-8:])
+
+
 def asks_in_prose(text):
     """True when a finished turn ends by asking the human something."""
     lines = tail_lines(text, 30)
@@ -1339,14 +1357,18 @@ class PlanLoop(object):
         lead = local_pane(plan.get('lead'))
         if lead is not None and '%s:%s' % (machine, lead) in self.ap.exclude:
             return False   # an excluded lead's plan is left to the human
-        # The caps also count what the lead record keeps (a daemon restart resets nothing).
-        recorded = plan.get('revives') if isinstance(plan.get('revives'), int) else 0
-        if max(len(memo.revive_times), recorded) >= MAX_REVIVES:
+        # The caps count this daemon's memory, the lead record (takeover revives) and
+        # the private launch log (every launch, handover or failed ones too), so a
+        # restart resets nothing.
+        recorded = plan.get('revives')
+        recorded = recorded if isinstance(recorded, int) and not isinstance(recorded, bool) else 0
+        history = getattr(self.io, 'revive_history', None)
+        logged = list(history(plan['plan'])) if history is not None else []
+        if max(len(memo.revive_times), recorded, len(logged)) >= MAX_REVIVES:
             return False
-        last = max(memo.revive_times[-1] if memo.revive_times else 0, parse_iso(plan.get('revived_at')) or 0)
+        last = max([parse_iso(plan.get('revived_at')) or 0] + memo.revive_times[-1:] + logged)
         if last and now - last < REVIVE_EVERY:
             return False
-        history = getattr(self.io, 'revive_history', None)
         if history is not None:
             self.revive_log = sorted(set(self.revive_log) | set(history()))
         self.revive_log = [t for t in self.revive_log if now - t < 3600]
@@ -1392,18 +1414,23 @@ class PlanLoop(object):
             info = self.io.revive_launch(plan['plan'], plan['repo_root'], kinds)
         except Exception:  # a refusal or a tool failure: recorded; the notice follows
             self.ap.record(addr, None, Decision('leave', 'revive_failed', 'launch'), 'left', plan=plan['plan'])
-            memo.revive_times.append(now)
+            self.revive_count(memo, plan, now)
             return False
         memo.revive = dict(info, mode=mode, why=why, epoch=plan['epoch'], lead=plan['lead'],
                            state='starting', at=now)
+        self.revive_count(memo, plan, now)
+        self.ap.record('local:%s' % info['pane'], info.get('kind'),
+                       Decision('prompt', 'plan_revive_launched', why), 'nudged', plan=plan['plan'])
+        return True
+
+    def revive_count(self, memo, plan, now):
+        """Count one launch — taken or failed, takeover or handover — here and in the
+        private launch log, so neither cap is reset by a restart."""
         memo.revive_times.append(now)
         self.revive_log.append(now)
         note = getattr(self.io, 'revive_note', None)
         if note is not None:
-            note(now)   # the fleet-wide hourly cap survives a restart
-        self.ap.record('local:%s' % info['pane'], info.get('kind'),
-                       Decision('prompt', 'plan_revive_launched', why), 'nudged', plan=plan['plan'])
-        return True
+            note(now, plan['plan'])
 
     def revive_tick(self, memo, machine, plan, by_pane, now, prompted):
         """Drive a revive: brief the new agent once it is up (with the one-time
@@ -1473,9 +1500,11 @@ class PlanLoop(object):
         for seen in (row.get('state'), 'blocked'):   # a dialog left on an idle screen counts too
             choice = decide(row.get('agent'), seen, text)
             if choice.cls == 'unknown':
-                continue   # no menu we know on it: a plain prompt reads as unknown when taken as blocked
+                continue   # no menu we know: allowed only with the CLI's own input line (below)
             if choice.action in ('keys', 'leave') or choice.cls == 'usage_limit':
                 return False
+        if not shows_input_row(row.get('agent'), text, row.get('state')):
+            return False   # an unknown prompt labelled idle: nothing is typed into it
         return not has_draft(text, row.get('state'))
 
     def revive_abort(self, memo, machine, plan, why):

@@ -1895,6 +1895,7 @@ REVIVE_TICKET_SCHEMA = 'herdr-peers/revive-ticket-v1'
 REVIVE_LEASE_TTL = '6h'
 MAX_REVIVES = 2             # revives per plan, kept in its lead record; then only the human
 REVIVE_LOG = 'revive-log.json'
+REVIVE_LOG_MAX = 256       # launches remembered (per-plan caps and the hourly one)
 REVIVE_EVERY = 6 * 3600     # at most one revive per plan in this window (kept in its lead record)
 UNKNOWN_DIR = 'unknown-screens'
 UNKNOWN_NAME_RE = re.compile(r'[0-9]{8}T[0-9]{6}Z-[a-z0-9]{1,16}-[0-9a-f]{12}\.txt')
@@ -2118,7 +2119,9 @@ def save_lead(store, record, prior, via, appointments=None, revived=False):
         storage['appointments'] = appointments
     storage.update(kept)
     if revived:
-        storage['revives'] = int(kept.get('revives') or 0) + 1
+        done = kept.get('revives', 0)
+        storage['revives'] = (done if isinstance(done, int) and not isinstance(done, bool)
+                              and done >= 0 else MAX_REVIVES) + 1   # unreadable: counts as spent
         storage['revived_at'] = now_iso()
     write_private(tmp, json.dumps(storage, sort_keys=True) + '\n')
     os.replace(tmp, path)
@@ -2560,11 +2563,20 @@ def lead_revive(args, plan, store, pane, me, data):
     lead, every successor and every lane gone. Writes local state only; receivers
     elsewhere never adopt a revive."""
     rec = data['record']
-    if int(data.get('revives') or 0) >= MAX_REVIVES:
+    count, last = data.get('revives', 0), data.get('revived_at')
+    if not isinstance(count, int) or isinstance(count, bool) or count < 0 \
+            or (last is not None and not (isinstance(last, str) and TS_RE.fullmatch(last))):
+        raise Stop(EXIT_POLICY, 'plan %s has an unreadable revive count; only the human can restart it'
+                   % plan)   # fail closed, never an exception
+    if count >= MAX_REVIVES:
         raise Stop(EXIT_POLICY, 'plan %s was already revived %d times; only the human can restart it'
                    % (plan, MAX_REVIVES))
-    last = data.get('revived_at')
-    if isinstance(last, str) and TS_RE.fullmatch(last) and time.time() - iso_seconds(last) < REVIVE_EVERY:
+    try:
+        since = time.time() - iso_seconds(last) if last is not None else None
+    except ValueError:
+        raise Stop(EXIT_POLICY, 'plan %s has an unreadable revive time; only the human can restart it'
+                   % plan)
+    if since is not None and since < REVIVE_EVERY:
         raise Stop(EXIT_POLICY, 'plan %s was revived less than %d hours ago' % (plan, REVIVE_EVERY // 3600))
     found = find_revive_ticket(store, plan, pane, rec['epoch'])
     if found is None:
@@ -3964,9 +3976,10 @@ class AutopilotIO(object):
     def revive_ticket(self, plan, pane, epoch, ttl, workspace=None):
         return write_revive_ticket(self.store, plan, pane, epoch, ttl, workspace=workspace)
 
-    def revive_history(self):
-        """Launch times of the last hour, kept in a private file so a restart does
-        not reset the fleet-wide hourly cap."""
+    def revive_launches(self):
+        """[(time, plan)] of every revive launch this daemon's store remembers —
+        takeover or handover, taken, failed or timed out — from a private file, so
+        that a restart resets neither the per-plan caps nor the hourly one."""
         path = os.path.join(self.store.dir, REVIVE_LOG)
         try:
             fd = os.open(path, os.O_RDONLY | NOFOLLOW)
@@ -3974,16 +3987,27 @@ class AutopilotIO(object):
                 data = json.loads(fh.read(65536))
         except (OSError, ValueError):
             return []
-        now = time.time()
-        return [t for t in data if isinstance(t, (int, float)) and now - t < 3600][:64] \
-            if isinstance(data, list) else []
+        items = data.get('launches') if isinstance(data, dict) else None
+        out = []
+        for item in items if isinstance(items, list) else []:
+            if isinstance(item, list) and len(item) == 2 and isinstance(item[0], (int, float)) \
+                    and not isinstance(item[0], bool) and isinstance(item[1], str) and PLAN_RE.fullmatch(item[1]):
+                out.append((float(item[0]), item[1]))
+        return out[-REVIVE_LOG_MAX:]
 
-    def revive_note(self, when):
-        times = sorted(set(self.revive_history()) | {when})[-64:]
+    def revive_history(self, plan=None):
+        """Launch times: of the last hour across the fleet, or every one of `plan`."""
+        now = time.time()
+        return [t for t, p in self.revive_launches()
+                if (p == plan if plan is not None else now - t < 3600)]
+
+    def revive_note(self, when, plan=None):
+        items = self.revive_launches() + [(float(when), plan if isinstance(plan, str) else '-')]
+        items = [[t, p] for t, p in sorted(set(items))][-REVIVE_LOG_MAX:]
         path = os.path.join(self.store.dir, REVIVE_LOG)
         tmp = '%s.%d.tmp' % (path, os.getpid())
         try:
-            write_private(tmp, json.dumps(times))
+            write_private(tmp, json.dumps({'launches': items}))
             os.replace(tmp, path)
         except OSError:
             pass
@@ -3991,18 +4015,22 @@ class AutopilotIO(object):
     # -- unknown screens: a local corpus for new fixtures ----------------------
     def save_unknown(self, kind, text):
         """Keep a sanitized copy of a screen autopilot did not recognise (no key was
-        sent): control and format characters removed; a private key block dropped
-        from BEGIN to END (or to the end when it never closes); a line dropped when
+        sent): escape, control and format characters removed; a private key block
+        dropped from BEGIN to END (or to the end when it never closes, or from the
+        top when only its END is shown); a line dropped when
         it, or it joined with the next (a wrapped token), shows a secret or a
         token's prefix — checked before any cut; capped per file and in number,
         0600 in a 0700 directory under the state dir."""
         text = ANSI_SEQ.sub('', text or '')
+        # Every check runs on the whole screen first; only then is it cut to its tail.
         raw = [''.join(' ' if unicodedata.category(ch) in ('Cc', 'Cf', 'Zl', 'Zp', 'Co', 'Cs') else ch
-                       for ch in line) for line in text.splitlines()[-UNKNOWN_LINES:]]
+                       for ch in line) for line in text.splitlines()[-2000:]]
         drop, inside = set(), False
         for i, line in enumerate(raw):
             if PEM_BEGIN.search(line):
                 inside = True
+            if PEM_END.search(line) and not inside:
+                drop.update(range(i + 1))   # an END whose BEGIN scrolled off: all above it may be key
             if inside:
                 drop.add(i)
             if PEM_END.search(line):
@@ -4016,6 +4044,9 @@ class AutopilotIO(object):
                     drop.add(i + 1)   # the token's rest, wrapped onto the next line
             elif not hit(nxt) and hit(line.strip() + nxt.strip()):
                 drop.update((i, i + 1))   # a token wrapped across the two lines
+        first = max(0, len(raw) - UNKNOWN_LINES)
+        drop = set(i - first for i in drop if i >= first)
+        raw = raw[first:]
         lines = ['[redacted]' if i in drop else line.rstrip()[:400] for i, line in enumerate(raw)]
         body = '\n'.join(lines).strip()
         if not body or all(l in ('[redacted]', '') for l in lines):
