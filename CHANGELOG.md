@@ -9,6 +9,14 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Changed
+
+- **Repository tooling on the latest releases.** The vendored `deepworkplan`
+  pack moves to v8.0.2 (all 188 files verified against its release
+  `SHA256SUMS`) and the vendored AI Diff Reviewer skill to v3.3.16 (identical
+  to its verified release archive). `.dwp/config.json` records herdr v2.2.0 and
+  AI Diff Reviewer v3.3.16. The shipped skill and helper are unchanged.
+
 ## [2.2.0] - 2026-11-17
 
 ### Added
