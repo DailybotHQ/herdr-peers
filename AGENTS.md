@@ -67,4 +67,4 @@ The test map lives in [`docs/TESTING_GUIDE.md`](docs/TESTING_GUIDE.md).
 
 Structured work runs through the installed `deepworkplan` skill (`.agents/skills/deepworkplan/`, pinned in `skills-lock.json`); the `/dwp-*` commands are thin delegators in `.agents/commands/` (`.claude` and `.cursor` are symlinks to `.agents/`). Plans live in the gitignored `.dwp/`; only the addon registry `.dwp/config.json` is tracked (`herdr` enabled — this repository ships it; `ai-diff-reviewer` enabled for the local review).
 
-DWP standard: 8.0.0 (onboarded 2026-10-08; upgraded 2026-10-09, 2026-10-11, 2026-10-12, 2026-10-13 and 2026-11-16; skill 8.0.2, vendored 2026-11-16: tag commit `4d3e2f6`, all 188 files byte-identical to the release `SHA256SUMS`, digest `332e8f9a…`; existing plans keep their recorded generation)
+DWP standard: 8.0.0 (onboarded 2026-10-08; upgraded 2026-10-09, 2026-10-11, 2026-10-12, 2026-10-13 and 2026-11-16; skill 8.0.3, vendored 2026-11-17: tag commit `1033558`, all 188 files byte-identical to the release `SHA256SUMS`, digest `f40ebde7…`; existing plans keep their recorded generation)
