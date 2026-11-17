@@ -497,7 +497,24 @@ assert_contains "and says why" "$ERR" "no revive ticket"
 run "$HELPER" autopilot --once --revive
 assert_rc "--revive without --loop is a usage error" 2
 run "$HELPER" autopilot --loop --once --revive --dry-run
-assert_rc "--revive with --loop runs" 0
+assert_rc "--revive without coding-agents-kit refuses to start" 2
+assert_contains "and says what to install" "$ERR" "--revive needs coding-agents-kit (\`ak\`) on PATH"
+run "$HELPER" autopilot --loop --once --dry-run
+assert_rc "autopilot without --revive starts without coding-agents-kit" 0
+assert_contains "and suggests it, once, as optional" "$ERR" "coding-agents-kit (\`ak\`) is not installed. Autopilot works without it"
+export FAKE_AK_DIR="$WORLD/ak"; mkdir -p "$FAKE_AK_DIR"
+KBIN="$WORLD/bin"; mkdir -p "$KBIN"; ln -s "$ROOT/tests/fakes/agentkit/ak" "$KBIN/ak"
+K_OLDPATH=$PATH; export PATH="$KBIN:$PATH"
+echo 1.2.0 >"$FAKE_AK_DIR/version"
+run "$HELPER" autopilot --loop --once --revive --dry-run
+assert_rc "--revive refuses a coding-agents-kit older than 1.3.0" 2
+assert_contains "and names the version it needs" "$ERR" "--revive needs coding-agents-kit 1.3.0 or later"
+rm -f "$FAKE_AK_DIR/version"
+run "$HELPER" autopilot --loop --once --revive --dry-run
+assert_rc "--revive with --loop and coding-agents-kit runs" 0
+run "$HELPER" autopilot --loop --once --dry-run
+assert_not_contains "with the kit installed nothing is suggested" "$ERR" "is not installed"
+export PATH=$K_OLDPATH
 
 # --- the launch, against the fakes ---------------------------------------------------------------
 new_world revive_launch
