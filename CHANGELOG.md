@@ -11,6 +11,13 @@ changes bumped the minor version).
 
 ### Changed
 
+- **`autopilot --revive` checks coding-agents-kit at start.** Every revive is
+  launched through `ak pick`, so with `--revive` a missing `ak`, or one older
+  than 1.3.0, now makes the daemon refuse to start and name the version it
+  needs — as `--brain` already did — instead of starting and spending each
+  plan's revive caps on launches that fail (`revive_failed`). Without `--brain`
+  and `--revive` the kit stays optional: when `ak` is not installed, starting
+  autopilot prints one line suggesting it and carries on.
 - **Repository tooling on the latest releases.** The vendored `deepworkplan`
   pack moves to v8.0.2 (all 188 files verified against its release
   `SHA256SUMS`) and the vendored AI Diff Reviewer skill to v3.3.16 (identical
