@@ -9,13 +9,53 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Added
+
+- **Revive (`autopilot --loop --revive`).** Your starting the daemon with it is
+  the grant. A plan on this machine whose lead is gone — or at a usage limit
+  whose own banner resets more than 30 minutes away (weak evidence, recorded) —
+  and whom nobody in its succession or lanes can take over gets **one** fresh
+  agent: an account with quota (`ak pick`, ask mode), leased for revive, in a
+  workspace that starts in the plan's checkout. Once it is up the daemon writes a
+  one-time ticket (`0600`, exclusive, plan + pane + stored epoch, 10 minutes)
+  and briefs it to run `lead takeover --plan P --reason revive`, which the helper
+  accepts only with that ticket, from a pane in the workspace the daemon created,
+  naming the running autopilot started with `--revive`, and its own two probes
+  finding every member gone; then
+  `lead verify` and resume. A stalled plan's live lead is asked once to `lead
+  handover` to the fresh agent, never taken over. Caps: one per plan per 6 h,
+  two per plan, two an hour fleet-wide, every launch (taken, failed, timed out,
+  takeover or handover) counted in a private launch log and takeover revives in
+  the lead record too, so a daemon restart resets no cap; an agent not up in 3 minutes, a takeover
+  not done in 10, a handover not done in 15 is released. The old pane is never
+  closed or keyed; a stalled live lead receives one typed handover request, only
+  when idle with no dialog or draft. Recorded with `why=`; one `plan_revived` plan-event-v1 reaches
+  `--notify`; the map marks a revived lead (`revived`, optional) and `fleet ui`
+  shows `↻ revived`. Protocol stays 2: the `via: revive` record is adopted only
+  on the daemon's own machine (fence rule F11), and a 2.0/2.1 receiver refuses
+  it (fail closed) — see MIGRATING.
+- **Unknown screens are kept for new fixtures:** a sanitized copy (escape,
+  control and format characters removed; private key blocks — also when only
+  their END is shown — and any line showing a secret or a token's prefix,
+  wrapped or cut, dropped whole, all checked before the screen is cut; capped;
+  `0600` in a `0700` directory) of a
+  screen left as `unknown`, under the state dir; `autopilot status` shows how
+  many.
+
+### Fixed
+
+- **Docs:** the fleet-v1 `daemon.brain.retired` description and autopilot.md now
+  list `misbehaving` (three denied requests in an hour, since 2.1.0) among the
+  reasons a brain is retired.
+
 ### Changed
 
 - Repository tooling: the vendored deepworkplan skill moved to 8.0.0 (tag
   commit `ff96b9e`, all 188 files verified against the release
   `SHA256SUMS`, digest `cb877b16…`), and the registry's herdr addon version
   moved to v2.1.0, the release the pack pins (skills-lock.json,
-  .dwp/config.json). The shipped skill and helper are unchanged.
+  .dwp/config.json). AGENTS.md now declares DWP standard 8.0.0, re-stamped
+  through the pack's upgrade flow; existing plans keep their generation.
 
 ## [2.1.0] - 2026-11-16
 

@@ -164,6 +164,21 @@
             ],
             "description": "Why a plan is unreadable (2.1.0; optional): missing = no state.json where its lead record points; parse = its state.json does not parse or is too large; shape = a state.json shape this helper does not read (an older or newer plan generation). Null for a readable plan."
           },
+          "revived": {
+            "type": "boolean",
+            "description": "This epoch came by a revive (2.2.0; optional): the daemon, started with --revive, launched a fresh agent that took the orphan plan (lead takeover --reason revive)."
+          },
+          "revives": {
+            "type": "integer",
+            "description": "Revives this plan has had (2.2.0; optional), kept in its lead record: the cap survives a daemon restart."
+          },
+          "revived_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When this plan was last revived (2.2.0; optional), from its lead record."
+          },
           "updated_at": {
             "type": "string",
             "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",

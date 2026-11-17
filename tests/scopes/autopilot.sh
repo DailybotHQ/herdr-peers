@@ -704,6 +704,8 @@ assert_eq "(scripted I/O ran to its end)" "ok" "$OUT"
 . "$ROOT/tests/scopes/autopilot_loop.sh"
 # shellcheck source-path=SCRIPTDIR source=queue.sh
 . "$ROOT/tests/scopes/queue.sh"
+# shellcheck source-path=SCRIPTDIR source=revive.sh
+. "$ROOT/tests/scopes/revive.sh"
 unset HERDR_PEERS_AUTOPILOT_CONFIRM
 
 # A failed test never leaves a background autopilot behind.

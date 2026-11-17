@@ -73,6 +73,7 @@ Everything below is opt-in; 1.x options keep their meaning.
 | 2.0.0 | `lead takeover --as-lane` | The lane's own appointment (the daemon prompts it, with `--appoint`) |
 | 2.0.0 | `autopilot --loop --appoint` | The daemon acts on the grant |
 | 2.0.0 | `lead verify --plan P [--allow-unreached]` | Before a merge, tag or release: am I still the lead, here and on the plan's other machines? |
+| 2.2.0 | `autopilot --loop --revive`; `lead takeover --reason revive` | A fresh agent carries an orphan plan on this machine (the daemon's one-time ticket); a stalled live lead is asked to hand over. Protocol stays 2: a `via: revive` record is never adopted by another machine, and a 2.0/2.1 receiver refuses it (fail closed) |
 
 No flag was renamed or removed.
 
