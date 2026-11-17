@@ -9,6 +9,8 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-17
+
 ### Added
 
 - **Revive (`autopilot --loop --revive`).** Your starting the daemon with it is
@@ -1048,7 +1050,8 @@ First release. Interface version: **protocol 1** (`metadata.protocol: 1` in
   `harness lint protocol helper skill templates security live`; CI on Ubuntu
   and macOS.
 
-[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/DailybotHQ/herdr-peers/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/DailybotHQ/herdr-peers/compare/v2.0.2...v2.1.0
 [2.0.2]: https://github.com/DailybotHQ/herdr-peers/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/DailybotHQ/herdr-peers/compare/v2.0.0...v2.0.1
