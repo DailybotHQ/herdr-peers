@@ -9,16 +9,21 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+## [2.2.2] - 2026-11-19
+
+A maintenance release: the protocol, the helper's behaviour and every wire
+format are unchanged from 2.2.1.
+
 ### Changed
 
-- **Repository tooling on pack 8.0.5.** The vendored `deepworkplan` pack moves
-  to v8.0.5 (all 188 files verified against its release `SHA256SUMS`), and the
-  README's optional coding-agents-kit install example moves from v1.0.1 to
-  v1.5.1, its current release.
-- **Repository tooling on pack 8.0.3.** The vendored `deepworkplan` pack moved
-  to v8.0.3 (all 188 files verified against its release `SHA256SUMS`), and
-  `.dwp/config.json` records herdr v2.2.1, the release this repository now
-  ships. The shipped skill and helper are unchanged.
+- **Repository tooling on pack 8.0.6.** The vendored `deepworkplan` pack moves
+  to v8.0.6 (all 188 files verified against its release `SHA256SUMS`; it came
+  through v8.0.3 and v8.0.5 since 2.2.1), and `.dwp/config.json` records herdr
+  v2.2.2, the release this repository now ships.
+- **README: current coding-agents-kit in the install example.** The optional
+  coding-agents-kit install example moves from v1.0.1 to v1.5.1, its current
+  release. The minimums the helper checks are unchanged (1.3.0 for `--brain`
+  and `--revive`; 1.5.0 recommended).
 
 ## [2.2.1] - 2026-11-17
 
@@ -1078,7 +1083,8 @@ First release. Interface version: **protocol 1** (`metadata.protocol: 1` in
   `harness lint protocol helper skill templates security live`; CI on Ubuntu
   and macOS.
 
-[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v2.2.1...HEAD
+[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v2.2.2...HEAD
+[2.2.2]: https://github.com/DailybotHQ/herdr-peers/compare/v2.2.1...v2.2.2
 [2.2.1]: https://github.com/DailybotHQ/herdr-peers/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/DailybotHQ/herdr-peers/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/DailybotHQ/herdr-peers/compare/v2.0.2...v2.1.0

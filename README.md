@@ -93,7 +93,7 @@ The skill (the helper ships inside it, at
 `~/.agents/skills/herdr-peers/scripts/herdr-peers` for a global install):
 
 ```bash
-npx --yes skills add DailybotHQ/herdr-peers@v2.2.1 --skill herdr-peers -g -y
+npx --yes skills add DailybotHQ/herdr-peers@v2.2.2 --skill herdr-peers -g -y
 ```
 
 Herdr's official skill, which this one depends on — pinned, or use the
@@ -107,11 +107,11 @@ Every machine whose agents should answer needs the skill too. From a
 checkout of the tag instead, verified against the release's `SHA256SUMS`:
 
 ```bash
-git clone --branch v2.2.1 https://github.com/DailybotHQ/herdr-peers
+git clone --branch v2.2.2 https://github.com/DailybotHQ/herdr-peers
 cd herdr-peers
-curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v2.2.1/SHA256SUMS
+curl -fsSLO https://github.com/DailybotHQ/herdr-peers/releases/download/v2.2.2/SHA256SUMS
 shasum -a 256 -c SHA256SUMS      # every shipped file: OK
-bin/herdr-peers --version        # herdr-peers 2.2.1 (protocol 2)
+bin/herdr-peers --version        # herdr-peers 2.2.2 (protocol 2)
 ```
 
 Requirements: Herdr ≥ 0.9.1, `bash`, `python3` ≥ 3.9 (standard library
@@ -134,7 +134,7 @@ git clone --branch v1.5.1 https://github.com/DailybotHQ/coding-agents-kit
 In 60 seconds:
 
 ```bash
-npx --yes skills add DailybotHQ/herdr-peers@v2.2.1 --skill herdr-peers -g -y   # every machine
+npx --yes skills add DailybotHQ/herdr-peers@v2.2.2 --skill herdr-peers -g -y   # every machine
 herdr-peers autopilot start --loop     # the daemon, in the background, for every agent and plan
 herdr-peers fleet                      # who is where, on which plan, how far
 herdr-peers fleet ui                   # the same, live
