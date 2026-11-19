@@ -11,7 +11,11 @@ changes bumped the minor version).
 
 ### Changed
 
-- **Repository tooling on pack 8.0.3.** The vendored `deepworkplan` pack moves
+- **Repository tooling on pack 8.0.5.** The vendored `deepworkplan` pack moves
+  to v8.0.5 (all 188 files verified against its release `SHA256SUMS`), and the
+  README's optional coding-agents-kit install example moves from v1.0.1 to
+  v1.5.1, its current release.
+- **Repository tooling on pack 8.0.3.** The vendored `deepworkplan` pack moved
   to v8.0.3 (all 188 files verified against its release `SHA256SUMS`), and
   `.dwp/config.json` records herdr v2.2.1, the release this repository now
   ships. The shipped skill and helper are unchanged.

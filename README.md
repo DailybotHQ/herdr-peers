@@ -125,7 +125,7 @@ account and provider (`ak claude @work1`). `herdr-peers debate panel`
 suggests it when it is missing.
 
 ```bash
-git clone --branch v1.0.1 https://github.com/DailybotHQ/coding-agents-kit
+git clone --branch v1.5.1 https://github.com/DailybotHQ/coding-agents-kit
 ./coding-agents-kit/install.sh
 ```
 
