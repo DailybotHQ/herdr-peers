@@ -222,7 +222,7 @@ human named (T34–T38).
 
 Runtime code is `bash` and the `python3` standard library only — no packages
 are installed. The official Herdr skill is referenced pinned
-(`herdrdev/herdr@v0.9.3`) or via the installed binary's `herdr --skill`. CI
+(`herdrdev/herdr@v0.9.5`) or via the installed binary's `herdr --skill`. CI
 pins GitHub Actions by commit SHA and verifies the shellcheck download
 against its published SHA-256. Every release carries a `SHA256SUMS`
 asset over the shipped files (`skills/herdr-peers/**`, `bin/herdr-peers`,

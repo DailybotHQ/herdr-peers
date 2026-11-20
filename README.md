@@ -100,7 +100,7 @@ Herdr's official skill, which this one depends on — pinned, or use the
 version that matches your binary with `herdr --skill`:
 
 ```bash
-npx --yes skills add herdrdev/herdr@v0.9.3 --skill herdr -g
+npx --yes skills add herdrdev/herdr@v0.9.5 --skill herdr -g
 ```
 
 Every machine whose agents should answer needs the skill too. From a
@@ -115,7 +115,7 @@ bin/herdr-peers --version        # herdr-peers 2.2.2 (protocol 2)
 ```
 
 Requirements: Herdr ≥ 0.9.1, `bash`, `python3` ≥ 3.9 (standard library
-only). The official-skill pin above is for Herdr 0.9.3; for another version
+only). The official-skill pin above is for Herdr 0.9.5; for another version
 use `herdr --skill`.
 
 Recommended: [coding-agents-kit](https://github.com/DailybotHQ/coding-agents-kit)
