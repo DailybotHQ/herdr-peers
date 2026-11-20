@@ -29,7 +29,7 @@ Upgrading from 1.x: `docs/MIGRATING.md` in the herdr-peers repository (protocol 
   `herdr --skill` (always matches the installed binary), or install it pinned:
 
   ```bash
-  npx --yes skills add herdrdev/herdr@v0.9.3 --skill herdr -g
+  npx --yes skills add herdrdev/herdr@v0.9.5 --skill herdr -g
   ```
 
 - Run only inside a Herdr-managed pane: `test "${HERDR_ENV:-}" = 1`. If that

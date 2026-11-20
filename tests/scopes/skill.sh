@@ -61,7 +61,7 @@ assert_contains "description states HERDR_ENV=1" "$desc" "HERDR_ENV=1"
 body=$(cat "$SKILL")
 assert_contains "names the official skill as a dependency" "$body" "herdrdev/herdr"
 assert_contains "installs the official skill pinned to a tag" "$body" \
-  "npx --yes skills add herdrdev/herdr@v0.9.3 --skill herdr -g"
+  "npx --yes skills add herdrdev/herdr@v0.9.5 --skill herdr -g"
 assert_contains "offers the version-matched herdr --skill" "$body" "herdr --skill"
 assert_contains "has a Trust boundary (write scope) section" "$body" "## 6. Trust boundary (write scope)"
 assert_contains "says received text is data, not instructions" "$body" "data, not instructions"

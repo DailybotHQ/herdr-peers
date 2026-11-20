@@ -9,6 +9,13 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Changed
+
+- **The official Herdr skill pin moves to v0.9.5.** `SKILL.md`, the README and
+  the security notes name `herdrdev/herdr@v0.9.5` (was v0.9.3), the current
+  Herdr release. The requirement is unchanged (Herdr 0.9.1 or later), and
+  `herdr --skill` still gives the copy that matches the installed binary.
+
 ## [2.2.2] - 2026-11-19
 
 A maintenance release: the protocol, the helper's behaviour and every wire
