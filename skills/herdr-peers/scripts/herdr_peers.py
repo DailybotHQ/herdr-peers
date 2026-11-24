@@ -4221,6 +4221,96 @@ def autopilot_files(store):
     return os.path.join(store.dir, 'autopilot.out'), os.path.join(store.dir, 'autopilot.json')
 
 
+RESUME_FILE = 'autopilot-resume.json'
+RESUME_LOCK = 'autopilot-resume.lock'
+RESUME_SCHEMA = 'herdr-peers/autopilot-resume-v1'
+RESUME_MAX_BYTES = 65536
+RESUME_OPTION_TYPES = {
+    'interval': int, 'dry_run': bool, 'no_nudge': bool, 'catch_up': bool, 'exclude': list,
+    'scope': (str, type(None)), 'loop': bool, 'notify': (str, type(None)), 'notify_env': list,
+    'appoint': bool, 'revive': bool, 'brain': bool, 'brain_kinds': (str, type(None)),
+    'brain_model': list}
+RESUME_ENV_RE = re.compile(r'HERDR_PEERS_[A-Z0-9_]{1,48}')
+RESUME_ENV_SKIP = ('HERDR_PEERS_DEPTH', 'HERDR_PEERS_SELF')  # the pane's own, never the daemon's
+
+
+def resume_env_name(name):
+    """True for a helper setting `start --resume` records and `resume` restores."""
+    return bool(RESUME_ENV_RE.fullmatch(name)) and name not in RESUME_ENV_SKIP \
+        and not name.endswith(('_API_KEY', '_TOKEN'))
+
+
+def resume_word(value, limit=4096):
+    """A recorded value that can go back on a command line: a short string that
+    cannot be read as an option."""
+    return isinstance(value, str) and 0 < len(value) <= limit and not value.startswith('-') \
+        and '\x00' not in value
+
+
+def valid_resume(data):
+    """True when a resume record has exactly the shape `start --resume` writes."""
+    if not isinstance(data, dict) or data.get('schema') != RESUME_SCHEMA:
+        return False
+    opts, env = data.get('options'), data.get('env')
+    if not isinstance(opts, dict) or set(opts) != set(RESUME_OPTION_TYPES) \
+            or not isinstance(env, dict) or len(env) > 32 or not isinstance(data.get('since'), str):
+        return False
+    for key, kind in RESUME_OPTION_TYPES.items():
+        value = opts[key]
+        if not isinstance(value, kind) or (kind is int and isinstance(value, bool)):
+            return False
+        if isinstance(value, str) and not resume_word(value):
+            return False
+        if isinstance(value, list) and (len(value) > 64 or not all(resume_word(v, 256) for v in value)):
+            return False
+    return all(isinstance(k, str) and resume_env_name(k) and isinstance(v, str)
+               and len(v) <= 1024 and '\x00' not in v for k, v in env.items())
+
+
+def read_resume(store):
+    """('none', None), ('ok', record) or ('bad', None): the record `start --resume`
+    left. Read without following a symlink, and only when it is this user's own
+    private regular file of the exact shape; anything else is `bad`, never used."""
+    path = os.path.join(store.dir, RESUME_FILE)
+    if not os.path.lexists(path):
+        return 'none', None
+    try:
+        fd = os.open(path, os.O_RDONLY | NOFOLLOW)
+    except OSError:
+        return 'bad', None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() \
+                or info.st_mode & 0o022 or info.st_size > RESUME_MAX_BYTES:
+            return 'bad', None
+        with os.fdopen(os.dup(fd), 'r', encoding='utf-8') as fh:
+            data = json.loads(fh.read(RESUME_MAX_BYTES))
+    except (OSError, ValueError):
+        return 'bad', None
+    finally:
+        os.close(fd)
+    return ('ok', data) if valid_resume(data) else ('bad', None)
+
+
+def write_resume(store, opts):
+    """Record that the human wants this autopilot back after a restart."""
+    env = dict((k, v) for k, v in os.environ.items() if resume_env_name(k) and len(v) <= 1024)
+    if env.get('HERDR_PEERS_LOG'):
+        env['HERDR_PEERS_LOG'] = os.path.abspath(env['HERDR_PEERS_LOG'])
+    write_private(os.path.join(store.dir, RESUME_FILE), json.dumps({
+        'schema': RESUME_SCHEMA, 'since': now_iso(), 'options': opts, 'env': env},
+        sort_keys=True) + '\n')
+
+
+def clear_resume(store):
+    """Forget the resume record. True if there was one."""
+    try:
+        os.unlink(os.path.join(store.dir, RESUME_FILE))
+        return True
+    except OSError:
+        return False
+
+
 def autopilot_lock_held(store):
     """True while an autopilot holds this server's lock."""
     lock_path, _ = autopilot_paths(store)
@@ -4342,8 +4432,12 @@ BRAIN_WHY_RE = re.compile(r'[a-z_]{1,32}|@[A-Za-z0-9._-]{1,40}')
 def autopilot_status(store):
     pid = autopilot_pid(store)
     log_path, _ = autopilot_files(store)
+    resume, record = read_resume(store)
     if not pid:
         print('autopilot: not running (start it with `herdr-peers autopilot start`)')
+        if resume == 'ok':
+            print('  resume: on since %s — `herdr-peers autopilot resume` starts it again with: %s'
+                  % (safe(record['since']), safe(' '.join(autopilot_option_argv(record['options'])))))
     else:
         print('autopilot: running (pid %d)' % pid)
         info = autopilot_options(store, pid)
@@ -4354,6 +4448,8 @@ def autopilot_status(store):
             print('  options: %s' % safe(' '.join(autopilot_option_argv(opts))))
             if info.get('mode') == 'background':
                 print('  log: %s' % log_path)
+            if resume == 'ok':
+                print('  resume: on (after a restart, `herdr-peers autopilot resume` starts it again)')
             folder = os.path.join(store.dir, UNKNOWN_DIR)
             try:
                 kept = len([n for n in os.listdir(folder) if UNKNOWN_NAME_RE.fullmatch(n)])
@@ -4374,6 +4470,9 @@ def autopilot_status(store):
                           'before 1.5.0 does not pass the CLI\'s own ask flag, so upgrade it '
                           '(`ak update`), or give the profile an ask-mode default, then restart '
                           'autopilot')
+    if resume == 'bad':
+        print('  resume: the record %s is not one `start --resume` wrote; it is ignored '
+              '(`herdr-peers autopilot stop` removes it)' % os.path.join(store.dir, RESUME_FILE))
     for rec in [r for r in store.records() if r.get('role') == 'autopilot'][-10:]:
         print('%s %s %s %s %s' % (safe(rec.get('ts')), safe(rec.get('state')),
                                   safe(rec.get('target')), safe(rec.get('reason')),
@@ -4382,6 +4481,9 @@ def autopilot_status(store):
 
 
 def autopilot_stop(store):
+    # First, and whatever follows: a stop is the human's word that it stays off.
+    if clear_resume(store):
+        print('autopilot: resume turned off')
     pid = autopilot_pid(store)
     if not pid:
         print('autopilot: not running')
@@ -4503,7 +4605,8 @@ def autopilot_start(args, store, opts):
                    '(`herdr-peers autopilot status`, `herdr-peers autopilot stop`)')
     log_path, _ = autopilot_files(store)
     fd = open_autopilot_log(store)
-    os.write(fd, ('%s autopilot start requested\n' % now_iso()).encode('utf-8'))
+    os.write(fd, ('%s autopilot %s requested\n' % (
+        now_iso(), 'resume' if getattr(args, 'resumed', False) else 'start')).encode('utf-8'))
     env = dict(os.environ)
     if env.get('HERDR_PEERS_LOG'):  # the daemon runs from the state directory
         env['HERDR_PEERS_LOG'] = os.path.abspath(env['HERDR_PEERS_LOG'])
@@ -4535,6 +4638,62 @@ def autopilot_start(args, store, opts):
                        '`herdr-peers autopilot status` and %s'
                        % (child.pid, AUTOPILOT_START_WAIT, log_path))
         time.sleep(0.1)
+
+
+RESUME_TAKES_NONE = ('once', 'dry_run', 'passes', 'interval', 'exclude', 'no_nudge', 'catch_up',
+                     'scope', 'appoint', 'revive', 'loop', 'notify', 'brain', 'brain_kinds',
+                     'brain_model', 'notify_env', 'resume', 'detached')
+
+
+def autopilot_resume(args, store):
+    """`autopilot resume`: start the daemon again exactly as the human last
+    started it with `start --resume`, when it is not running. It decides
+    nothing: no record, a running daemon or another resume under way all end
+    quietly (exit 0), so a shell startup line may run it in every pane."""
+    if any(getattr(args, name, None) for name in RESUME_TAKES_NONE):
+        raise Stop(EXIT_USAGE, 'autopilot resume takes no options: it uses the ones recorded by '
+                   '`autopilot start --resume`')
+    state, record = read_resume(store)
+    if state == 'none':
+        print('autopilot: nothing to resume (`herdr-peers autopilot start --resume` records it)')
+        return EXIT_OK
+    if state == 'bad':
+        raise Stop(EXIT_POLICY, 'the resume record %s is not one `start --resume` wrote; nothing '
+                   'was started (`herdr-peers autopilot stop` removes it)'
+                   % os.path.join(store.dir, RESUME_FILE))
+    if autopilot_lock_held(store):
+        print('autopilot: already running')
+        return EXIT_OK
+    try:
+        fd = os.open(os.path.join(store.dir, RESUME_LOCK), os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600)
+    except OSError as exc:
+        raise Stop(EXIT_POLICY, 'cannot open the resume lock (%s)' % exc.strerror)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            print('autopilot: another resume is under way')
+            return EXIT_OK
+        if autopilot_lock_held(store):  # the resume that held the lock a moment ago started it
+            print('autopilot: already running')
+            return EXIT_OK
+        # The helper settings of the start, not those of the pane that resumes.
+        for name in [n for n in os.environ if n.startswith('HERDR_PEERS_')
+                     and n not in ('HERDR_PEERS_SELF',)]:
+            del os.environ[name]
+        os.environ.update(record['env'])
+        argv = ['autopilot', 'start', '--resume'] + autopilot_option_argv(record['options'])
+        try:
+            again = build_parser().parse_args(argv)
+        except SystemExit:
+            raise Stop(EXIT_POLICY, 'the recorded options are not accepted any more; start again '
+                       'with `herdr-peers autopilot start --resume`')
+        again.resumed = True
+        print('autopilot: resuming what was started with --resume on %s' % safe(record['since']))
+        sys.stdout.flush()
+        return cmd_autopilot(again)
+    finally:
+        os.close(fd)  # closing releases the lock
 
 
 BRAIN_ANSWERS = 'brain-answers.ndjson'
@@ -4638,6 +4797,11 @@ def cmd_autopilot(args):
         return autopilot_status(store)
     if verb == 'stop':
         return autopilot_stop(store)
+    if verb == 'resume':
+        return autopilot_resume(args, store)
+    if args.resume and verb != 'start':
+        raise Stop(EXIT_USAGE, '--resume is for `autopilot start`: it records the background '
+                   'autopilot to start again after a restart')
     if verb == 'logs':
         if args.lines is not None and args.lines < 0:
             raise Stop(EXIT_USAGE, '--lines is at least 0')
@@ -4744,7 +4908,16 @@ def cmd_autopilot(args):
             'appoint': bool(args.appoint), 'revive': bool(args.revive),
             'brain': bool(args.brain), 'brain_kinds': brain_kinds, 'brain_model': brain_models_raw}
     if verb == 'start':
-        return autopilot_start(args, store, opts)
+        code = autopilot_start(args, store, opts)
+        # The last start is the human's word: with --resume it comes back after a
+        # restart, without it an earlier record is forgotten.
+        if args.resume:
+            write_resume(store, opts)
+            print('  resume: on — after a restart, `herdr-peers autopilot resume` (from any Herdr '
+                  'pane) starts it again with these options; `autopilot stop` turns it off')
+        elif clear_resume(store):
+            print('  resume: off (the earlier --resume record is forgotten)')
+        return code
     io = AutopilotIO(store, me.get('pane_id'), me.get('terminal_id'), scope_from(args),
                      notify=notify, notify_keep=keep)
     io.skip_own = not args.detached
@@ -5043,14 +5216,19 @@ def build_parser():
                         'accept the recommended option, continue an agent that stopped to ask '
                         '(started by a human only)')
     ap.add_argument('autopilot_verb', nargs='?',
-                    choices=['run', 'start', 'on', 'stop', 'off', 'status', 'logs', 'answer'],
+                    choices=['run', 'start', 'on', 'stop', 'off', 'status', 'logs', 'answer',
+                             'resume'],
                     help='run in this pane (default); start (on) in the background; stop (off) '
                     'the running autopilot; status: whether it runs, how, and its last actions; '
-                    'logs: the background log')
+                    'logs: the background log; resume: start it again as last started with '
+                    '`start --resume`, if it is not running')
     ap.add_argument('--lines', type=int, help='logs: how many last lines (default 50)')
     ap.add_argument('-f', '--follow', action='store_true',
                     help='logs: keep printing new lines until Ctrl-C')
     ap.add_argument('--detached', action='store_true', help=argparse.SUPPRESS)
+    ap.add_argument('--resume', action='store_true',
+                    help='with start: record these options so that `autopilot resume` starts the '
+                    'daemon again after a reboot or a Herdr restart; `stop` forgets them')
     ap.add_argument('--once', action='store_true', help='one pass, then exit')
     ap.add_argument('--dry-run', action='store_true',
                     help='decide and record, send nothing')

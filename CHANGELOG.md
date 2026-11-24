@@ -9,6 +9,22 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+### Added
+
+- **Autopilot can come back after a restart: `start --resume` and
+  `autopilot resume`.** A reboot or a Herdr restart ends the background
+  daemon, and until now only a new `autopilot start` brought it back.
+  `autopilot start … --resume` records that start (its options and the
+  helper's `HERDR_PEERS_*` settings) in a private file in the state
+  directory; `herdr-peers autopilot resume` starts the same autopilot again
+  when it is not running, and is a no-op otherwise, so one line in a shell
+  startup file can run it in every Herdr pane. `autopilot stop`, or a later
+  `start` without `--resume`, forgets the record: a stopped autopilot never
+  returns. Still only a human starts it — `resume` takes no option and
+  repeats the recorded start, a record that is not exactly what
+  `start --resume` wrote is refused, and herdr-peers installs no login item
+  (autopilot.md §2, threat T52).
+
 ### Changed
 
 - **The official Herdr skill pin moves to v0.9.5.** `SKILL.md`, the README and

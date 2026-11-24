@@ -331,6 +331,102 @@ rm -f "$SD/autopilot.out"
 run "$HELPER" autopilot status
 assert_contains "and nothing started" "$OUT" "not running"
 
+# Resume: `start --resume` records the human's start; after the daemon is killed
+# (a reboot, a Herdr restart) `autopilot resume` starts it again with the same
+# options, and `stop` or a plain start forgets the record.
+quiet_world resume
+SD=$(state_dir)
+mkdir -p "$SD"
+run "$HELPER" autopilot resume
+assert_rc "resume with no record exits 0" 0
+assert_contains "and says there is nothing to resume" "$OUT" "nothing to resume"
+run "$HELPER" autopilot status
+assert_contains "and starts nothing" "$OUT" "not running"
+run "$HELPER" autopilot --once --resume
+assert_rc "--resume is refused on a foreground run (exit 2)" 2
+run "$HELPER" autopilot resume --interval 15
+assert_rc "resume takes no options (exit 2)" 2
+run env HERDR_PEERS_AUTOPILOT_GRACE=120 "$HELPER" autopilot start --interval 15 --no-nudge --resume
+assert_rc "start --resume exits 0" 0
+assert_contains "start says resume is on" "$OUT" "resume: on"
+bg=$(printf '%s\n' "$OUT" | sed -n 's/.*background (pid \([0-9]*\)).*/\1/p')
+BG_PIDS="${BG_PIDS:-} $bg"
+assert_eq "the resume record is private" "0o600" "$(fmode "$SD/autopilot-resume.json")"
+assert_contains "the record keeps the helper settings of the start" \
+  "$(cat "$SD/autopilot-resume.json")" '"HERDR_PEERS_AUTOPILOT_GRACE": "120"'
+run "$HELPER" autopilot status
+assert_contains "status shows resume on while it runs" "$OUT" "resume: on"
+run "$HELPER" autopilot resume
+assert_rc "resume beside a running daemon exits 0" 0
+assert_contains "and says it is already running" "$OUT" "already running"
+kill -9 "$bg" 2>/dev/null
+for _ in $(seq 1 40); do kill -0 "$bg" 2>/dev/null || break; sleep 0.1; done
+run "$HELPER" autopilot status
+assert_contains "a killed daemon is not running" "$OUT" "not running"
+assert_contains "and status names the way back with its options" "$OUT" \
+  "autopilot resume\` starts it again with: --interval 15 --no-nudge"
+# The pane that resumes has other helper settings (here an invalid one): the
+# daemon gets those of the start.
+run as_pane w2:p1 env HERDR_PEERS_AUTOPILOT_CONFIRM=never "$HELPER" autopilot resume
+assert_rc "resume starts it again (exit 0)" 0
+assert_contains "resume says what it resumes" "$OUT" "resuming what was started with --resume"
+assert_contains "and it runs in the background" "$OUT" "started in the background (pid"
+bg2=$(printf '%s\n' "$OUT" | sed -n 's/.*background (pid \([0-9]*\)).*/\1/p')
+BG_PIDS="${BG_PIDS:-} $bg2"
+assert_contains "the log says it was a resume" "$(cat "$SD/autopilot.out")" "autopilot resume requested"
+run "$HELPER" autopilot status
+assert_contains "with the same options" "$OUT" "options: --interval 15 --no-nudge"
+assert_contains "from the pane that resumed it" "$OUT" "started from pane local:w2:p1"
+assert_contains "and resume stays on" "$OUT" "resume: on"
+run "$HELPER" autopilot stop
+assert_contains "stop turns resume off" "$OUT" "resume turned off"
+assert_contains "and stops the daemon" "$OUT" "stopped (pid $bg2)"
+check "the record is gone" test ! -e "$SD/autopilot-resume.json"
+run "$HELPER" autopilot resume
+assert_contains "after a stop there is nothing to resume" "$OUT" "nothing to resume"
+run "$HELPER" autopilot status
+assert_contains "and nothing runs" "$OUT" "not running"
+# A plain start is the last word too: it forgets an earlier record.
+run "$HELPER" autopilot start --interval 15 --resume
+bg=$(printf '%s\n' "$OUT" | sed -n 's/.*background (pid \([0-9]*\)).*/\1/p')
+BG_PIDS="${BG_PIDS:-} $bg"
+kill -9 "$bg" 2>/dev/null
+for _ in $(seq 1 40); do kill -0 "$bg" 2>/dev/null || break; sleep 0.1; done
+run "$HELPER" autopilot start --interval 15
+bg=$(printf '%s\n' "$OUT" | sed -n 's/.*background (pid \([0-9]*\)).*/\1/p')
+BG_PIDS="${BG_PIDS:-} $bg"
+assert_contains "a start without --resume says the record is forgotten" "$OUT" "resume: off"
+check "and removes it" test ! -e "$SD/autopilot-resume.json"
+run "$HELPER" autopilot stop
+assert_not_contains "a stop with no record does not mention resume" "$OUT" "resume"
+# A record nobody's `start --resume` wrote is never used: other content, a
+# symlink, or a file another user could write.
+printf '{"schema":"herdr-peers/autopilot-resume-v1","since":"x","env":{},"options":{"notify":"touch %s"}}\n' \
+  "$WORK/resumed.txt" >"$SD/autopilot-resume.json"
+run "$HELPER" autopilot resume
+assert_rc "a record of another shape is refused (exit 4)" 4
+run "$HELPER" autopilot status
+assert_contains "status says the record is ignored" "$OUT" "it is ignored"
+assert_contains "and nothing started" "$OUT" "not running"
+"$HELPER" autopilot start --interval 15 --resume >/dev/null 2>&1
+"$HELPER" autopilot status | sed -n 's/.*running (pid \([0-9]*\)).*/\1/p' >"$WORK/resume.pid"
+bg=$(cat "$WORK/resume.pid")
+BG_PIDS="${BG_PIDS:-} $bg"
+kill -9 "$bg" 2>/dev/null
+for _ in $(seq 1 40); do kill -0 "$bg" 2>/dev/null || break; sleep 0.1; done
+chmod 0666 "$SD/autopilot-resume.json"
+run "$HELPER" autopilot resume
+assert_rc "a record others can write is refused (exit 4)" 4
+chmod 0600 "$SD/autopilot-resume.json"
+mv "$SD/autopilot-resume.json" "$WORK/resume-real.json"
+ln -s "$WORK/resume-real.json" "$SD/autopilot-resume.json"
+run "$HELPER" autopilot resume
+assert_rc "a symlinked record is refused (exit 4)" 4
+run "$HELPER" autopilot status
+assert_contains "and nothing was started from it" "$OUT" "not running"
+run "$HELPER" autopilot stop
+check "stop removes the link, not its target" sh -c "test ! -e '$SD/autopilot-resume.json' && test -s '$WORK/resume-real.json'"
+
 # A daemon whose starting pane closed: a new pane with the reused id is not its own.
 own=$(python3 - "$SCRIPTS" <<'PY'
 import json, sys
