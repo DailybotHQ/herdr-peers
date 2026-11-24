@@ -20,10 +20,11 @@ changes bumped the minor version).
   when it is not running, and is a no-op otherwise, so one line in a shell
   startup file can run it in every Herdr pane. `autopilot stop`, or a later
   `start` without `--resume`, forgets the record: a stopped autopilot never
-  returns. Still only a human starts it — `resume` takes no option and
-  repeats the recorded start, a record that is not exactly what
-  `start --resume` wrote is refused, and herdr-peers installs no login item
-  (autopilot.md §2, threat T52).
+  returns, and a `stop` that lands while a resume is starting the daemon
+  waits and stops it. Still only a human starts it — `resume` takes no
+  option, repeats the recorded start and never rewrites the record, a record
+  that is not exactly what `start --resume` wrote is refused, and
+  herdr-peers installs no login item (autopilot.md §2, threat T52).
 
 ### Changed
 

@@ -359,16 +359,33 @@ assert_contains "status shows resume on while it runs" "$OUT" "resume: on"
 run "$HELPER" autopilot resume
 assert_rc "resume beside a running daemon exits 0" 0
 assert_contains "and says it is already running" "$OUT" "already running"
+before=$(cat "$SD/autopilot-resume.json")
+run "$HELPER" autopilot start --interval 30 --resume
+assert_rc "a start --resume beside a running daemon is refused (exit 4)" 4
+assert_eq "and leaves the record as it was" "$before" "$(cat "$SD/autopilot-resume.json")"
 kill -9 "$bg" 2>/dev/null
 for _ in $(seq 1 40); do kill -0 "$bg" 2>/dev/null || break; sleep 0.1; done
 run "$HELPER" autopilot status
 assert_contains "a killed daemon is not running" "$OUT" "not running"
 assert_contains "and status names the way back with its options" "$OUT" \
   "autopilot resume\` starts it again with: --interval 15 --no-nudge"
+run env HERDR_PEERS_DEPTH=1 "$HELPER" autopilot resume
+assert_rc "resume from a delegate's pane exits 0" 0
+assert_contains "and starts nothing there" "$OUT" "not resumed from a delegate"
+run "$HELPER" autopilot status
+assert_contains "the daemon is still not running" "$OUT" "not running"
+# Every pane's shell may run resume at once: one daemon, every caller exits 0.
+for n in 1 2 3 4; do
+  ( as_pane w2:p1 env HERDR_PEERS_AUTOPILOT_CONFIRM=never "$HELPER" autopilot resume \
+      >"$WORK/resume.$n.out" 2>&1; echo $? >"$WORK/resume.$n.rc" ) &
+done
+wait
+assert_eq "four resumes at once all exit 0" "0 0 0 0" "$(cat "$WORK"/resume.[1-4].rc | tr '\n' ' ' | sed 's/ $//')"
 # The pane that resumes has other helper settings (here an invalid one): the
 # daemon gets those of the start.
-run as_pane w2:p1 env HERDR_PEERS_AUTOPILOT_CONFIRM=never "$HELPER" autopilot resume
-assert_rc "resume starts it again (exit 0)" 0
+OUT=$(cat "$WORK"/resume.[1-4].out)
+assert_eq "and exactly one of them started the daemon" "1" \
+  "$(printf '%s\n' "$OUT" | grep -c 'started in the background (pid')"
 assert_contains "resume says what it resumes" "$OUT" "resuming what was started with --resume"
 assert_contains "and it runs in the background" "$OUT" "started in the background (pid"
 bg2=$(printf '%s\n' "$OUT" | sed -n 's/.*background (pid \([0-9]*\)).*/\1/p')
@@ -378,6 +395,7 @@ run "$HELPER" autopilot status
 assert_contains "with the same options" "$OUT" "options: --interval 15 --no-nudge"
 assert_contains "from the pane that resumed it" "$OUT" "started from pane local:w2:p1"
 assert_contains "and resume stays on" "$OUT" "resume: on"
+assert_eq "a resume leaves the human's record untouched" "$before" "$(cat "$SD/autopilot-resume.json")"
 run "$HELPER" autopilot stop
 assert_contains "stop turns resume off" "$OUT" "resume turned off"
 assert_contains "and stops the daemon" "$OUT" "stopped (pid $bg2)"
@@ -386,6 +404,24 @@ run "$HELPER" autopilot resume
 assert_contains "after a stop there is nothing to resume" "$OUT" "nothing to resume"
 run "$HELPER" autopilot status
 assert_contains "and nothing runs" "$OUT" "not running"
+# A stop that lands while a resume holds its lock waits for it, so what the
+# resume starts is what gets stopped; a resume beside it does nothing.
+python3 - "$SD" <<'PY' &
+import fcntl, os, sys, time
+fd = os.open(os.path.join(sys.argv[1], "autopilot-resume.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(fd, fcntl.LOCK_EX)
+open(os.path.join(sys.argv[1], "resume-lock.held"), "w").close()
+time.sleep(2)
+PY
+holder=$!
+BG_PIDS="${BG_PIDS:-} $holder"
+for _ in $(seq 1 40); do [ -e "$SD/resume-lock.held" ] && break; sleep 0.1; done
+t0=$(date +%s)
+run "$HELPER" autopilot stop
+assert_rc "stop beside a resume under way exits 0 once it is over" 0
+check "and it waited for the resume's lock" test $(( $(date +%s) - t0 )) -ge 1
+wait "$holder" 2>/dev/null
+rm -f "$SD/resume-lock.held"
 # A plain start is the last word too: it forgets an earlier record.
 run "$HELPER" autopilot start --interval 15 --resume
 bg=$(printf '%s\n' "$OUT" | sed -n 's/.*background (pid \([0-9]*\)).*/\1/p')
@@ -405,6 +441,70 @@ printf '{"schema":"herdr-peers/autopilot-resume-v1","since":"x","env":{},"option
   "$WORK/resumed.txt" >"$SD/autopilot-resume.json"
 run "$HELPER" autopilot resume
 assert_rc "a record of another shape is refused (exit 4)" 4
+check "and its command never ran" test ! -e "$WORK/resumed.txt"
+# A well-formed record is refused for one option-shaped value, a delegate's
+# mark or a token name among its settings, or too many bytes.
+bad_record() {
+  python3 - "$SD/autopilot-resume.json" "$1" <<'PY'
+import json, os, sys
+opts = {"interval": 15, "dry_run": False, "no_nudge": False, "catch_up": False, "exclude": [],
+        "scope": None, "loop": False, "notify": None, "notify_env": [], "appoint": False,
+        "revive": False, "brain": False, "brain_kinds": None, "brain_model": []}
+rec = {"schema": "herdr-peers/autopilot-resume-v1", "since": "2026-01-01T00:00:00Z",
+       "options": opts, "env": {}}
+kind = sys.argv[2]
+if kind == "option":
+    opts["scope"] = "--revive"
+elif kind == "list":
+    opts["exclude"] = ["--brain"]
+elif kind == "depth":
+    rec["env"] = {"HERDR_PEERS_DEPTH": "0"}
+elif kind == "token":
+    rec["env"] = {"HERDR_PEERS_FAKE_TOKEN": "fake"}
+elif kind == "foreign":
+    rec["env"] = {"PATH": "/tmp"}
+elif kind == "big":
+    rec["pad"] = "x" * 70000
+elif kind == "bool":
+    opts["interval"] = True
+if os.path.lexists(sys.argv[1]):
+    os.unlink(sys.argv[1])
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+os.write(fd, json.dumps(rec).encode())
+os.close(fd)
+PY
+}
+for kind in option list depth token foreign big bool; do
+  bad_record "$kind"
+  run "$HELPER" autopilot resume
+  assert_rc "a record with a bad $kind is refused (exit 4)" 4
+done
+bad_record good
+run "$HELPER" autopilot status
+assert_contains "the same record without the bad part is accepted" "$OUT" "resume: on since 2026-01-01T00:00:00Z"
+ln "$SD/autopilot-resume.json" "$WORK/resume-hardlink.json"
+run "$HELPER" autopilot resume
+assert_rc "a record with a second hard link is refused (exit 4)" 4
+rm -f "$WORK/resume-hardlink.json"
+run env HERDR_PEERS_FAKE_TOKEN=fake HERDR_PEERS_DEPTH=0 "$HELPER" autopilot start --interval 15 --resume
+bg=$(printf '%s\n' "$OUT" | sed -n 's/.*background (pid \([0-9]*\)).*/\1/p')
+BG_PIDS="${BG_PIDS:-} $bg"
+assert_not_contains "a token-named setting is never recorded" "$(cat "$SD/autopilot-resume.json")" "TOKEN"
+assert_not_contains "nor the delegate mark" "$(cat "$SD/autopilot-resume.json")" "HERDR_PEERS_DEPTH"
+run "$HELPER" autopilot stop
+long=$(head -c 1500 /dev/zero | tr '\0' 'y')
+run env HERDR_PEERS_AUTOPILOT_NOTE="$long" "$HELPER" autopilot start --interval 15 --resume
+assert_rc "a start whose settings cannot be recorded says so (exit 2)" 2
+assert_contains "and that resume stays off" "$ERR" "resume stays off"
+check "with no record written" test ! -e "$SD/autopilot-resume.json"
+run "$HELPER" autopilot stop
+mkdir "$SD/autopilot-resume.json"
+run "$HELPER" autopilot stop
+assert_rc "a record that cannot be removed makes stop fail (exit 4)" 4
+assert_contains "and stop says to remove it by hand" "$ERR" "remove it by hand"
+rmdir "$SD/autopilot-resume.json"
+printf '{"schema":"herdr-peers/autopilot-resume-v1","since":"x","env":{},"options":{"notify":"touch %s"}}\n' \
+  "$WORK/resumed.txt" >"$SD/autopilot-resume.json"
 run "$HELPER" autopilot status
 assert_contains "status says the record is ignored" "$OUT" "it is ignored"
 assert_contains "and nothing started" "$OUT" "not running"

@@ -109,22 +109,30 @@ herdr-peers autopilot stop                    # stops it and forgets the record
 
 `start --resume` writes `autopilot-resume.json` next to the other files: the
 options of this start and the helper's own `HERDR_PEERS_*` settings in
-effect (never `HERDR_PEERS_DEPTH` or `HERDR_PEERS_SELF`, never a name ending
-in `_API_KEY` or `_TOKEN`). The daemon removes `autopilot.json` when it
-stops; this record stays until you say otherwise:
+effect (never `HERDR_PEERS_DEPTH`, never a name ending in `_API_KEY` or
+`_TOKEN`). A start whose options or settings are too long or too many to
+record says so (exit 2): the daemon runs, resume stays off. The daemon
+removes `autopilot.json` when it stops; this record stays until you say
+otherwise, and a resume never rewrites it:
 
-- `autopilot stop` removes it, whether or not a daemon runs. A stopped
-  autopilot never comes back.
+- `autopilot stop` removes it, whether or not a daemon runs, before it does
+  anything else. A stopped autopilot never comes back: if a resume is
+  half-way through starting the daemon, `stop` waits for it and stops what it
+  started (after 45 seconds it gives up with exit 5 and asks you to run
+  `stop` again; resume is already off).
 - A later `start` without `--resume` removes it too: your last start is the
   one that counts.
 
 `autopilot resume` starts the daemon again with the recorded options and
-settings, from the pane it runs in. It is safe to run anywhere and any number
-of times: with no record, with a daemon already running, or while another
-resume is under way it prints one line and exits 0. It takes no option. A
+settings, from the pane it runs in; the pane's own `HERDR_PEERS_*` settings
+are set aside for the recorded ones. It is safe to run anywhere and any
+number of times: with no record, with a daemon already running, while
+another resume, a start or a stop is under way, or in a delegate's pane
+(`HERDR_PEERS_DEPTH` set) it prints one line and exits 0. It takes no
+option. A
 record that is not exactly what `start --resume` writes — another shape, a
-symlink, a file another user could write, an option-shaped value — is
-refused (exit 4) and nothing starts. Everything the start checks is checked
+symlink or a second hard link, a file another user could write, an
+option-shaped value — is refused (exit 4) and nothing starts. Everything the start checks is checked
 again (`--brain` and `--revive` still need coding-agents-kit), and a resumed
 `--brain` launches a new brain, as any start does.
 
@@ -136,10 +144,23 @@ shell's startup file (`~/.zshrc`, `~/.bashrc`):
 case $- in *i*) [ "$HERDR_ENV" = 1 ] && (herdr-peers autopilot resume >/dev/null 2>&1 &) ;; esac
 ```
 
-It runs only in an interactive shell inside a Herdr pane — not in the shells
-an agent opens for its commands — in the background, and does nothing unless
-a record exists and no daemon runs. The line is yours to add and to remove;
-without it, run `herdr-peers autopilot resume` yourself after a restart.
+It runs only in an interactive shell inside a Herdr pane, in the background,
+and does nothing unless a record exists and no daemon runs. Put it after the
+lines that set your `PATH` (it must find `herdr-peers`, and `ak` for
+`--brain` or `--revive`). Know what it means:
+
+- It is silent, also when the record is refused or the start fails. After a
+  restart, `herdr-peers autopilot status` tells you whether it is back.
+- It runs in every new interactive pane, not only yours: a pane an agent
+  opens for a lane (or the daemon for its brain) starts your shell too. The
+  command lines an agent runs are not interactive shells and do not run it.
+  So while the record exists, a daemon that died (a crash, a `kill`, a
+  restart) comes back when the next pane opens, with your recorded options
+  and the rest of that pane's environment. That is what `--resume` asks for;
+  `autopilot stop` is how you say it stays off.
+
+The line is yours to add and to remove; without it, run
+`herdr-peers autopilot resume` yourself after a restart.
 
 ### In the foreground
 

@@ -4231,7 +4231,8 @@ RESUME_OPTION_TYPES = {
     'appoint': bool, 'revive': bool, 'brain': bool, 'brain_kinds': (str, type(None)),
     'brain_model': list}
 RESUME_ENV_RE = re.compile(r'HERDR_PEERS_[A-Z0-9_]{1,48}')
-RESUME_ENV_SKIP = ('HERDR_PEERS_DEPTH', 'HERDR_PEERS_SELF')  # the pane's own, never the daemon's
+RESUME_ENV_SKIP = ('HERDR_PEERS_DEPTH',)  # a delegate's mark: never recorded, never restored
+RESUME_LOCK_WAIT = 45.0  # `start` and `stop` wait this long for a resume under way to finish
 
 
 def resume_env_name(name):
@@ -4274,13 +4275,13 @@ def read_resume(store):
     path = os.path.join(store.dir, RESUME_FILE)
     if not os.path.lexists(path):
         return 'none', None
-    try:
-        fd = os.open(path, os.O_RDONLY | NOFOLLOW)
+    try:  # non-blocking: a FIFO planted at the path must not hang `status`
+        fd = os.open(path, os.O_RDONLY | NOFOLLOW | getattr(os, 'O_NONBLOCK', 0))
     except OSError:
         return 'bad', None
     try:
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() \
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1 \
                 or info.st_mode & 0o022 or info.st_size > RESUME_MAX_BYTES:
             return 'bad', None
         with os.fdopen(os.dup(fd), 'r', encoding='utf-8') as fh:
@@ -4294,20 +4295,70 @@ def read_resume(store):
 
 def write_resume(store, opts):
     """Record that the human wants this autopilot back after a restart."""
-    env = dict((k, v) for k, v in os.environ.items() if resume_env_name(k) and len(v) <= 1024)
+    env = dict((k, v) for k, v in os.environ.items() if resume_env_name(k))
     if env.get('HERDR_PEERS_LOG'):
         env['HERDR_PEERS_LOG'] = os.path.abspath(env['HERDR_PEERS_LOG'])
-    write_private(os.path.join(store.dir, RESUME_FILE), json.dumps({
-        'schema': RESUME_SCHEMA, 'since': now_iso(), 'options': opts, 'env': env},
-        sort_keys=True) + '\n')
+    record = {'schema': RESUME_SCHEMA, 'since': now_iso(), 'options': opts, 'env': env}
+    if not valid_resume(record):  # what `resume` would refuse is never written as if it worked
+        raise Stop(EXIT_USAGE, 'autopilot is running, but this start cannot be recorded for '
+                   '--resume (an option or a HERDR_PEERS_* setting is too long, or there are too '
+                   'many); resume stays off')
+    path = os.path.join(store.dir, RESUME_FILE)
+    tmp = '%s.%d.tmp' % (path, os.getpid())
+    try:  # a new private file moved into place: never a partial record, never an old mode
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+            fh.write(json.dumps(record, sort_keys=True) + '\n')
+        os.replace(tmp, path)
+    except OSError as exc:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise Stop(EXIT_POLICY, 'autopilot is running, but the resume record %s cannot be '
+                   'written (%s); resume stays off' % (path, exc.strerror))
 
 
 def clear_resume(store):
-    """Forget the resume record. True if there was one."""
+    """Forget the resume record. True if there was one; a record that cannot be
+    removed is an error, never reported as gone."""
+    path = os.path.join(store.dir, RESUME_FILE)
     try:
-        os.unlink(os.path.join(store.dir, RESUME_FILE))
+        os.unlink(path)
         return True
-    except OSError:
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise Stop(EXIT_POLICY, 'cannot remove the resume record %s (%s): remove it by hand, or '
+                   '`autopilot resume` may start autopilot again' % (path, exc.strerror))
+
+
+class ResumeLock(object):
+    """The lock one resume holds from reading the record until its daemon runs.
+    `start` and `stop` take it too, so neither acts on a record a resume is
+    half-way through using. `held` says whether it was taken within `wait`."""
+
+    def __init__(self, store, wait):
+        self.path, self.wait, self.fd, self.held = os.path.join(store.dir, RESUME_LOCK), wait, None, False
+
+    def __enter__(self):
+        try:
+            self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600)
+        except OSError as exc:
+            raise Stop(EXIT_POLICY, 'cannot open the resume lock %s (%s)' % (self.path, exc.strerror))
+        deadline = time.monotonic() + self.wait
+        while True:
+            try:
+                fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.held = True
+                return self
+            except OSError:
+                if time.monotonic() >= deadline:
+                    return self
+                time.sleep(0.1)
+
+    def __exit__(self, *_exc):
+        os.close(self.fd)  # closing releases the lock
         return False
 
 
@@ -4484,6 +4535,17 @@ def autopilot_stop(store):
     # First, and whatever follows: a stop is the human's word that it stays off.
     if clear_resume(store):
         print('autopilot: resume turned off')
+    with ResumeLock(store, RESUME_LOCK_WAIT) as lock:
+        # A resume that read the record before it went is finishing its start:
+        # wait for it, so the daemon it brings up is the one stopped here.
+        if not lock.held:
+            raise Stop(EXIT_TIMEOUT, 'a resume has been under way for %ds; resume is off, but '
+                       'run `herdr-peers autopilot stop` again to stop what it starts'
+                       % RESUME_LOCK_WAIT)
+        return autopilot_stop_running(store)
+
+
+def autopilot_stop_running(store):
     pid = autopilot_pid(store)
     if not pid:
         print('autopilot: not running')
@@ -4661,39 +4723,39 @@ def autopilot_resume(args, store):
         raise Stop(EXIT_POLICY, 'the resume record %s is not one `start --resume` wrote; nothing '
                    'was started (`herdr-peers autopilot stop` removes it)'
                    % os.path.join(store.dir, RESUME_FILE))
+    if env_int('HERDR_PEERS_DEPTH', 0) > 0:
+        # A delegate's pane (launched to answer one ask) is not where the human resumes.
+        print('autopilot: not resumed from a delegate\'s pane')
+        return EXIT_OK
     if autopilot_lock_held(store):
         print('autopilot: already running')
         return EXIT_OK
-    try:
-        fd = os.open(os.path.join(store.dir, RESUME_LOCK), os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600)
-    except OSError as exc:
-        raise Stop(EXIT_POLICY, 'cannot open the resume lock (%s)' % exc.strerror)
-    try:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            print('autopilot: another resume is under way')
+    with ResumeLock(store, 0) as lock:
+        if not lock.held:
+            print('autopilot: another resume, a start or a stop is under way')
+            return EXIT_OK
+        # Under the lock: a `stop` or a `start` since the first look is the last word.
+        state, again_record = read_resume(store)
+        if state != 'ok' or again_record != record:
+            print('autopilot: nothing to resume (the record changed)')
             return EXIT_OK
         if autopilot_lock_held(store):  # the resume that held the lock a moment ago started it
             print('autopilot: already running')
             return EXIT_OK
         # The helper settings of the start, not those of the pane that resumes.
-        for name in [n for n in os.environ if n.startswith('HERDR_PEERS_')
-                     and n not in ('HERDR_PEERS_SELF',)]:
+        for name in [n for n in os.environ if n.startswith('HERDR_PEERS_')]:
             del os.environ[name]
         os.environ.update(record['env'])
-        argv = ['autopilot', 'start', '--resume'] + autopilot_option_argv(record['options'])
         try:
-            again = build_parser().parse_args(argv)
+            again = build_parser().parse_args(
+                ['autopilot', 'start'] + autopilot_option_argv(record['options']))
         except SystemExit:
             raise Stop(EXIT_POLICY, 'the recorded options are not accepted any more; start again '
                        'with `herdr-peers autopilot start --resume`')
-        again.resumed = True
+        again.resumed = True  # the record stays as the human wrote it: not rewritten, not cleared
         print('autopilot: resuming what was started with --resume on %s' % safe(record['since']))
         sys.stdout.flush()
         return cmd_autopilot(again)
-    finally:
-        os.close(fd)  # closing releases the lock
 
 
 BRAIN_ANSWERS = 'brain-answers.ndjson'
@@ -4908,16 +4970,23 @@ def cmd_autopilot(args):
             'appoint': bool(args.appoint), 'revive': bool(args.revive),
             'brain': bool(args.brain), 'brain_kinds': brain_kinds, 'brain_model': brain_models_raw}
     if verb == 'start':
-        code = autopilot_start(args, store, opts)
-        # The last start is the human's word: with --resume it comes back after a
-        # restart, without it an earlier record is forgotten.
-        if args.resume:
-            write_resume(store, opts)
-            print('  resume: on — after a restart, `herdr-peers autopilot resume` (from any Herdr '
-                  'pane) starts it again with these options; `autopilot stop` turns it off')
-        elif clear_resume(store):
-            print('  resume: off (the earlier --resume record is forgotten)')
-        return code
+        if getattr(args, 'resumed', False):  # under the resume's own lock; its record stays
+            return autopilot_start(args, store, opts)
+        with ResumeLock(store, RESUME_LOCK_WAIT) as lock:
+            if not lock.held:
+                raise Stop(EXIT_TIMEOUT, 'a resume has been under way for %ds; try again'
+                           % RESUME_LOCK_WAIT)
+            code = autopilot_start(args, store, opts)
+            # The last start is the human's word: with --resume it comes back after a
+            # restart, without it an earlier record is forgotten.
+            if args.resume:
+                write_resume(store, opts)
+                print('  resume: on — after a restart, `herdr-peers autopilot resume` (from any '
+                      'Herdr pane) starts it again with these options; `autopilot stop` turns '
+                      'it off')
+            elif clear_resume(store):
+                print('  resume: off (the earlier --resume record is forgotten)')
+            return code
     io = AutopilotIO(store, me.get('pane_id'), me.get('terminal_id'), scope_from(args),
                      notify=notify, notify_keep=keep)
     io.skip_own = not args.detached
