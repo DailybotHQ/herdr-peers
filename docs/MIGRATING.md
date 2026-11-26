@@ -44,8 +44,8 @@ On every machine whose agents ask or answer (the helper ships inside the
 skill):
 
 ```bash
-npx --yes skills add DailybotHQ/herdr-peers@v2.2.2 --skill herdr-peers -g -y
-herdr-peers --version          # herdr-peers 2.2.2 (protocol 2)
+npx --yes skills add DailybotHQ/herdr-peers@v2.3.0 --skill herdr-peers -g -y
+herdr-peers --version          # herdr-peers 2.3.0 (protocol 2)
 ```
 
 From a checkout instead, verify the tag against the release's `SHA256SUMS`
@@ -74,6 +74,7 @@ Everything below is opt-in; 1.x options keep their meaning.
 | 2.0.0 | `autopilot --loop --appoint` | The daemon acts on the grant |
 | 2.0.0 | `lead verify --plan P [--allow-unreached]` | Before a merge, tag or release: am I still the lead, here and on the plan's other machines? |
 | 2.2.0 | `autopilot --loop --revive`; `lead takeover --reason revive` | A fresh agent carries an orphan plan on this machine (the daemon's one-time ticket); a stalled live lead is asked to hand over. Protocol stays 2: a `via: revive` record is never adopted by another machine, and a 2.0/2.1 receiver refuses it (fail closed) |
+| 2.3.0 | `autopilot start … --resume`, `autopilot resume` | The same autopilot back after a reboot or a Herdr restart: `resume` repeats the start you recorded; `stop` forgets it |
 
 No flag was renamed or removed.
 
