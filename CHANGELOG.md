@@ -9,6 +9,11 @@ changes bumped the minor version).
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-11-26
+
+Autopilot can come back by itself after a restart. The protocol and every
+wire format are unchanged from 2.2.2.
+
 ### Added
 
 - **Autopilot can come back after a restart: `start --resume` and
@@ -1107,7 +1112,8 @@ First release. Interface version: **protocol 1** (`metadata.protocol: 1` in
   `harness lint protocol helper skill templates security live`; CI on Ubuntu
   and macOS.
 
-[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v2.2.2...HEAD
+[Unreleased]: https://github.com/DailybotHQ/herdr-peers/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/DailybotHQ/herdr-peers/compare/v2.2.2...v2.3.0
 [2.2.2]: https://github.com/DailybotHQ/herdr-peers/compare/v2.2.1...v2.2.2
 [2.2.1]: https://github.com/DailybotHQ/herdr-peers/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/DailybotHQ/herdr-peers/compare/v2.1.0...v2.2.0
