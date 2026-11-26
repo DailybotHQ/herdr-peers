@@ -242,7 +242,9 @@ The daemon looks at every agent once a minute, reads a screen only when
 something changed, and costs about one second of CPU per pass on 14
 machines. It survives the pane that started it, not a reboot or a Herdr
 restart: run `herdr-peers autopilot start` again after one (`autopilot
-status` shows the options it ran with). Keep it off a pane or a machine with
+status` shows the options it ran with), or start it with `--resume` and let
+`herdr-peers autopilot resume` — by hand or from one line in your shell's
+startup file — bring the same autopilot back. Keep it off a pane or a machine with
 `--exclude` or `--scope`. The operator's manual — start, status, logs, the
 loop, the brain, appointment, notify, cost, limits, troubleshooting — is
 [autopilot.md](skills/herdr-peers/autopilot.md).
